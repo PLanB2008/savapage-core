@@ -25,6 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.print.attribute.standard.MediaSizeName;
+
 import org.savapage.core.dao.PrinterDao;
 import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.inbox.InboxInfoDto;
@@ -105,8 +107,8 @@ public final class ProxyPrintInboxReqChunker {
      * @return The standard prefix for error messages.
      */
     private String getErrorMessagePfx() {
-        return "User [" + this.lockedUser.getUserId() + "], Printer ["
-                + this.request.getPrinterName() + "] ";
+        return String.format("Print for user \"%s\" on printer \"%s\"",
+                this.lockedUser.getUserId(), this.request.getPrinterName());
     }
 
     /**
@@ -183,7 +185,7 @@ public final class ProxyPrintInboxReqChunker {
 
     /**
      * Chunks the {@link ProxyPrintInboxReq} in separate print jobs per
-     * media-source.
+     * media-source or per vanilla inbox job.
      * <p>
      * As a result the original request parameters "media", "media-source" and
      * "fit-to-page" are set or corrected, and
@@ -191,11 +193,22 @@ public final class ProxyPrintInboxReqChunker {
      * {@link ProxyPrintJobChunk}.
      * </p>
      *
+     * @param chunkVanillaJobs
+     *            When {@code true} a {@link ProxyPrintJobChunk} is created for
+     *            each job (of a vanilla inbox)
+     * @param iVanillaJob
+     *            The zero-based ordinal of the single vanilla job to print. If
+     *            {@code null}, all vanilla jobs are printed.
+     * @param vanillaJobPageRanges
+     *            The job scope page ranges, e.g. "1-2,4,12-".
      * @throws ProxyPrintException
      *             When proxy printer is not fully configured to support this
-     *             request.
+     *             request, or when vanilla job chunking is requested and the
+     *             inbox is not vanilla.
      */
-    public void chunk() throws ProxyPrintException {
+    public void chunk(final boolean chunkVanillaJobs,
+            final Integer iVanillaJob, final String vanillaJobPageRanges)
+            throws ProxyPrintException {
 
         final PrinterDao printerDao =
                 ServiceContext.getDaoContext().getPrinterDao();
@@ -319,8 +332,25 @@ public final class ProxyPrintInboxReqChunker {
         final IppMediaSourceCostDto determinedMediaSource;
         final IppMediaSizeEnum determinedMedia;
 
-        final ProxyPrintJobChunkInfo printJobChunkInfo =
-                new ProxyPrintJobChunkInfo(inboxInfo, request.getPageRanges());
+        /*
+         * Create the chunks depending on "vanilla" requirements.
+         */
+        final ProxyPrintJobChunkInfo printJobChunkInfo;
+
+        if (chunkVanillaJobs) {
+
+            if (iVanillaJob == null) {
+                printJobChunkInfo = new ProxyPrintJobChunkInfo(inboxInfo);
+            } else {
+                printJobChunkInfo =
+                        new ProxyPrintJobChunkInfo(inboxInfo,
+                                iVanillaJob.intValue(), vanillaJobPageRanges);
+            }
+        } else {
+            printJobChunkInfo =
+                    new ProxyPrintJobChunkInfo(inboxInfo,
+                            request.getPageRanges());
+        }
 
         request.setJobChunkInfo(printJobChunkInfo);
 
@@ -349,8 +379,18 @@ public final class ProxyPrintInboxReqChunker {
             for (final ProxyPrintJobChunk printJobChunk : printJobChunkInfo
                     .getChunks()) {
 
+                final MediaSizeName mediaSizeNameWlk =
+                        printJobChunk.getMediaSizeName();
+
+                /*
+                 * Skip chunks with custom media size.
+                 */
+                if (mediaSizeNameWlk == null) {
+                    continue;
+                }
+
                 final IppMediaSizeEnum ippMediaSize =
-                        IppMediaSizeEnum.find(printJobChunk.getMediaSizeName());
+                        IppMediaSizeEnum.find(mediaSizeNameWlk);
 
                 final IppMediaSourceCostDto ippMediaSourceCostWlk =
                         getMediaSourceForMedia(printerAttrLookup, ippMediaSize);
@@ -367,10 +407,9 @@ public final class ProxyPrintInboxReqChunker {
              */
             if (collectedMediaSources.isEmpty()) {
 
-                throw new ProxyPrintException(getErrorMessagePfx() + "["
-                        + printJobChunkInfo.getChunks().size()
-                        + "] page-size chunks checked: "
-                        + "no unique media-sources found.");
+                throw new ProxyPrintException(String.format(
+                        "%s: no media-source matches.",
+                        getErrorMessagePfx()));
             }
 
             if (collectedMediaSources.size() == 1) {
@@ -451,6 +490,10 @@ public final class ProxyPrintInboxReqChunker {
         if (this.requestedPageScaling == PageScalingEnum.CROP) {
 
             fitToPage = false;
+
+        } else if (printJobChunk.getMediaSizeName() == null) {
+
+            fitToPage = true;
 
         } else {
 

@@ -525,6 +525,14 @@ public abstract class AbstractProxyPrintService extends AbstractService
             final Printer dbPrinterWlk =
                     printerDAO().findById(printer.getDbPrinter().getId());
 
+            /*
+             * Skip printer that is not configured.
+             */
+            if (!this.isPrinterConfigured(printer, new PrinterAttrLookup(
+                    dbPrinterWlk))) {
+                continue;
+            }
+
             if (isPrinterGrantedOnTerminal(terminal, userName, dbPrinterWlk,
                     terminalSecuredWlk, readerSecuredWlk, terminalDevicesWlk,
                     readerDevicesWlk)) {
@@ -590,6 +598,71 @@ public abstract class AbstractProxyPrintService extends AbstractService
     @Override
     public final IppNotificationRecipient notificationRecipient() {
         return notificationRecipient;
+    }
+
+    @Override
+    public boolean isPrinterConfigured(final JsonProxyPrinter cupsPrinter,
+            final PrinterAttrLookup lookup) {
+
+        /*
+         * Any media sources defined in CUPS printer?
+         */
+        List<JsonProxyPrinterOptChoice> mediaSourceChoices = null;
+
+        for (final JsonProxyPrinterOptGroup optGroup : cupsPrinter.getGroups()) {
+
+            for (final JsonProxyPrinterOpt option : optGroup.getOptions()) {
+
+                if (option.getKeyword().equals(
+                        IppDictJobTemplateAttr.ATTR_MEDIA_SOURCE)) {
+                    mediaSourceChoices = option.getChoices();
+                    break;
+                }
+            }
+
+            if (mediaSourceChoices != null) {
+                break;
+            }
+        }
+
+        /*
+         * There MUST be media source(s) defines in CUPS printer.
+         */
+        if (mediaSourceChoices == null) {
+            return false;
+        }
+
+        /*
+         * Count the number of configured media sources.
+         */
+        int nMediaSources = 0;
+
+        for (final JsonProxyPrinterOptChoice optChoice : mediaSourceChoices) {
+
+            final PrinterDao.MediaSourceAttr mediaSourceAttr =
+                    new PrinterDao.MediaSourceAttr(optChoice.getChoice());
+
+            final String json = lookup.get(mediaSourceAttr.getKey());
+
+            if (json != null) {
+
+                try {
+
+                    final IppMediaSourceCostDto dto =
+                            IppMediaSourceCostDto.create(json);
+
+                    if (dto.getActive() && dto.getMedia() != null) {
+                        nMediaSources++;
+                    }
+
+                } catch (IOException e) {
+                    // be forgiving
+                    LOGGER.error(e.getMessage());
+                }
+            }
+        }
+
+        return nMediaSources > 0;
     }
 
     @Override
@@ -1534,6 +1607,20 @@ public abstract class AbstractProxyPrintService extends AbstractService
         final Printer printer =
                 getValidateSingleProxyPrinterAccess(reader, cardUser);
 
+        /*
+         * Printer must be properly configured.
+         */
+        if (!this.isPrinterConfigured(
+                this.getCachedCupsPrinter(printer.getPrinterName()),
+                new PrinterAttrLookup(printer))) {
+
+            throw new ProxyPrintException(String.format(
+                    "Print for user \"%s\" denied: %s \"%s\" %s",
+                    cardUser.getUserId(), "printer", printer.getPrinterName(),
+                    "is not configured."));
+        }
+
+        //
         this.getValidateProxyPrinterAccess(cardUser, printer.getPrinterName(),
                 ServiceContext.getTransactionDate());
 
@@ -1675,7 +1762,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
             /*
              * Chunk!
              */
-            this.chunkProxyPrintRequest(user, printReq, PageScalingEnum.CROP);
+            this.chunkProxyPrintRequest(user, printReq, PageScalingEnum.CROP,
+                    false, null);
 
             final ProxyPrintCostParms costParms = new ProxyPrintCostParms();
 
@@ -1979,12 +2067,12 @@ public abstract class AbstractProxyPrintService extends AbstractService
     }
 
     @Override
-    public final void
-            chunkProxyPrintRequest(final User lockedUser,
-                    final ProxyPrintInboxReq request,
-                    final PageScalingEnum pageScaling)
-                    throws ProxyPrintException {
-        new ProxyPrintInboxReqChunker(lockedUser, request, pageScaling).chunk();
+    public final void chunkProxyPrintRequest(final User lockedUser,
+            final ProxyPrintInboxReq request,
+            final PageScalingEnum pageScaling, final boolean chunkVanillaJobs,
+            final Integer iVanillaJob) throws ProxyPrintException {
+        new ProxyPrintInboxReqChunker(lockedUser, request, pageScaling).chunk(
+                chunkVanillaJobs, iVanillaJob, request.getPageRanges());
     }
 
     @Override
@@ -1996,6 +2084,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
          * replaced by chunk values. So, we save the original request parameters
          * here, and restore them afterwards.
          */
+        final String orgJobName = request.getJobName();
         final boolean orgClearPages = request.isClearPages();
         final Boolean orgFitToPage = request.getFitToPage();
         final String orgMediaOption = request.getMediaOption();
@@ -2047,6 +2136,10 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
                     request.setCost(chunk.getCost());
 
+                    if (StringUtils.isBlank(orgJobName)) {
+                        request.setJobName(chunk.getJobName());
+                    }
+
                     /*
                      * Save the original pages.
                      */
@@ -2070,6 +2163,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
             /*
              * Restore the original request parameters.
              */
+            request.setJobName(orgJobName);
             request.setClearPages(orgClearPages);
             request.setFitToPage(orgFitToPage);
             request.setMediaOption(orgMediaOption);

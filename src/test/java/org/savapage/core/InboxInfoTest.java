@@ -33,9 +33,10 @@ import org.apache.log4j.BasicConfigurator;
 import org.junit.Before;
 import org.junit.Test;
 import org.savapage.core.inbox.InboxInfoDto;
-import org.savapage.core.inbox.RangeAtom;
 import org.savapage.core.inbox.InboxInfoDto.InboxJob;
 import org.savapage.core.inbox.InboxInfoDto.InboxJobRange;
+import org.savapage.core.inbox.RangeAtom;
+import org.savapage.core.print.proxy.ProxyPrintException;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.print.proxy.ProxyPrintJobChunkInfo;
 import org.savapage.core.services.InboxService;
@@ -90,7 +91,7 @@ public final class InboxInfoTest {
 
             final InboxJobRange range = new InboxInfoDto.InboxJobRange();
             range.setJob(i++);
-            range.setRange(InboxJobRange.FULL_PAGE_RANGE);
+            range.setRange(RangeAtom.FULL_PAGE_RANGE);
 
             jobinfo.getPages().add(range); // append
 
@@ -331,7 +332,8 @@ public final class InboxInfoTest {
         assertTrue(inboxInfo.getPages().size() == 1);
 
         final InboxInfoDto inboxInfoFiltered =
-                INBOX_SERVICE.filterInboxInfoPages(inboxInfo, "");
+                INBOX_SERVICE.filterInboxInfoPages(inboxInfo,
+                        RangeAtom.FULL_PAGE_RANGE);
 
         assertTrue(inboxInfoFiltered.getJobs().size() == 1);
         assertTrue(inboxInfoFiltered.getPages().size() == 1);
@@ -451,8 +453,7 @@ public final class InboxInfoTest {
 
         //
         jobRange = inboxInfoFiltered.getPages().get(0);
-        ranges =
-                INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
+        ranges = INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
 
         assertTrue(ranges.size() == 1);
 
@@ -463,8 +464,7 @@ public final class InboxInfoTest {
 
         //
         jobRange = inboxInfoFiltered.getPages().get(1);
-        ranges =
-                INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
+        ranges = INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
 
         assertTrue(ranges.size() == 1);
 
@@ -520,32 +520,32 @@ public final class InboxInfoTest {
 
         job.setPages(5);
 
-        //------------
+        // ------------
         // Ranges
-        //------------
-        InboxJobRange jobRange ;
+        // ------------
+        InboxJobRange jobRange;
 
         // 0
         jobRange = new InboxInfoDto.InboxJobRange();
         inboxInfo.getPages().add(jobRange);
         jobRange.setJob(0);
-        jobRange.setRange("");
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
 
         // 1
         jobRange = new InboxInfoDto.InboxJobRange();
         inboxInfo.getPages().add(jobRange);
         jobRange.setJob(1);
-        jobRange.setRange("");
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
 
         // 2
         jobRange = new InboxInfoDto.InboxJobRange();
         inboxInfo.getPages().add(jobRange);
         jobRange.setJob(2);
-        jobRange.setRange("");
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
 
-        //------------
+        // ------------
         // TEST
-        //------------
+        // ------------
         assertTrue(inboxInfo.getJobs().size() == 3);
         assertTrue(inboxInfo.getPages().size() == 3);
 
@@ -565,8 +565,7 @@ public final class InboxInfoTest {
 
         //
         jobRange = inboxInfoFiltered.getPages().get(0);
-        ranges =
-                INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
+        ranges = INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
 
         assertTrue(ranges.size() == 1);
 
@@ -577,8 +576,7 @@ public final class InboxInfoTest {
 
         //
         jobRange = inboxInfoFiltered.getPages().get(1);
-        ranges =
-                INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
+        ranges = INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
 
         assertTrue(ranges.size() == 1);
 
@@ -588,7 +586,6 @@ public final class InboxInfoTest {
         assertTrue(range.pageEnd == 5);
 
     }
-
 
     @Test
     public void testInboxInfoFiltering10() {
@@ -635,10 +632,10 @@ public final class InboxInfoTest {
 
         job.setPages(5);
 
-        //------------
+        // ------------
         // Ranges
-        //------------
-        InboxJobRange jobRange ;
+        // ------------
+        InboxJobRange jobRange;
 
         // 0
         jobRange = new InboxInfoDto.InboxJobRange();
@@ -658,9 +655,9 @@ public final class InboxInfoTest {
         jobRange.setJob(2);
         jobRange.setRange("2-3");
 
-        //------------
+        // ------------
         // TEST
-        //------------
+        // ------------
         assertTrue(inboxInfo.getJobs().size() == 3);
         assertTrue(inboxInfo.getPages().size() == 3);
 
@@ -678,8 +675,7 @@ public final class InboxInfoTest {
         //
         jobRange = inboxInfoFiltered.getPages().get(0);
         assertTrue(jobRange.getJob() == 0);
-        ranges =
-                INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
+        ranges = INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
 
         assertTrue(ranges.size() == 1);
 
@@ -691,8 +687,7 @@ public final class InboxInfoTest {
         //
         jobRange = inboxInfoFiltered.getPages().get(1);
         assertTrue(jobRange.getJob() == 1);
-        ranges =
-                INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
+        ranges = INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
 
         assertTrue(ranges.size() == 1);
 
@@ -704,8 +699,7 @@ public final class InboxInfoTest {
         //
         jobRange = inboxInfoFiltered.getPages().get(2);
         assertTrue(jobRange.getJob() == 1);
-        ranges =
-                INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
+        ranges = INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
 
         assertTrue(ranges.size() == 1);
 
@@ -717,8 +711,7 @@ public final class InboxInfoTest {
         //
         jobRange = inboxInfoFiltered.getPages().get(3);
         assertTrue(jobRange.getJob() == 2);
-        ranges =
-                INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
+        ranges = INBOX_SERVICE.createSortedRangeArray(jobRange.getRange());
 
         assertTrue(ranges.size() == 1);
 
@@ -812,7 +805,7 @@ public final class InboxInfoTest {
         inboxInfo.getJobs().get(0).setMedia(MediaSizeName.ISO_A4.toString());
 
         final ProxyPrintJobChunkInfo chunkInfo =
-                new ProxyPrintJobChunkInfo(inboxInfo, "");
+                new ProxyPrintJobChunkInfo(inboxInfo, RangeAtom.FULL_PAGE_RANGE);
 
         assertTrue(chunkInfo.getInboxInfo().getJobs().size() == 1);
 
@@ -847,13 +840,13 @@ public final class InboxInfoTest {
         inboxInfo.getPages().add(range);
 
         range.setJob(iJob);
-        range.setRange(InboxJobRange.FULL_PAGE_RANGE);
+        range.setRange(RangeAtom.FULL_PAGE_RANGE);
 
         /*
          * Test.
          */
         final ProxyPrintJobChunkInfo chunkInfo =
-                new ProxyPrintJobChunkInfo(inboxInfo, "");
+                new ProxyPrintJobChunkInfo(inboxInfo, RangeAtom.FULL_PAGE_RANGE);
 
         assertTrue(chunkInfo.getInboxInfo().getJobs().size() == 1);
         assertTrue(chunkInfo.getChunks().size() == 1);
@@ -864,7 +857,6 @@ public final class InboxInfoTest {
         assertTrue(atom.pageBegin == 1 && atom.pageEnd == 2);
 
     }
-
 
     @Test
     public void testPrintJobChunkInfo5() {
@@ -911,10 +903,10 @@ public final class InboxInfoTest {
 
         job.setPages(5);
 
-        //------------
+        // ------------
         // Ranges
-        //------------
-        InboxJobRange jobRange ;
+        // ------------
+        InboxJobRange jobRange;
 
         // 0
         jobRange = new InboxInfoDto.InboxJobRange();
@@ -934,9 +926,9 @@ public final class InboxInfoTest {
         jobRange.setJob(2);
         jobRange.setRange("2-3");
 
-        //------------
+        // ------------
         // TEST
-        //------------
+        // ------------
         final ProxyPrintJobChunkInfo chunkInfo =
                 new ProxyPrintJobChunkInfo(inboxInfo, "2,4-5,7-8");
 
@@ -1009,7 +1001,7 @@ public final class InboxInfoTest {
          * Test.
          */
         final ProxyPrintJobChunkInfo chunkInfo =
-                new ProxyPrintJobChunkInfo(inboxInfo, "");
+                new ProxyPrintJobChunkInfo(inboxInfo, RangeAtom.FULL_PAGE_RANGE);
 
         assertTrue(chunkInfo.getInboxInfo().getJobs().size() == 1);
         assertTrue(chunkInfo.getChunks().size() == 1);
@@ -1018,6 +1010,426 @@ public final class InboxInfoTest {
         RangeAtom atom = chunkInfo.getChunks().get(0).getRanges().get(0);
 
         assertTrue(atom.pageBegin == 2 && atom.pageEnd == 2);
+    }
+
+    @Test
+    public void testPrintJobChunkInfo7() {
+
+        /*
+         * Prepare.
+         */
+        final InboxInfoDto inboxInfo = new InboxInfoDto();
+
+        int iJob = 0;
+
+        // Job 0
+        InboxJob job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        String name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(5);
+
+        // Job 1
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(10);
+
+        // Job 2
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(3);
+
+        // ------------
+        // Ranges
+        // ------------
+        InboxJobRange jobRange;
+
+        // 0
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(0);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // 1
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(1);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // 2
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(2);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // ------------
+        // TEST
+        // ------------
+        ProxyPrintJobChunkInfo chunkInfo;
+        try {
+            chunkInfo = new ProxyPrintJobChunkInfo(inboxInfo);
+        } catch (ProxyPrintException e) {
+            chunkInfo = null;
+        }
+
+        assertTrue(chunkInfo != null);
+
+        assertTrue(chunkInfo.getInboxInfo().getJobs().size() == 3);
+        assertTrue(chunkInfo.getChunks().size() == 3);
+
+        //
+        ProxyPrintJobChunk chunk;
+        RangeAtom atom;
+
+        //
+        chunk = chunkInfo.getChunks().get(0);
+        assertTrue(chunk.getMediaSizeName() == MediaSizeName.ISO_A4);
+        assertTrue(chunk.getRanges().size() == 1);
+
+        atom = chunk.getRanges().get(0);
+        assertTrue(atom.pageBegin == 1 && atom.pageEnd == 5);
+
+        //
+        chunk = chunkInfo.getChunks().get(1);
+        assertTrue(chunk.getMediaSizeName() == MediaSizeName.ISO_A4);
+
+        assertTrue(chunk.getRanges().size() == 1);
+
+        atom = chunk.getRanges().get(0);
+        assertTrue(atom.pageBegin == 1 && atom.pageEnd == 10);
+
+        //
+        chunk = chunkInfo.getChunks().get(2);
+        assertTrue(chunk.getMediaSizeName() == MediaSizeName.ISO_A4);
+        assertTrue(chunk.getRanges().size() == 1);
+
+        atom = chunk.getRanges().get(0);
+        assertTrue(atom.pageBegin == 1 && atom.pageEnd == 3);
+
+    }
+
+    @Test
+    public void testPrintJobChunkInfo8() {
+
+        /*
+         * Prepare.
+         */
+        final InboxInfoDto inboxInfo = new InboxInfoDto();
+
+        int iJob = 0;
+
+        // Job 0
+        InboxJob job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        String name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(5);
+
+        // Job 1
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A3.toString());
+
+        job.setPages(10);
+
+        // Job 2
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(5);
+
+        // ------------
+        // Ranges
+        // ------------
+        InboxJobRange jobRange;
+
+        // 0
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(0);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // 1
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(1);
+        jobRange.setRange("6-10");
+
+        // 2
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(2);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // ------------
+        // TEST
+        // ------------
+        boolean thrown = false;
+        try {
+            new ProxyPrintJobChunkInfo(inboxInfo);
+        } catch (ProxyPrintException e) {
+            thrown = true;
+        }
+
+        assertTrue(thrown);
+
+    }
+
+    @Test
+    public void testIsVanilla1() {
+
+        /*
+         * Prepare.
+         */
+        final InboxInfoDto inboxInfo = new InboxInfoDto();
+
+        int iJob = 0;
+
+        // Job 0
+        InboxJob job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        String name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(5);
+
+        // Job 1
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A3.toString());
+
+        job.setPages(10);
+
+        // Job 2
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(5);
+
+        // ------------
+        // Ranges
+        // ------------
+        InboxJobRange jobRange;
+
+        // 0
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(0);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // 1
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(1);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // 2
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(2);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // ------------
+        // TEST
+        // ------------
+        assertTrue(INBOX_SERVICE.isInboxVanilla(inboxInfo));
+
+    }
+
+    @Test
+    public void testIsVanilla2() {
+
+        /*
+         * Prepare.
+         */
+        final InboxInfoDto inboxInfo = new InboxInfoDto();
+
+        int iJob = 0;
+
+        // Job 0
+        InboxJob job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        String name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(5);
+
+        // Job 1
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A3.toString());
+
+        job.setPages(10);
+
+        // Job 2
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(5);
+
+        // ------------
+        // Ranges
+        // ------------
+        InboxJobRange jobRange;
+
+        // 0
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(2);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // 1
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(1);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // 2
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(0);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // ------------
+        // TEST
+        // ------------
+        assertTrue(!INBOX_SERVICE.isInboxVanilla(inboxInfo));
+    }
+
+    @Test
+    public void testIsVanilla3() {
+
+        /*
+         * Prepare.
+         */
+        final InboxInfoDto inboxInfo = new InboxInfoDto();
+
+        int iJob = 0;
+
+        // Job 0
+        InboxJob job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        String name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(5);
+
+        // Job 1
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A3.toString());
+
+        job.setPages(10);
+
+        // Job 2
+        iJob++;
+        job = new InboxJob();
+        inboxInfo.getJobs().add(job);
+
+        name = "file_" + iJob;
+        job.setFile(name + ".pdf");
+        job.setTitle(name);
+        job.setMedia(MediaSizeName.ISO_A4.toString());
+
+        job.setPages(5);
+
+        // ------------
+        // Ranges
+        // ------------
+        InboxJobRange jobRange;
+
+        // 0
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(0);
+        jobRange.setRange("1-");
+
+        // 1
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(1);
+        jobRange.setRange("1-10");
+
+        // 2
+        jobRange = new InboxInfoDto.InboxJobRange();
+        inboxInfo.getPages().add(jobRange);
+        jobRange.setJob(2);
+        jobRange.setRange(RangeAtom.FULL_PAGE_RANGE);
+
+        // ------------
+        // TEST
+        // ------------
+        assertTrue(INBOX_SERVICE.isInboxVanilla(inboxInfo));
+
     }
 
 }
