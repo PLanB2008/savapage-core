@@ -25,99 +25,49 @@ import java.util.Currency;
 import java.util.Locale;
 
 import org.apache.commons.lang3.StringUtils;
-import org.savapage.core.config.ConfigManager;
-import org.savapage.core.config.IConfigProp;
-import org.savapage.core.config.IConfigProp.Key;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author Datraverse B.V.
  *
  */
-public class CurrencyUtil {
-
-    private final static String UNKNOWN_CURRENCY_SYMBOL = "?";
-
-    private final static Logger LOGGER = LoggerFactory
-            .getLogger(CurrencyUtil.class);
+public final class CurrencyUtil {
 
     /**
-     * Gets the Currency symbol, i.e:
-     * <ul>
-     * <li>An EMPTY string when currency may NOT be shown</li>
-     * <li>A custom symbol as set in
-     * {@link IConfigProp.Key#USER_FIN_CURRENCY_SYMBOL_CUSTOM}</li>
-     * <li>The currency belonging to {@link Locale#getCountry()}</li>
-     * <li>{@link #UNKNOWN_CURRENCY_SYMBOL} when currency symbol is not
-     * available.</li>
-     * </ul>
-     *
-     * @return The currency symbol.
+     * The Bitcoin currency code.
      */
-    public static String getCurrencySymbol(final Locale locale) {
+    public static final String BITCOIN_CURRENCY_CODE = "BTC";
 
-        String currencySymbol = "";
+    /**
+     * Hide constructor.
+     */
+    private CurrencyUtil() {
+    }
 
-        final ConfigManager cm = ConfigManager.instance();
+    /**
+     * Gets the currency symbol for the ISO currency code according to a
+     * {@link Locale}, or for the non-ISO "BTC" bitcoin currency code.
+     *
+     * @param currencyCode
+     *            The currency code.
+     * @param locale
+     *            The {@link Locale}.
+     * @return The currency symbol (or code).
+     */
+    public static String getCurrencySymbol(final String currencyCode,
+            final Locale locale) {
 
-        if (cm.isConfigValue(Key.USER_FIN_CURRENTCY_SYMBOL_SHOWS)) {
+        final String currencyCodeWrk = StringUtils.defaultString(currencyCode);
 
-            currencySymbol =
-                    cm.getConfigValue(Key.USER_FIN_CURRENCY_SYMBOL_CUSTOM);
-
-            if (StringUtils.isBlank(currencySymbol)) {
-
-                Currency currency = null;
-
-                try {
-
-                    currency = Currency.getInstance(locale);
-
-                } catch (IllegalArgumentException e1) {
-                    /*
-                     * Locale is NOT a supported ISO 3166 country. Try the
-                     * default locale instead.
-                     */
-                    final Locale standardLocale = Locale.getDefault();
-
-                    LOGGER.debug("Country [" + locale.getCountry()
-                            + "] of Locale [" + locale.getDisplayName()
-                            + "] is NOT a supported ISO 3166 country."
-                            + " Using Country [" + standardLocale.getCountry()
-                            + "] from Default Locale ["
-                            + standardLocale.getDisplayName() + "]");
-
-                    try {
-
-                        currency = Currency.getInstance(standardLocale);
-
-                    } catch (IllegalArgumentException e2) {
-
-                        LOGGER.warn("Country [" + standardLocale.getCountry()
-                                + "] of Default Locale ["
-                                + standardLocale.getDisplayName()
-                                + "] is NOT a supported ISO 3166 country."
-                                + " Using currency symbol ["
-                                + UNKNOWN_CURRENCY_SYMBOL + "]");
-                    }
-                }
-
-                if (currency == null) {
-                    /*
-                     * This territory does not have a currency (like Antartica)
-                     * or an IllegalArgumentException occurred.
-                     */
-                    currencySymbol = UNKNOWN_CURRENCY_SYMBOL;
-                } else {
-                    currencySymbol = currency.getSymbol();
-                }
-
-            }
-
+        if (currencyCodeWrk.equals(BITCOIN_CURRENCY_CODE)) {
+            return "Ƀ";
         }
-        return currencySymbol;
+
+        try {
+            return Currency.getInstance(currencyCodeWrk).getSymbol(locale);
+        } catch (Exception e) {
+            return currencyCodeWrk;
+        }
     }
 
 }

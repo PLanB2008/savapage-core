@@ -19,44 +19,27 @@
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
-package org.savapage.core;
+package org.savapage.core.inbox;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Date;
 import java.util.LinkedHashMap;
 
-import javax.mail.Message;
-import javax.mail.MessagingException;
-import javax.mail.Multipart;
-import javax.mail.PasswordAuthentication;
-import javax.mail.SendFailedException;
-import javax.mail.internet.InternetAddress;
-import javax.mail.internet.MimeBodyPart;
-import javax.mail.internet.MimeMessage;
-import javax.mail.internet.MimeMultipart;
-
 import org.apache.commons.lang3.StringUtils;
-import org.savapage.core.circuitbreaker.CircuitBreaker;
-import org.savapage.core.circuitbreaker.CircuitBreakerException;
-import org.savapage.core.circuitbreaker.CircuitBreakerOperation;
-import org.savapage.core.circuitbreaker.CircuitNonTrippingException;
-import org.savapage.core.circuitbreaker.CircuitTrippingException;
+import org.savapage.core.LetterheadNotFoundException;
+import org.savapage.core.PostScriptDrmException;
+import org.savapage.core.SpException;
 import org.savapage.core.community.CommunityDictEnum;
-import org.savapage.core.config.CircuitBreakerEnum;
 import org.savapage.core.config.ConfigManager;
-import org.savapage.core.config.IConfigProp;
-import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.doc.DocContent;
-import org.savapage.core.img.ImageUrl;
-import org.savapage.core.img.PdfToImgCommand;
-import org.savapage.core.img.PopplerPdfToImgCommand;
-import org.savapage.core.inbox.InboxInfoDto;
+import org.savapage.core.imaging.ImageUrl;
+import org.savapage.core.imaging.Pdf2ImgCommandExt;
+import org.savapage.core.imaging.Pdf2PngPopplerCmd;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.User;
 import org.savapage.core.pdf.AbstractPdfCreator;
+import org.savapage.core.pdf.PdfCreateRequest;
 import org.savapage.core.services.DocLogService;
 import org.savapage.core.services.InboxService;
 import org.savapage.core.services.ServiceContext;
@@ -95,8 +78,7 @@ public final class OutputProducer {
     /**
      *
      */
-    private final PdfToImgCommand pdfToImgCommand =
-            new PopplerPdfToImgCommand();
+    private final Pdf2ImgCommandExt pdf2PngCommand = new Pdf2PngPopplerCmd();
 
     /**
      *
@@ -121,27 +103,6 @@ public final class OutputProducer {
      */
     public static OutputProducer instance() {
         return SingletonHolder.INSTANCE;
-    }
-
-    /**
-     * Performs a file move as an ATOMIC_MOVE file operation. If the file system
-     * does not support an atomic move, an exception is thrown. With an
-     * ATOMIC_MOVE you can move a file into a directory and be guaranteed that
-     * any process watching the directory accesses a complete file.
-     *
-     * @param source
-     *            The source path.
-     * @param target
-     *            The target path.
-     * @throws IOException
-     *             If any IO error occurs.
-     */
-    public static void doAtomicFileMove(final Path source, final Path target)
-            throws IOException {
-
-        java.nio.file.Files.move(source, target,
-                StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING);
     }
 
     /**
@@ -215,7 +176,7 @@ public final class OutputProducer {
          * Create a unique temp image filename (remember images are retrieved
          * concurrently by a browser).
          */
-        long time = new Date().getTime();
+        long time = System.currentTimeMillis();
 
         final StringBuilder imgFileBuilder = new StringBuilder(128);
 
@@ -267,12 +228,22 @@ public final class OutputProducer {
         /*
          * Create image.
          */
-        final String srcFile = srcFileBuilder.toString();
-        final String imgFile = imgFileBuilder.toString();
+        final File srcFile = new File(srcFileBuilder.toString());
+        final File imgFile = new File(imgFileBuilder.toString());
+
+        final int imgWidth;
+
+        if (thumbnail) {
+            imgWidth = ImageUrl.THUMBNAIL_WIDTH;
+        } else {
+            imgWidth = ImageUrl.BROWSER_PAGE_WIDTH;
+        }
 
         final String command =
-                pdfToImgCommand.createCommand(Integer.parseInt(page),
-                        thumbnail, rotate2Apply, srcFile, imgFile);
+                pdf2PngCommand.createCommand(srcFile, imgFile,
+                        Integer.parseInt(page), rotate2Apply,
+                        Pdf2PngPopplerCmd.RESOLUTION_FOR_SCREEN,
+                        Integer.valueOf(imgWidth));
 
         LOGGER.trace(command);
 
@@ -289,7 +260,7 @@ public final class OutputProducer {
             throw new SpException(e);
         }
 
-        return new File(imgFile);
+        return imgFile;
     }
 
     /**
@@ -311,8 +282,7 @@ public final class OutputProducer {
         /*
          * Make filename unique.
          */
-        Date now = new Date();
-        long time = now.getTime();
+        long time = System.currentTimeMillis();
 
         String imgFile =
                 ConfigManager.getAppTmpDir() + "/" + user + "_" + job + "_"
@@ -364,7 +334,10 @@ public final class OutputProducer {
      */
     public void releasePdf(final File pdf) {
         if (pdf.delete()) {
-            LOGGER.trace("deleted temp file [" + pdf.getAbsolutePath() + "]");
+            if (LOGGER.isTraceEnabled()) {
+                LOGGER.trace("deleted temp file [" + pdf.getAbsolutePath()
+                        + "]");
+            }
         } else {
             LOGGER.error("delete of temp file [" + pdf.getAbsolutePath()
                     + "] FAILED");
@@ -417,38 +390,30 @@ public final class OutputProducer {
     public File createLetterhead(final String directory, final User user)
             throws LetterheadNotFoundException, PostScriptDrmException {
 
-        final Date now = new Date();
+        final StringBuilder pdfFile =
+                new StringBuilder().append(directory).append("/letterhead-")
+                        .append(System.currentTimeMillis()).append(".")
+                        .append(DocContent.FILENAME_EXT_PDF);
 
-        final String pdfFile =
-                directory + "/letterhead-" + now.getTime() + "."
-                        + DocContent.FILENAME_EXT_PDF;
+        final PdfCreateRequest pdfRequest = new PdfCreateRequest();
 
-        return generatePdf(user, pdfFile,
-                INBOX_SERVICE.getInboxInfo(user.getUserId()), false, false,
-                false, false, null, null);
+        pdfRequest.setUserObj(user);
+        pdfRequest.setPdfFile(pdfFile.toString());
+        pdfRequest.setInboxInfo(INBOX_SERVICE.getInboxInfo(user.getUserId()));
+        pdfRequest.setRemoveGraphics(false);
+        pdfRequest.setApplyPdfProps(false);
+        pdfRequest.setApplyLetterhead(false);
+        pdfRequest.setForPrinting(false);
+
+        return generatePdf(pdfRequest, null, null);
     }
 
     /**
      *
      * Generates PDF file from the edited jobs for a user.
      *
-     * @param userObj
-     *            The requesting user.
-     * @param pdfFile
-     *            The name of the PDF file to generate.
-     * @param inboxInfo
-     *            The {@link InboxInfoDto} (with the filtered jobs).
-     * @param removeGraphics
-     *            If <code>true</code> graphics are removed (minified to
-     *            one-pixel).
-     * @param applyPdfProps
-     *            If <code>true</code> the stored PDF properties for 'user'
-     *            should be applied.
-     * @param applyLetterhead
-     *            If <code>true</code> the selected letterhead should be
-     *            applied.
-     * @param forPrinting
-     *            <code>true</code> if this is a PDF generated for printing.
+     * @param createReq
+     *            The {@link PdfCreateRequest}.
      * @param uuidPageCount
      *            This object will be filled with the number of selected pages
      *            per input file UUID. A value of {@code null} is allowed. Note:
@@ -458,19 +423,17 @@ public final class OutputProducer {
      *            is allowed: in that case no data is collected.
      * @return File object with generated PDF.
      * @throws PostScriptDrmException
+     *             When source is DRM restricted.
      * @throws LetterheadNotFoundException
+     *             When letterhead is not found.
      */
-    public File generatePdf(final User userObj, final String pdfFile,
-            final InboxInfoDto inboxInfo, boolean removeGraphics,
-            boolean applyPdfProps, boolean applyLetterhead,
-            boolean forPrinting,
+    public File generatePdf(final PdfCreateRequest createReq,
             final LinkedHashMap<String, Integer> uuidPageCount,
             final DocLog docLog) throws LetterheadNotFoundException,
             PostScriptDrmException {
 
-        return AbstractPdfCreator.create().generate(userObj, pdfFile,
-                inboxInfo, removeGraphics, applyPdfProps, applyLetterhead,
-                forPrinting, uuidPageCount, docLog);
+        return AbstractPdfCreator.create().generate(createReq, uuidPageCount,
+                docLog);
     }
 
     /**
@@ -497,6 +460,8 @@ public final class OutputProducer {
      * @param removeGraphics
      *            If <code>true</code> graphics are removed (minified to
      *            one-pixel).
+     * @param ecoPdf
+     *            <code>true</code> if Eco PDF is to be generated.
      * @param docLog
      *            The document log to update.
      * @return File object with generated PDF.
@@ -504,8 +469,8 @@ public final class OutputProducer {
      * @throws LetterheadNotFoundException
      */
     public File generatePdfForExport(final User user, final String pdfFile,
-            final String documentPageRangeFilter, boolean removeGraphics,
-            final DocLog docLog) throws IOException,
+            final String documentPageRangeFilter, final boolean removeGraphics,
+            final boolean ecoPdf, final DocLog docLog) throws IOException,
             LetterheadNotFoundException, PostScriptDrmException {
 
         final LinkedHashMap<String, Integer> uuidPageCount =
@@ -522,263 +487,22 @@ public final class OutputProducer {
                             documentPageRangeFilter);
         }
 
-        final File file =
-                generatePdf(user, pdfFile, inboxInfo, removeGraphics, true,
-                        true, false, uuidPageCount, docLog);
+        final PdfCreateRequest pdfRequest = new PdfCreateRequest();
+
+        pdfRequest.setUserObj(user);
+        pdfRequest.setPdfFile(pdfFile);
+        pdfRequest.setInboxInfo(inboxInfo);
+        pdfRequest.setRemoveGraphics(removeGraphics);
+        pdfRequest.setApplyPdfProps(true);
+        pdfRequest.setApplyLetterhead(true);
+        pdfRequest.setForPrinting(false);
+        pdfRequest.setEcoPdf(ecoPdf);
+
+        final File file = generatePdf(pdfRequest, uuidPageCount, docLog);
 
         DOCLOG_SERVICE.collectData4DocOut(user, docLog, file, uuidPageCount);
 
         return file;
     }
 
-    /**
-     * Sends an email.
-     *
-     * @param toAddress
-     *            The email address.
-     * @param subject
-     *            The subject of the message.
-     * @param body
-     *            The body text with optional newline {@code \n} characters.
-     * @throws MessagingException
-     * @throws IOException
-     * @throws CircuitBreakerException
-     * @throws InterruptedException
-     */
-    public static void sendEmail(final String toAddress, final String subject,
-            final String body) throws MessagingException, IOException,
-            InterruptedException, CircuitBreakerException {
-
-        instance().sendEmail(toAddress, null, subject, body, null, null);
-    }
-
-    /**
-     * Sends an email with an optional file attachment.
-     *
-     * <p>
-     * See these links for <a href=
-     * "http://www.mkyong.com/java/javamail-api-sending-email-via-gmail-smtp-example/"
-     * >SSL and TLS</a> and <a href=
-     * "http://www.codejava.net/java-ee/javamail/send-e-mail-with-attachment-in-java"
-     * >attachments</a>.
-     * </p>
-     * <p>
-     * Or, see the <a href=
-     * "https://javamail.java.net/nonav/docs/api/com/sun/mail/smtp/package-summary.html"
-     * >JavaDocs</a>.
-     * </p>
-     *
-     * @param toAddress
-     *            The email address.
-     * @param toName
-     *            The personal name of the recipient (can be {@code null}).
-     * @param subject
-     *            The subject of the message.
-     * @param body
-     *            The body text with optional newline {@code \n} characters.
-     * @param fileAttach
-     *            The file to attach (can be {@code null}).
-     * @param fileName
-     *            The name of the attachment.
-     * @throws MessagingException
-     * @throws IOException
-     * @throws CircuitBreakerException
-     * @throws InterruptedException
-     */
-    public void sendEmail(final String toAddress, final String toName,
-            final String subject, final String body, final File fileAttach,
-            final String fileName) throws IOException, MessagingException,
-            InterruptedException, CircuitBreakerException {
-
-        final ConfigManager conf = ConfigManager.instance();
-
-        final String host = conf.getConfigValue(IConfigProp.Key.MAIL_SMTP_HOST);
-        final String port = conf.getConfigValue(IConfigProp.Key.MAIL_SMTP_PORT);
-
-        final String username =
-                conf.getConfigValue(IConfigProp.Key.MAIL_SMTP_USER_NAME);
-
-        final String password =
-                conf.getConfigValue(IConfigProp.Key.MAIL_SMTP_PASSWORD);
-
-        final String security =
-                conf.getConfigValue(IConfigProp.Key.MAIL_SMTP_SECURITY);
-
-        final boolean debug =
-                conf.isConfigValue(IConfigProp.Key.MAIL_SMTP_DEBUG);
-
-        /*
-         * Create properties and get the default Session
-         */
-        final java.util.Properties props = new java.util.Properties();
-
-        /*
-         * Timeout (in milliseconds) for establishing the SMTP connection.
-         */
-        props.put("mail.smtp.connectiontimeout",
-                conf.getConfigInt(Key.MAIL_SMTP_CONNECTIONTIMEOUT));
-
-        /*
-         * The timeout (milliseconds) for sending the mail messages.
-         */
-        props.put("mail.smtp.timeout", conf.getConfigInt(Key.MAIL_SMTP_TIMEOUT));
-
-        //
-        props.put("mail.smtp.host", host);
-        props.put("mail.smtp.port", port);
-
-        javax.mail.Authenticator authenticator = null;
-
-        if (StringUtils.isNotBlank(username)) {
-            props.put("mail.smtp.auth", "true");
-            authenticator = new javax.mail.Authenticator() {
-                @Override
-                protected PasswordAuthentication getPasswordAuthentication() {
-                    return new PasswordAuthentication(username, password);
-                }
-            };
-        }
-
-        if (security.equalsIgnoreCase(IConfigProp.SMTP_SECURITY_V_STARTTLS)) {
-            props.put("mail.smtp.starttls.enable", "true");
-        } else if (security.equalsIgnoreCase(IConfigProp.SMTP_SECURITY_V_SSL)) {
-            props.put("mail.smtp.socketFactory.port", port);
-            props.put("mail.smtp.socketFactory.class",
-                    "javax.net.ssl.SSLSocketFactory");
-        }
-
-        // "mail.smtp.connectiontimeout" ??
-
-        /*
-         * Get a new session instance. Do NOT use the getDefaultInstance().
-         */
-        final javax.mail.Session session =
-                javax.mail.Session.getInstance(props, authenticator);
-
-        session.setDebug(debug);
-
-        /*
-         * Create a message
-         */
-        final MimeMessage msg = new MimeMessage(session);
-
-        // from
-        final InternetAddress addrFrom = new InternetAddress();
-        addrFrom.setAddress(conf
-                .getConfigValue(IConfigProp.Key.MAIL_FROM_ADDRESS));
-        addrFrom.setPersonal(conf
-                .getConfigValue(IConfigProp.Key.MAIL_FROM_NAME));
-        msg.setFrom(addrFrom);
-
-        // reply-to
-        if (conf.getConfigValue(IConfigProp.Key.MAIL_REPLY_TO_ADDRESS) != null) {
-            final InternetAddress addrReplyTo = new InternetAddress();
-            addrReplyTo.setAddress(conf
-                    .getConfigValue(IConfigProp.Key.MAIL_REPLY_TO_ADDRESS));
-            final String name =
-                    conf.getConfigValue(IConfigProp.Key.MAIL_REPLY_TO_NAME);
-            if (name != null) {
-                addrReplyTo.setPersonal(name);
-            }
-            final InternetAddress[] addressReplyTo = { addrReplyTo };
-            msg.setReplyTo(addressReplyTo);
-        }
-
-        // to
-        final InternetAddress addrTo = new InternetAddress();
-        addrTo.setAddress(toAddress);
-
-        if (toName != null) {
-            addrTo.setPersonal(toName);
-        }
-
-        final InternetAddress[] address = { addrTo };
-        msg.setRecipients(Message.RecipientType.TO, address);
-
-        // subject
-        msg.setSubject(subject);
-
-        // date
-        msg.setSentDate(new java.util.Date());
-
-        // create and fill the first message part
-        final MimeBodyPart mbp1 = new MimeBodyPart();
-        mbp1.setText(body);
-
-        // create and fill the second message part
-        final MimeBodyPart mbp2 = new MimeBodyPart();
-
-        // Use setText(text, charset), to show it off !
-        // mbp2.setText(strFileAttach, "us-ascii");
-
-        // create the Multipart and its parts to it
-        final Multipart mp = new MimeMultipart();
-        mp.addBodyPart(mbp1);
-
-        //
-        if (fileAttach != null) {
-            /*
-             * (1) attach
-             */
-            mbp2.attachFile(fileAttach);
-            /*
-             * (2) set the filename
-             */
-            if (fileName != null) {
-                mbp2.setFileName(fileName);
-            }
-            /*
-             * (3) add
-             */
-            mp.addBodyPart(mbp2);
-        }
-
-        // add the Multipart to the message
-        msg.setContent(mp);
-
-        // send the message
-        sendMimeMessage(msg);
-    }
-
-    /**
-     * Sends a {@link MimeMessage} using the
-     * {@link CircuitBreakerEnum#SMTP_CONNECTION}.
-     *
-     * @param msg
-     *            The a {@link MimeMessage}.
-     * @throws CircuitBreakerException
-     * @throws InterruptedException
-     */
-    private static void sendMimeMessage(final MimeMessage msg)
-            throws InterruptedException, CircuitBreakerException {
-
-        final CircuitBreakerOperation operation =
-                new CircuitBreakerOperation() {
-
-                    @Override
-                    public Object execute(final CircuitBreaker circuitBreaker) {
-
-                        if (!ConfigManager.isConnectedToInternet()) {
-                            throw new CircuitTrippingException(
-                                    "Not connected to the Internet.");
-                        }
-
-                        try {
-                            javax.mail.Transport.send(msg);
-                        } catch (SendFailedException e) {
-                            throw new CircuitNonTrippingException(e);
-                        } catch (MessagingException e) {
-                            throw new CircuitTrippingException(e);
-                        }
-                        return null;
-                    }
-                };
-
-        final CircuitBreaker breaker =
-                ConfigManager
-                        .getCircuitBreaker(CircuitBreakerEnum.SMTP_CONNECTION);
-
-        breaker.execute(operation);
-
-    }
 }

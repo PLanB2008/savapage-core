@@ -85,6 +85,11 @@ public enum PubTopicEnum {
     PAPERCUT("papercut"),
 
     /**
+     * PaperCut.
+     */
+    PAYMENT_GATEWAY("payment-gateway"),
+
+    /**
      * Proxy Print.
      */
     PROXY_PRINT("proxyprint"),
@@ -93,6 +98,11 @@ public enum PubTopicEnum {
      * Quartz.
      */
     SCHEDULER("scheduler"),
+
+    /**
+     *
+     */
+    SERVER_COMMAND("server-command"),
 
     /**
      * SmartSchool.

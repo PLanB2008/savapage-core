@@ -40,9 +40,16 @@ public interface DaoBatchCommitter {
     void setTest(boolean test);
 
     /**
+     * @return If {@code true} the {@link DaoBatchCommitter} will act in test
+     *         mode.
+     */
+    boolean isTest();
+
+    /**
      * Increments the batch item counter, starts a new the database transaction
-     * when needed, and performs a {@link #commit()} when the counter reaches a
-     * max value.
+     * when needed, and performs a {@link #commit()} when the counter reaches
+     * the commit threshold.
+     *
      *
      * @return The counter value after the increment.
      */
@@ -57,5 +64,11 @@ public interface DaoBatchCommitter {
      * Rolls back the current transaction (if present).
      */
     void rollback();
+
+    /**
+     *
+     * @return The commit threshold.
+     */
+    int getCommitThreshold();
 
 }

@@ -28,21 +28,31 @@ import java.awt.print.Paper;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Iterator;
 import java.util.List;
+import java.util.UUID;
 
 import javax.print.attribute.Size2DSyntax;
 import javax.print.attribute.standard.MediaSize;
 
+import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.community.CommunityDictEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.doc.ImageToPdf;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
+import org.savapage.core.imaging.EcoImageFilter;
+import org.savapage.core.imaging.EcoImageFilterSquare;
+import org.savapage.core.imaging.Pdf2ImgCommandExt;
+import org.savapage.core.imaging.Pdf2PngPopplerCmd;
 import org.savapage.core.json.PdfProperties;
+import org.savapage.core.system.CommandExecutor;
+import org.savapage.core.system.ICommandExecutor;
 import org.savapage.core.util.MediaUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -87,16 +97,18 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     private static final Logger LOGGER = LoggerFactory
             .getLogger(ITextPdfCreator.class);
 
-    private String targetPdfCopyFilePath = null;
-    private Document targetDocument = null;
-    private PdfCopy targetPdfCopy = null;
-    private PdfStamper targetStamper = null;
+    private String targetPdfCopyFilePath;
+    private Document targetDocument;
+    private PdfCopy targetPdfCopy;
+    private PdfStamper targetStamper;
 
-    private PdfReader readerWlk = null;
-    private PdfReader letterheadReader = null;
+    private PdfReader readerWlk;
+    private PdfReader letterheadReader;
 
-    private String jobRangesWlk = null;
-    private String jobRotationWlk = null;
+    private StringBuilder jobRangesWlk;
+    private String jobRotationWlk;
+
+    private File jobPdfFileWlk;
 
     private boolean isRemoveGraphics = false;
 
@@ -371,14 +383,30 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     @Override
     protected void onInit() {
 
-        this.targetPdfCopyFilePath = pdfFile + ".tmp";
+        this.targetPdfCopyFilePath = String.format("%s.tmp", this.pdfFile);
 
         try {
-            this.targetDocument = new Document();
-            this.targetPdfCopy =
-                    new PdfCopy(this.targetDocument, new FileOutputStream(
-                            this.targetPdfCopyFilePath));
-            this.targetDocument.open();
+
+            final OutputStream ostr =
+                    new FileOutputStream(this.targetPdfCopyFilePath);
+
+            if (this.isEcoPdf()) {
+
+                this.targetDocument = new Document();
+                PdfWriter.getInstance(this.targetDocument, ostr);
+
+                /*
+                 * Do not open the target document yet, but lazy open it when
+                 * page size of first page is known.
+                 */
+
+            } else {
+
+                this.targetDocument = new Document();
+                this.targetPdfCopy = new PdfCopy(this.targetDocument, ostr);
+                this.targetDocument.open();
+            }
+
         } catch (Exception e) {
             throw new SpException(e);
         }
@@ -391,61 +419,183 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     @Override
     protected void onInitJob(final String jobPfdName, final String rotation)
             throws Exception {
+
         this.readerWlk = new PdfReader(jobPfdName);
+
+        if (this.isEcoPdf()) {
+            this.jobPdfFileWlk = new File(jobPfdName);
+        }
+
         this.jobRotationWlk = rotation;
-        this.jobRangesWlk = "";
+        this.jobRangesWlk = new StringBuilder();
     }
 
     @Override
     protected void onProcessJobPages(final int nPageFrom, final int nPageTo,
             final boolean removeGraphics) throws Exception {
 
-        if (!this.jobRangesWlk.isEmpty()) {
-            this.jobRangesWlk += ",";
-        }
-
-        this.jobRangesWlk += String.valueOf(nPageFrom);
-
-        if (nPageFrom != nPageTo) {
-            this.jobRangesWlk += "-" + String.valueOf(nPageTo);
-        }
-
         this.isRemoveGraphics = removeGraphics;
+
+        if (this.isEcoPdf()) {
+
+            onProcessJobPagesEco(nPageFrom, nPageTo, removeGraphics);
+
+        } else {
+
+            if (this.jobRangesWlk.length() > 0) {
+                this.jobRangesWlk.append(",");
+            }
+
+            this.jobRangesWlk.append(nPageFrom);
+
+            if (nPageFrom != nPageTo) {
+                this.jobRangesWlk.append("-").append(nPageTo);
+            }
+        }
+    }
+
+    /**
+     *
+     * @param nPageFrom
+     * @param nPageTo
+     * @param removeGraphics
+     * @throws InterruptedException
+     * @throws IOException
+     * @throws DocumentException
+     */
+    protected void onProcessJobPagesEco(final int nPageFrom, final int nPageTo,
+            final boolean removeGraphics) throws IOException,
+            InterruptedException, DocumentException {
+
+        final Pdf2ImgCommandExt pdf2ImgCmd = new Pdf2PngPopplerCmd();
+
+        final EcoImageFilter filter = new EcoImageFilterSquare();
+
+        final File imageFile =
+                new File(String.format("%s/%s.png", this.tmpdir, UUID
+                        .randomUUID().toString()));
+
+        try {
+
+            for (int i = nPageFrom - 1; i < nPageTo; i++) {
+
+                /*
+                 * First, set page size and margins.
+                 */
+                final boolean rotatePdfPage;
+
+                if (StringUtils.defaultString(this.jobRotationWlk, "0").equals(
+                        "0")) {
+                    rotatePdfPage = false;
+                } else {
+                    final int rotate = Integer.valueOf(this.jobRotationWlk);
+                    // Rotate when odd multiple of 90.
+                    rotatePdfPage = (rotate / 90) % 2 != 0;
+                }
+
+                final Rectangle pageSize = this.readerWlk.getPageSize(i + 1);
+
+                if (rotatePdfPage) {
+                    this.targetDocument.setPageSize(pageSize.rotate());
+                } else {
+                    this.targetDocument.setPageSize(pageSize);
+                }
+                this.targetDocument.setMargins(0, 0, 0, 0);
+
+                /*
+                 * Then, open document or add new page.
+                 */
+                if (!this.targetDocument.isOpen()) {
+                    this.targetDocument.open();
+                } else {
+                    this.targetDocument.newPage();
+                }
+
+                // TODO: optimize resolution to PDF page size?
+                final int resolution = 300;
+
+                final String command =
+                        pdf2ImgCmd.createCommand(this.jobPdfFileWlk, imageFile,
+                                i, this.jobRotationWlk, resolution);
+
+                final ICommandExecutor exec =
+                        CommandExecutor.createSimple(command);
+
+                if (exec.executeCommand() != 0) {
+                    LOGGER.error(command);
+                    LOGGER.error(exec.getStandardErrorFromCommand().toString());
+                    throw new SpException("image ["
+                            + imageFile.getAbsolutePath()
+                            + "] could not be created.");
+                }
+
+                final com.itextpdf.text.Image image =
+                        com.itextpdf.text.Image.getInstance(
+                                filter.filter(imageFile), Color.WHITE);
+
+                if (LOGGER.isTraceEnabled()) {
+                    LOGGER.trace(String.format("Width x Height = %f x %f",
+                            this.targetDocument.getPageSize().getWidth(),
+                            this.targetDocument.getPageSize().getHeight()));
+                }
+
+                ImageToPdf.addImagePage(this.targetDocument, 0, 0, image);
+
+                imageFile.delete();
+            }
+
+        } finally {
+
+            if (imageFile.exists()) {
+                imageFile.delete();
+            }
+        }
+
     }
 
     @Override
     protected void onExitJob() throws Exception {
 
-        this.readerWlk.selectPages(this.jobRangesWlk);
-        int pages = this.readerWlk.getNumberOfPages();
+        if (!this.isEcoPdf()) {
 
-        for (int i = 0; i < pages;) {
+            this.readerWlk.selectPages(this.jobRangesWlk.toString());
+            int pages = this.readerWlk.getNumberOfPages();
 
-            ++i;
+            for (int i = 0; i < pages;) {
 
-            /*
-             * Rotate for BOTH export and printing.
-             */
-            if (this.jobRotationWlk != null) {
-                final int rotate = Integer.valueOf(this.jobRotationWlk);
-                if (rotate != 0) {
-                    PdfDictionary pageDict = this.readerWlk.getPageN(i);
-                    pageDict.put(PdfName.ROTATE, new PdfNumber(rotate));
+                ++i;
+
+                /*
+                 * Rotate for BOTH export and printing.
+                 */
+                if (this.jobRotationWlk != null) {
+                    final int rotate = Integer.valueOf(this.jobRotationWlk);
+                    if (rotate != 0) {
+                        PdfDictionary pageDict = this.readerWlk.getPageN(i);
+                        pageDict.put(PdfName.ROTATE, new PdfNumber(rotate));
+                    }
                 }
+
+                final PdfImportedPage page =
+                        this.targetPdfCopy.getImportedPage(this.readerWlk, i);
+
+                this.targetPdfCopy.addPage(page);
             }
 
-            final PdfImportedPage page =
-                    this.targetPdfCopy.getImportedPage(this.readerWlk, i);
-            this.targetPdfCopy.addPage(page);
+            this.targetPdfCopy.freeReader(this.readerWlk);
         }
-        this.targetPdfCopy.freeReader(this.readerWlk);
+
         this.readerWlk.close();
         this.readerWlk = null;
     }
 
     @Override
     protected void onExitJobs() throws Exception {
-        this.targetDocument.close();
+
+        if (this.targetDocument.isOpen()) {
+            this.targetDocument.close();
+        }
+
         this.targetDocument = null;
     }
 
@@ -459,7 +609,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     protected void onCompress() throws Exception {
         /*
          * iText uses compression by default, but you can set full compression,
-         * which make it PDF 1.5 version.
+         * which make it a PDF 1.5 version.
          */
         this.targetStamper.setFullCompression();
     }
@@ -564,6 +714,18 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         new File(this.targetPdfCopyFilePath).delete();
     }
 
+    /**
+     *
+     * @return The Creator string visible in the PDF properties of PDF Reader.
+     */
+    private String getCreatorString() {
+        return String.format("%s %s • %s • %s",
+                CommunityDictEnum.SAVAPAGE.getWord(),
+                ConfigManager.getAppVersion(),
+                CommunityDictEnum.LIBRE_PRINT_MANAGEMENT.getWord(),
+                CommunityDictEnum.SAVAPAGE_DOT_ORG.getWord());
+    }
+
     @Override
     @SuppressWarnings({ "rawtypes", "unchecked" })
     protected void onStampMetaDataForExport(final Calendar now,
@@ -585,8 +747,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
          * info.setModificationDate(now);
          */
 
-        info.put("Creator", CommunityDictEnum.SAVAPAGE.getWord() + " "
-                + ConfigManager.getAppVersion());
+        info.put("Creator", this.getCreatorString());
 
         if (propPdf.getApply().getKeywords()) {
             info.put("Keywords", propPdf.getDesc().getKeywords());
@@ -600,14 +761,13 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     protected void onStampMetaDataForPrinting(final Calendar now,
             final PdfProperties propPdf) {
 
-        java.util.HashMap<String,String> info = this.readerWlk.getInfo();
+        java.util.HashMap<String, String> info = this.readerWlk.getInfo();
 
         info.put("Title", propPdf.getDesc().getTitle());
         info.put("Subject", "FOR PRINTING PURPOSES ONLY");
         info.put("Author", CommunityDictEnum.SAVAPAGE.getWord());
 
-        info.put("Creator", CommunityDictEnum.SAVAPAGE.getWord() + " "
-                + ConfigManager.getAppVersion());
+        info.put("Creator", this.getCreatorString());
 
         // info.setModificationDate(now);
         if (propPdf.getApply().getKeywords()) {
@@ -1013,6 +1173,9 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
                             if (maskImage != null) {
                                 writer.addDirectImageSimple(maskImage);
+                            } else {
+                                // When this happens, the original image is
+                                // still visible.
                             }
 
                             writer.addDirectImageSimple(imgPixel,
@@ -1058,8 +1221,10 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
             } catch (ExceptionConverter e) {
                 // TODO
-                LOGGER.warn(String.format("%s [%s]", e.getClass()
-                        .getSimpleName(), e.getMessage()));
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn(String.format("%s [%s]", e.getClass()
+                            .getSimpleName(), e.getMessage()));
+                }
             }
 
             // Flush remaining text
@@ -1067,4 +1232,5 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         }
 
     }
+
 }

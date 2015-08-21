@@ -53,6 +53,7 @@ import org.savapage.core.jpa.User;
 import org.savapage.core.outbox.OutboxInfoDto;
 import org.savapage.core.outbox.OutboxInfoDto.LocaleInfo;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJob;
+import org.savapage.core.pdf.PdfCreateRequest;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq.Status;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
@@ -171,8 +172,12 @@ public final class OutboxServiceImpl extends AbstractService implements
                     outboxInfo = mapper.readValue(file, OutboxInfoDto.class);
 
                 } catch (JsonMappingException e) {
-                    LOGGER.debug("Error mapping from file ["
-                            + file.getAbsolutePath() + "]: create new.");
+
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug("Error mapping from file ["
+                                + file.getAbsolutePath() + "]: create new.");
+                    }
+
                     /*
                      * There has been a change in layout of the JSON file, so
                      * create a new default and store it.
@@ -334,11 +339,20 @@ public final class OutboxServiceImpl extends AbstractService implements
             final LinkedHashMap<String, Integer> uuidPageCount =
                     new LinkedHashMap<>();
 
+            final PdfCreateRequest pdfRequest = new PdfCreateRequest();
+
+            pdfRequest.setUserObj(lockedUser);
+            pdfRequest.setPdfFile(pdfFileName);
+            pdfRequest.setInboxInfo(inboxInfo);
+            pdfRequest.setRemoveGraphics(request.isRemoveGraphics());
+            pdfRequest.setEcoPdf(request.isEcoPrint());
+            pdfRequest.setApplyPdfProps(!APPLY_PDF_PROPS);
+            pdfRequest.setApplyLetterhead(APPLY_LETTERHEAD);
+            pdfRequest.setForPrinting(PDF_FOR_PRINTING);
+
             pdfFileToPrint =
-                    outputProducer().generatePdf(lockedUser, pdfFileName,
-                            inboxInfo, request.isRemoveGraphics(),
-                            !APPLY_PDF_PROPS, APPLY_LETTERHEAD,
-                            PDF_FOR_PRINTING, uuidPageCount, docLog);
+                    outputProducer().generatePdf(pdfRequest, uuidPageCount,
+                            docLog);
 
             final OutboxJob job = new OutboxJob();
             //
@@ -349,6 +363,7 @@ public final class OutboxServiceImpl extends AbstractService implements
             job.setPages(request.getNumberOfPages());
             job.setSheets(calNumberOfSheets(request));
             job.setRemoveGraphics(request.isRemoveGraphics());
+            job.setEcoPrint(request.isEcoPrint());
             job.setCost(request.getCost());
             job.setSubmitTime(submitDate.getTime());
             job.setExpiryTime(expiryDate.getTime());
@@ -371,7 +386,9 @@ public final class OutboxServiceImpl extends AbstractService implements
             if (!fileCreated && pdfFileToPrint != null
                     && pdfFileToPrint.exists()) {
                 if (pdfFileToPrint.delete()) {
-                    LOGGER.trace("deleted file [" + pdfFileToPrint + "]");
+                    if (LOGGER.isTraceEnabled()) {
+                        LOGGER.trace("deleted file [" + pdfFileToPrint + "]");
+                    }
                 } else {
                     LOGGER.error("delete of file [" + pdfFileToPrint
                             + "] FAILED");

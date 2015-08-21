@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -72,6 +72,7 @@ import javax.persistence.EntityManager;
 import javax.persistence.EntityManagerFactory;
 import javax.persistence.Persistence;
 
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableLong;
@@ -118,6 +119,7 @@ import org.savapage.core.users.LdapUserSource;
 import org.savapage.core.users.NoUserSource;
 import org.savapage.core.users.UnixUserSource;
 import org.savapage.core.users.UserAliasList;
+import org.savapage.core.util.CurrencyUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -160,6 +162,13 @@ public final class ConfigManager {
      *
      */
     private static final String USER_TEMP_RELATIVE_PATH = ".temp";
+
+    /**
+     * The relative path of the email outbox folder (relative to the
+     * {@code server} directory).
+     */
+    private static final String SERVER_RELATIVE_EMAIL_OUTBOX_PATH =
+            "data/email-outbox";
 
     /**
      *
@@ -233,6 +242,10 @@ public final class ConfigManager {
             "smartschool.print";
 
     private static final String SERVER_PROP_DB_TYPE = "database.type";
+    /**
+     * The JDBC driver, like "org.postgresql.Driver".
+     */
+    private static final String SERVER_PROP_DB_DRIVER = "database.driver";
     private static final String SERVER_PROP_DB_URL = "database.url";
     private static final String SERVER_PROP_DB_USER = "database.user";
     private static final String SERVER_PROP_DB_PASS = "database.password";
@@ -358,8 +371,7 @@ public final class ConfigManager {
     /**
      * Checks if application is properly initialized.
      *
-     * @return {@code true) when properly initialized.
-
+     * @return {@code true} when properly initialized.
      */
     public boolean isInitialized() {
         return (runMode != null);
@@ -683,6 +695,15 @@ public final class ConfigManager {
     }
 
     /**
+     *
+     * @return The relative path of the email outbox folder (relative to the
+     *         {@code server} directory).
+     */
+    public static String getServerRelativeEmailOutboxPath() {
+        return SERVER_RELATIVE_EMAIL_OUTBOX_PATH;
+    }
+
+    /**
      * Returns the location where the user's SafePages are stored. As a default
      * this is a path relative to $(server.home)/data/internal/safepages
      *
@@ -737,13 +758,14 @@ public final class ConfigManager {
     }
 
     /**
-     * Reads the server properties from file {@link #FILENAME_SERVER_PROPERTIES}
+     * Loads the server properties from file {@link #FILENAME_SERVER_PROPERTIES}
      * .
      *
-     * @return
+     * @return The {@link Properties}.
      * @throws IOException
+     *             When error loading properties file.
      */
-    public static Properties readServerProperties() throws IOException {
+    public static Properties loadServerProperties() throws IOException {
 
         Properties serverProps = null;
 
@@ -758,20 +780,12 @@ public final class ConfigManager {
             fis = new FileInputStream(path);
 
             serverProps = new Properties();
-
             serverProps.load(fis);
 
             return serverProps;
 
         } finally {
-
-            if (fis != null) {
-                try {
-                    fis.close();
-                } catch (IOException e) {
-                    // ignore
-                }
-            }
+            IOUtils.closeQuietly(fis);
         }
     }
 
@@ -895,6 +909,48 @@ public final class ConfigManager {
         return String.format("%s.%s.%s (Build %s)",
                 VersionInfo.VERSION_A_MAJOR, VersionInfo.VERSION_B_MINOR,
                 VersionInfo.VERSION_C_REVISION, VersionInfo.VERSION_D_BUILD);
+    }
+
+    /**
+     * @return The {@link Currency} used in this application, or {@code null}
+     *         when not defined.
+     */
+    public static Currency getAppCurrency() {
+
+        final String currencyCode =
+                instance().getConfigValue(Key.FINANCIAL_GLOBAL_CURRENCY_CODE);
+
+        if (StringUtils.isBlank(currencyCode)) {
+            return null;
+        }
+
+        return Currency.getInstance(currencyCode);
+    }
+
+    /**
+     * @return The ISO currency code used in this application, or an empty
+     *         string when not defined.
+     */
+    public static String getAppCurrencyCode() {
+
+        final Currency currency = getAppCurrency();
+
+        if (currency == null) {
+            return "";
+        }
+
+        return currency.getCurrencyCode();
+    }
+
+    /**
+     *
+     * @param locale
+     * @return
+     */
+    public static String getAppCurrencySymbol(final Locale locale) {
+        final String symbol =
+                CurrencyUtil.getCurrencySymbol(getAppCurrencyCode(), locale);
+        return symbol;
     }
 
     /**
@@ -1159,10 +1215,14 @@ public final class ConfigManager {
              * Database access can start from here...
              */
             if (myConfigProp.isRunnable()) {
-                LOGGER.info("configuration is ready to run");
+                if (LOGGER.isInfoEnabled()) {
+                    LOGGER.info("configuration is ready to run");
+                }
             } else {
-                LOGGER.warn("configuration is NOT ready to run: "
-                        + "administration needed");
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn("configuration is NOT ready to run: "
+                            + "administration needed");
+                }
             }
 
             MemberCard.instance().init();
@@ -1190,7 +1250,7 @@ public final class ConfigManager {
             /*
              *
              */
-            Runtime.getRuntime().addShutdownHook(new ShutdownHook(this));
+            Runtime.getRuntime().addShutdownHook(new CoreShutdownHook(this));
 
             /*
              * Last statement
@@ -1512,8 +1572,10 @@ public final class ConfigManager {
 
                 if (group == null) {
                     isNonSecure = true;
-                    LOGGER.warn("Printer Group [" + groupName
-                            + "] is NOT found.");
+                    if (LOGGER.isWarnEnabled()) {
+                        LOGGER.warn("Printer Group [" + groupName
+                                + "] is NOT found.");
+                    }
                 } else {
 
                     final PrinterService printerService =
@@ -2233,19 +2295,30 @@ public final class ConfigManager {
      */
     private void initHibernatePostgreSQL(final Map<String, Object> properties) {
 
-        properties
-                .put("javax.persistence.jdbc.driver", "org.postgresql.Driver");
         properties.put("hibernate.dialect",
                 "org.hibernate.dialect.PostgreSQLDialect");
 
+        final String jdbcDriverDefault = "org.postgresql.Driver";
+        final String jdbcDriver;
+
         if (theServerProps != null) {
+
             properties.put("javax.persistence.jdbc.user",
                     theServerProps.getProperty(SERVER_PROP_DB_USER));
             properties.put("javax.persistence.jdbc.password",
                     getDbUserPassword());
             properties.put("javax.persistence.jdbc.url",
                     theServerProps.getProperty(SERVER_PROP_DB_URL));
+
+            jdbcDriver =
+                    theServerProps.getProperty(SERVER_PROP_DB_DRIVER,
+                            jdbcDriverDefault);
+
+        } else {
+            jdbcDriver = jdbcDriverDefault;
         }
+
+        properties.put("javax.persistence.jdbc.driver", jdbcDriver);
     }
 
     /**

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -23,20 +23,31 @@ package org.savapage.core.services.impl;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.text.NumberFormat;
 import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Currency;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
+import org.savapage.core.cometd.AdminPublisher;
+import org.savapage.core.cometd.PubLevelEnum;
+import org.savapage.core.cometd.PubTopicEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.dao.AccountDao;
 import org.savapage.core.dao.PosPurchaseDao.ReceiptNumberPrefixEnum;
 import org.savapage.core.dao.PrinterDao;
+import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.helpers.AccountTrxTypeEnum;
+import org.savapage.core.dao.helpers.AggregateResult;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dto.AccountDisplayInfoDto;
 import org.savapage.core.dto.AccountVoucherRedeemDto;
+import org.savapage.core.dto.FinancialDisplayInfoDto;
 import org.savapage.core.dto.IppMediaCostDto;
 import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.dto.MediaCostDto;
@@ -44,6 +55,7 @@ import org.savapage.core.dto.MediaPageCostDto;
 import org.savapage.core.dto.PosDepositDto;
 import org.savapage.core.dto.PosDepositReceiptDto;
 import org.savapage.core.dto.UserAccountingDto;
+import org.savapage.core.dto.UserCreditTransferDto;
 import org.savapage.core.dto.UserPaymentGatewayDto;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
@@ -56,17 +68,22 @@ import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
 import org.savapage.core.jpa.UserGroup;
 import org.savapage.core.json.rpc.AbstractJsonRpcMethodResponse;
+import org.savapage.core.json.rpc.JsonRpcError.Code;
+import org.savapage.core.json.rpc.JsonRpcMethodError;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
 import org.savapage.core.json.rpc.impl.ResultPosDeposit;
+import org.savapage.core.msg.UserMsgIndicator;
 import org.savapage.core.print.proxy.ProxyPrintException;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.print.proxy.ProxyPrintJobChunkInfo;
+import org.savapage.core.services.AccountingException;
 import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.AccountTrxInfo;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.ProxyPrintCostParms;
 import org.savapage.core.util.BigDecimalUtil;
+import org.savapage.core.util.Messages;
 
 /**
  *
@@ -365,7 +382,7 @@ public final class AccountingServiceImpl extends AbstractService implements
     }
 
     /**
-     * Creates a transaction.
+     * Creates a {@link AccountTrx} object with base Application Currency.
      * <p>
      * Transaction Actor and Date are retrieved from the {@link ServiceContext}.
      * </p>
@@ -380,15 +397,47 @@ public final class AccountingServiceImpl extends AbstractService implements
      *            The balance of the account AFTER this transaction.
      * @param comment
      *            The transaction comment.
-     * @return The created transaction.
+     * @return The created {@link AccountTrx} object.
      */
     private AccountTrx createAccountTrx(final Account account,
             final AccountTrxTypeEnum trxType, final BigDecimal amount,
             final BigDecimal accountBalance, final String comment) {
 
-        AccountTrx trx = new AccountTrx();
+        return createAccountTrx(account, trxType, ConfigManager
+                .getAppCurrency().getCurrencyCode(), amount, accountBalance,
+                comment);
+    }
+
+    /**
+     * Creates a {@link AccountTrx} object.
+     * <p>
+     * Transaction Actor and Date are retrieved from the {@link ServiceContext}.
+     * </p>
+     *
+     * @param account
+     *            The {@link Account} the transaction is executed on.
+     * @param trxType
+     *            The {@link AccountTrxTypeEnum}.
+     * @param currencyCode
+     *            The ISO currency code.
+     * @param amount
+     *            The transaction amount.
+     * @param accountBalance
+     *            The balance of the account AFTER this transaction.
+     * @param comment
+     *            The transaction comment.
+     * @return The created {@link AccountTrx} object.
+     */
+    private AccountTrx createAccountTrx(final Account account,
+            final AccountTrxTypeEnum trxType, final String currencyCode,
+            final BigDecimal amount, final BigDecimal accountBalance,
+            final String comment) {
+
+        final AccountTrx trx = new AccountTrx();
+
         trx.setAccount(account);
 
+        trx.setCurrencyCode(currencyCode);
         trx.setAmount(amount);
         trx.setBalance(accountBalance);
         trx.setComment(comment);
@@ -498,6 +547,7 @@ public final class AccountingServiceImpl extends AbstractService implements
         trx.setAccount(account);
         trx.setDocLog(docLog);
 
+        trx.setCurrencyCode(ConfigManager.getAppCurrency().getCurrencyCode());
         trx.setAmount(trxAmount);
         trx.setBalance(account.getBalance());
         trx.setComment("");
@@ -533,6 +583,8 @@ public final class AccountingServiceImpl extends AbstractService implements
      *
      * @param nPages
      *            The number of pages.
+     * @param nPagesPerSide
+     *            the number of pages per side (n-up).
      * @param nCopies
      *            the number of copies.
      * @param duplex
@@ -544,8 +596,9 @@ public final class AccountingServiceImpl extends AbstractService implements
      * @return The {@link BigDecimal}.
      */
     public static BigDecimal
-            calcPrintJobCost(final int nPages, final int nCopies,
-                    final boolean duplex, final BigDecimal pageCostOneSided,
+            calcPrintJobCost(final int nPages, final int nPagesPerSide,
+                    final int nCopies, final boolean duplex,
+                    final BigDecimal pageCostOneSided,
                     final BigDecimal pageCostTwoSided) {
 
         final BigDecimal copies = BigDecimal.valueOf(nCopies);
@@ -553,11 +606,17 @@ public final class AccountingServiceImpl extends AbstractService implements
         BigDecimal pagesOneSided = BigDecimal.ZERO;
         BigDecimal pagesTwoSided = BigDecimal.ZERO;
 
+        int nSides = nPages / nPagesPerSide;
+
+        if (nPages % nPagesPerSide > 0) {
+            nSides++;
+        }
+
         if (duplex) {
-            pagesTwoSided = new BigDecimal((nPages / 2) * 2);
-            pagesOneSided = new BigDecimal(nPages % 2);
+            pagesTwoSided = new BigDecimal((nSides / 2) * 2);
+            pagesOneSided = new BigDecimal(nSides % 2);
         } else {
-            pagesOneSided = new BigDecimal(nPages);
+            pagesOneSided = new BigDecimal(nSides);
         }
 
         return pageCostOneSided.multiply(pagesOneSided).multiply(copies)
@@ -605,7 +664,7 @@ public final class AccountingServiceImpl extends AbstractService implements
 
             final BigDecimal balanceAfter = account.getBalance().subtract(cost);
 
-            isChargeable = balanceAfter.compareTo(creditLimit) >= 0;
+            isChargeable = balanceAfter.compareTo(creditLimit.negate()) >= 0;
         }
         return isChargeable;
     }
@@ -670,8 +729,9 @@ public final class AccountingServiceImpl extends AbstractService implements
         }
 
         return calcPrintJobCost(costParms.getNumberOfPages(),
-                costParms.getNumberOfCopies(), costParms.isDuplex(),
-                pageCostOneSided, pageCostTwoSided);
+                costParms.getPagesPerSide(),
+                costParms.getNumberOfCopies(),
+                costParms.isDuplex(), pageCostOneSided, pageCostTwoSided);
     }
 
     /**
@@ -739,7 +799,7 @@ public final class AccountingServiceImpl extends AbstractService implements
                 creditLimit = account.getOverdraft();
             }
 
-            if (balanceAfter.compareTo(creditLimit) < 0) {
+            if (balanceAfter.compareTo(creditLimit.negate()) < 0) {
 
                 if (creditLimit.compareTo(BigDecimal.ZERO) == 0) {
 
@@ -864,14 +924,120 @@ public final class AccountingServiceImpl extends AbstractService implements
         }
     }
 
+    /**
+     * Creates display statistics from aggregate result.
+     *
+     * @param aggr
+     *            The {@link AggregateResult}.
+     * @param locale
+     *            The {@link Locale}.
+     * @param currencySymbol
+     *            The currency symbol.
+     * @param multiplicand
+     *            Either 1 or -1.
+     * @return The {@link FinancialDisplayInfoDto.Stats}.
+     */
+    private FinancialDisplayInfoDto.Stats createFinancialDisplayInfoStats(
+            final AggregateResult<BigDecimal> aggr, final Locale locale,
+            final String currencySymbol, final BigDecimal multiplicand) {
+
+        final int balanceDecimals = ConfigManager.getUserBalanceDecimals();
+        final NumberFormat fmNumber = NumberFormat.getInstance(locale);
+
+        final FinancialDisplayInfoDto.Stats stats =
+                new FinancialDisplayInfoDto.Stats();
+
+        final String valueEmpty = "";
+
+        String valueWlk;
+
+        try {
+
+            //
+            valueWlk = valueEmpty;
+
+            if (aggr.getCount() != 0) {
+                valueWlk = fmNumber.format(aggr.getCount());
+            }
+            stats.setCount(valueWlk);
+
+            //
+            valueWlk = valueEmpty;
+
+            if (aggr.getAvg() != null) {
+                valueWlk =
+                        BigDecimalUtil.localize(
+                                aggr.getAvg().multiply(multiplicand),
+                                balanceDecimals, locale, currencySymbol, true);
+            }
+            stats.setAvg(valueWlk);
+
+            //
+            valueWlk = valueEmpty;
+            if (aggr.getMax() != null) {
+                valueWlk =
+                        BigDecimalUtil.localize(
+                                aggr.getMax().multiply(multiplicand),
+                                balanceDecimals, locale, currencySymbol, true);
+            }
+            stats.setMax(valueWlk);
+
+            //
+            valueWlk = valueEmpty;
+            if (aggr.getMin() != null) {
+                valueWlk =
+                        BigDecimalUtil.localize(
+                                aggr.getMin().multiply(multiplicand),
+                                balanceDecimals, locale, currencySymbol, true);
+            }
+            stats.setMin(valueWlk);
+
+            //
+            valueWlk = valueEmpty;
+            if (aggr.getSum() != null) {
+                valueWlk =
+                        BigDecimalUtil.localize(
+                                aggr.getSum().multiply(multiplicand),
+                                balanceDecimals, locale, currencySymbol, true);
+            }
+            stats.setSum(valueWlk);
+
+        } catch (ParseException e) {
+            throw new SpException(e);
+        }
+        return stats;
+    }
+
+    @Override
+    public FinancialDisplayInfoDto getFinancialDisplayInfo(final Locale locale,
+            final String currencySymbol) {
+
+        final String currencySymbolWrk =
+                StringUtils.defaultString(currencySymbol);
+
+        final FinancialDisplayInfoDto dto = new FinancialDisplayInfoDto();
+
+        dto.setLocale(locale.getDisplayLanguage());
+
+        dto.setUserCredit(createFinancialDisplayInfoStats(accountDAO()
+                .getBalanceStats(true, false), locale, currencySymbolWrk,
+                BigDecimal.ONE.negate()));
+
+        dto.setUserDebit(createFinancialDisplayInfoStats(accountDAO()
+                .getBalanceStats(true, true), locale, currencySymbolWrk,
+                BigDecimal.ONE));
+
+        return dto;
+    }
+
     @Override
     public AccountDisplayInfoDto getAccountDisplayInfo(final User user,
             final Locale locale, final String currencySymbol) {
 
-        String currencySymbolWrk = currencySymbol;
-        if (currencySymbolWrk == null) {
-            currencySymbolWrk = "";
-        }
+        final String currencySymbolWrk =
+                StringUtils.defaultString(currencySymbol);
+
+        final int balanceDecimals = ConfigManager.getUserBalanceDecimals();
 
         AccountDisplayInfoDto dto = new AccountDisplayInfoDto();
 
@@ -897,10 +1063,8 @@ public final class AccountingServiceImpl extends AbstractService implements
 
             try {
                 formattedCreditLimit =
-                        BigDecimalUtil.localize(creditLimit,
-                                ConfigManager.getUserBalanceDecimals(),
-                                ServiceContext.getLocale(), currencySymbolWrk,
-                                true);
+                        BigDecimalUtil.localize(creditLimit, balanceDecimals,
+                                locale, currencySymbolWrk, true);
             } catch (ParseException e) {
                 throw new SpException(e);
             }
@@ -926,8 +1090,7 @@ public final class AccountingServiceImpl extends AbstractService implements
 
         try {
             dto.setBalance(BigDecimalUtil.localize(account.getBalance(),
-                    ConfigManager.getUserBalanceDecimals(), locale,
-                    currencySymbolWrk, true));
+                    balanceDecimals, locale, currencySymbolWrk, true));
         } catch (ParseException e) {
             throw new SpException(e);
         }
@@ -1007,16 +1170,94 @@ public final class AccountingServiceImpl extends AbstractService implements
         return JsonRpcMethodResult.createOkResult();
     }
 
+    /**
+     * Fills an account transaction from dto.
+     *
+     * @param trx
+     *            The {@link AccountTrx}.
+     * @param dto
+     *            The {@link {@link UserPaymentGatewayDto}.
+     */
+    private static void fillTrxFromDto(final AccountTrx trx,
+            final UserPaymentGatewayDto dto) {
+
+        trx.setCurrencyCode(dto.getCurrencyCode());
+
+        trx.setExtCurrencyCode(dto.getPaymentMethodCurrency());
+        trx.setExtAmount(dto.getPaymentMethodAmount());
+        trx.setExtFee(dto.getPaymentMethodFee());
+        trx.setExtExchangeRate(dto.getExchangeRate());
+
+        trx.setExtConfirmations(dto.getConfirmations());
+
+        trx.setExtSource(dto.getGatewayId());
+        trx.setExtId(dto.getTransactionId());
+        trx.setExtMethod(dto.getPaymentMethod());
+        trx.setExtMethodOther(dto.getPaymentMethodOther());
+        trx.setExtMethodAddress(dto.getPaymentMethodAddress());
+        trx.setExtDetails(dto.getPaymentMethodDetails());
+    }
+
     @Override
-    public void acceptFundsFromGateway(final UserPaymentGatewayDto dto,
+    public void createPendingFundsFromGateway(final User user,
+            final UserPaymentGatewayDto dto) {
+        /*
+         * Find the account to add the amount on.
+         */
+        final Account account =
+                this.lazyGetUserAccount(user, AccountTypeEnum.USER)
+                        .getAccount();
+
+        /*
+         * Create and fill transaction.
+         */
+        final AccountTrx trx =
+                this.createAccountTrx(account, AccountTrxTypeEnum.GATEWAY,
+                        BigDecimal.ZERO, BigDecimal.ZERO, null);
+
+        fillTrxFromDto(trx, dto);
+        accountTrxDAO().create(trx);
+    }
+
+    @Override
+    public void acceptPendingFundsFromGateway(final AccountTrx trx,
+            final UserPaymentGatewayDto dto) throws AccountingException {
+
+        /*
+         * INVARIANT: transaction must not be accepted.
+         */
+        if (trx.getAmount().compareTo(BigDecimal.ZERO) != 0) {
+            throw new AccountingException(String.format(
+                    "Transaction %s is already accepted.",
+                    dto.getTransactionId()));
+        }
+
+        final Account account = trx.getAccount();
+
+        account.setBalance(account.getBalance()
+                .add(dto.getAmountAcknowledged()));
+        account.setModifiedBy(ServiceContext.getActor());
+        account.setModifiedDate(ServiceContext.getTransactionDate());
+
+        fillTrxFromDto(trx, dto);
+
+        trx.setAmount(dto.getAmountAcknowledged());
+        trx.setBalance(account.getBalance());
+        trx.setComment(dto.getComment());
+
+        accountDAO().update(account);
+        accountTrxDAO().update(trx);
+    }
+
+    @Override
+    public void acceptFundsFromGateway(final User user,
+            final UserPaymentGatewayDto dto,
             final Account orphanedPaymentAccount) {
 
         /*
          * Find the account to add the amount on.
          */
         final Account account;
-
-        final User user = userDAO().findActiveUserByUserId(dto.getUserId());
 
         if (user == null) {
             account = orphanedPaymentAccount;
@@ -1025,21 +1266,31 @@ public final class AccountingServiceImpl extends AbstractService implements
                     this.lazyGetUserAccount(user, AccountTypeEnum.USER)
                             .getAccount();
         }
-        /*
-         * Create a unique receipt number.
-         */
-        final String receiptNumber =
-                String.format("%s-%s-%s", ReceiptNumberPrefixEnum.GATEWAY, dto
-                        .getGatewayId().toUpperCase(), dto.getTransactionId());
 
-        //
-        addFundsToAccount(account, AccountTrxTypeEnum.GATEWAY,
-                dto.getPaymentType(), receiptNumber, dto.getAmount(),
-                dto.getComment());
+        account.setBalance(account.getBalance()
+                .add(dto.getAmountAcknowledged()));
+        account.setModifiedBy(ServiceContext.getActor());
+        account.setModifiedDate(ServiceContext.getTransactionDate());
+
+        /*
+         * Create and fill transaction.
+         */
+        final AccountTrx trx =
+                this.createAccountTrx(account, AccountTrxTypeEnum.GATEWAY,
+                        dto.getAmountAcknowledged(), account.getBalance(),
+                        dto.getComment());
+
+        fillTrxFromDto(trx, dto);
+
+        /*
+         * Database update/persist.
+         */
+        accountDAO().update(account);
+        accountTrxDAO().create(trx);
     }
 
     /**
-     * Add funds to an {@link Account}.
+     * Deposits funds to an {@link Account}.
      *
      * @param account
      *            The {@link Account}.
@@ -1055,7 +1306,7 @@ public final class AccountingServiceImpl extends AbstractService implements
      *            The comment set in {@link PosPurchase} and {@link AccountTrx}.
      * @return The {@link AbstractJsonRpcMethodResponse}.
      */
-    private AbstractJsonRpcMethodResponse addFundsToAccount(
+    private AbstractJsonRpcMethodResponse depositFundsToAccount(
             final Account account, final AccountTrxTypeEnum accountTrxType,
             final String paymentType, final String receiptNumber,
             final BigDecimal amount, final String comment) {
@@ -1148,7 +1399,7 @@ public final class AccountingServiceImpl extends AbstractService implements
                 purchaseDAO().getNextReceiptNumber(
                         ReceiptNumberPrefixEnum.DEPOSIT);
 
-        return addFundsToAccount(account, AccountTrxTypeEnum.DEPOSIT,
+        return depositFundsToAccount(account, AccountTrxTypeEnum.DEPOSIT,
                 dto.getPaymentType(), receiptNumber, depositAmount,
                 dto.getComment());
 
@@ -1178,6 +1429,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         //
         final PosDepositReceiptDto receipt = new PosDepositReceiptDto();
 
+        receipt.setAccountTrx(accountTrx);
+
         receipt.setComment(purchase.getComment());
         receipt.setPlainAmount(BigDecimalUtil.toPlainString(accountTrx
                 .getAmount()));
@@ -1191,4 +1444,388 @@ public final class AccountingServiceImpl extends AbstractService implements
         return receipt;
     }
 
+    @Override
+    public AbstractJsonRpcMethodResponse changeBaseCurrency(
+            final DaoBatchCommitter batchCommitter,
+            final Currency currencyFrom, final Currency currencyTo,
+            final double exchangeRate) {
+
+        int nAccounts = 0;
+        int nTrx = 0;
+
+        /*
+         * INVARIANT: currencyFrom must match current currency.
+         */
+        if (!ConfigManager.getAppCurrencyCode().equals(
+                currencyFrom.getCurrencyCode())) {
+
+            final String err =
+                    String.format("Currency %s does not match current "
+                            + "base currency %s.",
+                            currencyFrom.getCurrencyCode(),
+                            ConfigManager.getAppCurrencyCode());
+
+            return JsonRpcMethodError.createBasicError(Code.INVALID_REQUEST,
+                    err, null);
+        }
+
+        /*
+         * INVARIANT: currencyFrom and currencyTo must differ.
+         */
+        if (currencyFrom.getCurrencyCode().equals(currencyTo.getCurrencyCode())) {
+            return JsonRpcMethodError.createBasicError(Code.INVALID_REQUEST,
+                    "Currency codes must be different.", null);
+        }
+
+        /*
+         * INVARIANT: exchange rate must be GT zero.
+         */
+        if (exchangeRate <= 0.0) {
+            return JsonRpcMethodError.createBasicError(Code.INVALID_REQUEST,
+                    "Exchange rate must be greater than zero.", null);
+        }
+
+        /*
+         * Batch process.
+         */
+        final AccountDao.ListFilter filter = new AccountDao.ListFilter();
+
+        final Integer maxResults =
+                Integer.valueOf(batchCommitter.getCommitThreshold());
+
+        int startPosition = 0;
+
+        final List<Account> list =
+                accountDAO().getListChunk(filter,
+                        Integer.valueOf(startPosition), maxResults,
+                        AccountDao.Field.ACCOUNT_TYPE, true);
+
+        final BigDecimal exchangeDecimal = BigDecimal.valueOf(exchangeRate);
+
+        for (final Account account : list) {
+
+            int nChanges = 0;
+
+            // Overdraft
+            if (account.getOverdraft().compareTo(BigDecimal.ZERO) != 0) {
+                account.setOverdraft(account.getOverdraft().multiply(
+                        exchangeDecimal));
+                nChanges++;
+            }
+
+            final BigDecimal balance = account.getBalance();
+
+            // Balance
+            if (balance.compareTo(BigDecimal.ZERO) != 0) {
+
+                // Reverse current balance currency.
+                final AccountTrx trxReversal =
+                        this.createAccountTrx(account,
+                                AccountTrxTypeEnum.ADJUST, balance.negate(),
+                                BigDecimal.ZERO, null);
+
+                trxReversal.setCurrencyCode(currencyFrom.getCurrencyCode());
+
+                accountTrxDAO().create(trxReversal);
+
+                nChanges++;
+                nTrx++;
+
+                // Initialize with new balance currency.
+                final StringBuilder comment = new StringBuilder();
+
+                comment.append(currencyFrom.getCurrencyCode()).append(" ")
+                        .append(balance.toPlainString()).append(" * ")
+                        .append(exchangeDecimal.toPlainString());
+
+                final BigDecimal balanceInit =
+                        balance.multiply(exchangeDecimal);
+
+                final AccountTrx trxInit =
+                        this.createAccountTrx(account,
+                                AccountTrxTypeEnum.ADJUST, balanceInit,
+                                balanceInit, comment.toString());
+
+                trxInit.setCurrencyCode(currencyTo.getCurrencyCode());
+
+                accountTrxDAO().create(trxInit);
+
+                nChanges++;
+                nTrx++;
+
+                //
+                account.setBalance(balanceInit);
+            }
+
+            if (nChanges > 0) {
+
+                accountDAO().update(account);
+
+                batchCommitter.increment();
+                nAccounts++;
+            }
+        }
+
+        //
+        ConfigManager.instance().updateConfigKey(
+                Key.FINANCIAL_GLOBAL_CURRENCY_CODE,
+                currencyTo.getCurrencyCode(), ServiceContext.getActor());
+
+        batchCommitter.increment();
+        batchCommitter.commit();
+
+        /*
+         * Return result.
+         */
+        final StringBuilder result = new StringBuilder();
+
+        if (batchCommitter.isTest()) {
+            result.append("[TEST] ");
+        }
+
+        result.append(localize("msg-changed-base-currency", currencyFrom
+                .getCurrencyCode(), currencyTo.getCurrencyCode(), Double
+                .valueOf(exchangeRate).toString(), Integer.valueOf(nTrx)
+                .toString(), Integer.valueOf(nAccounts).toString()));
+
+        return JsonRpcMethodResult.createOkResult(result.toString());
+    }
+
+    /**
+     * Adds an {@link AccountTrx} and updates the {@link Account}.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param accountType
+     *            The {@link AccountTypeEnum}.
+     * @param trxType
+     *            The {@link AccountTrxTypeEnum}.
+     * @param currencyCode
+     *            The ISO currency code.
+     * @param amount
+     *            The amount (can be negative).
+     * @param trxComment
+     *            The transaction comment.
+     */
+    private void addAccountTrx(final User user,
+            final AccountTypeEnum accountType,
+            final AccountTrxTypeEnum trxType, final String currencyCode,
+            final BigDecimal amount, final String trxComment) {
+
+        final Account account =
+                this.lazyGetUserAccount(user, accountType).getAccount();
+
+        account.setBalance(account.getBalance().add(amount));
+        account.setModifiedBy(ServiceContext.getActor());
+        account.setModifiedDate(ServiceContext.getTransactionDate());
+
+        final AccountTrx trx =
+                this.createAccountTrx(account, trxType, currencyCode, amount,
+                        account.getBalance(), trxComment);
+
+        accountDAO().update(account);
+        accountTrxDAO().create(trx);
+    }
+
+    /**
+     * Checks if balance is sufficient to make a payment. We allow for a
+     * non-significant overdraft beyond the balance precision.
+     *
+     * @param balance
+     *            The balance amount.
+     * @param payment
+     *            The payment (a positive value).
+     * @param balancePrecision
+     *            The balance precision (number of decimals).
+     * @return {@code true} if payment is within balance.
+     */
+    private static boolean isPaymentWithinBalance(final BigDecimal balance,
+            final BigDecimal payment, final int balancePrecision) {
+
+        final BigDecimal balanceMin =
+                BigDecimal.valueOf(-5 / Math.pow(10, balancePrecision + 1));
+
+        final BigDecimal balanceAfter = balance.subtract(payment);
+
+        return balanceAfter.compareTo(balanceMin) >= 0;
+    }
+
+    @Override
+    public AbstractJsonRpcMethodResponse transferUserCredit(
+            final UserCreditTransferDto dto) {
+
+        /*
+         * INVARIANT: Amount MUST be valid.
+         */
+        final String plainAmount =
+                dto.getAmountMain() + "." + dto.getAmountCents();
+
+        if (!BigDecimalUtil.isValid(plainAmount)) {
+
+            return JsonRpcMethodError.createBasicError(Code.INVALID_PARAMS,
+                    localize("msg-amount-error", plainAmount));
+        }
+
+        final BigDecimal transferAmount = BigDecimalUtil.valueOf(plainAmount);
+
+        /*
+         * INVARIANT: Amount MUST be GT zero.
+         */
+        if (transferAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            return JsonRpcMethodError.createBasicError(Code.INVALID_PARAMS,
+                    localize("msg-amount-must-be-positive"));
+        }
+
+        /*
+         * INVARIANT: MUST transfer to another user.
+         */
+        if (dto.getUserIdFrom().equalsIgnoreCase(dto.getUserIdTo())) {
+            return JsonRpcMethodError.createBasicError(Code.INVALID_PARAMS,
+                    localize("msg-user-credit-transfer-err-user-same"));
+        }
+
+        /*
+         * INVARIANT: Source and target user MUST exist.
+         */
+        final UserDao userDao = ServiceContext.getDaoContext().getUserDao();
+
+        final User lockedUserTo = userDao.lockByUserId(dto.getUserIdTo());
+        final User lockedUserFrom = userDao.lockByUserId(dto.getUserIdFrom());
+
+        if (lockedUserFrom == null || lockedUserTo == null) {
+
+            final String msg;
+
+            if (lockedUserFrom != null) {
+                msg =
+                        localize("msg-user-credit-transfer-err-unknown-user",
+                                dto.getUserIdTo());
+            } else if (lockedUserTo != null) {
+                msg =
+                        localize("msg-user-credit-transfer-err-unknown-user",
+                                dto.getUserIdFrom());
+            } else {
+                msg =
+                        localize("msg-user-credit-transfer-err-unknown-users",
+                                dto.getUserIdFrom(), dto.getUserIdTo());
+            }
+
+            return JsonRpcMethodError
+                    .createBasicError(Code.INVALID_PARAMS, msg);
+        }
+
+        /*
+         * INVARIANT: User balance MUST be sufficient.
+         */
+        final int userBalanceDecimals = ConfigManager.getUserBalanceDecimals();
+
+        final AccountTypeEnum accountTypeTransfer = AccountTypeEnum.USER;
+
+        final Account accountFrom =
+                this.lazyGetUserAccount(lockedUserFrom, accountTypeTransfer)
+                        .getAccount();
+
+        if (!isPaymentWithinBalance(accountFrom.getBalance(), transferAmount,
+                userBalanceDecimals)) {
+            return JsonRpcMethodError.createBasicError(Code.INVALID_PARAMS,
+                    localize("msg-user-credit-transfer-err-amount-greater"));
+        }
+
+        /*
+         * INVARIANT: transfer amount MUST be GT/EQ to minimum and LT/EQ
+         * maximum.
+         */
+        try {
+            final BigDecimal minimalTransfer =
+                    ConfigManager.instance().getConfigBigDecimal(
+                            Key.FINANCIAL_USER_TRANSFER_AMOUNT_MIN);
+
+            if (minimalTransfer != null
+                    && transferAmount.compareTo(minimalTransfer) < 0) {
+
+                return JsonRpcMethodError.createBasicError(
+                        Code.INVALID_PARAMS,
+                        localize("msg-amount-must-be-gt-eq", BigDecimalUtil
+                                .localize(minimalTransfer, userBalanceDecimals,
+                                        ServiceContext.getLocale(),
+                                        ServiceContext.getAppCurrencySymbol(),
+                                        true)));
+            }
+
+            final BigDecimal maximalTransfer =
+                    ConfigManager.instance().getConfigBigDecimal(
+                            Key.FINANCIAL_USER_TRANSFER_AMOUNT_MAX);
+
+            if (maximalTransfer != null
+                    && transferAmount.compareTo(maximalTransfer) > 0) {
+
+                return JsonRpcMethodError.createBasicError(
+                        Code.INVALID_PARAMS,
+                        localize("msg-amount-must-be-lt-eq", BigDecimalUtil
+                                .localize(maximalTransfer, userBalanceDecimals,
+                                        ServiceContext.getLocale(),
+                                        ServiceContext.getAppCurrencySymbol(),
+                                        true)));
+            }
+        } catch (ParseException e) {
+            throw new SpException(e.getMessage(), e);
+        }
+
+        /*
+         * Transfer funds.
+         */
+        final String currencyCode = ConfigManager.getAppCurrencyCode();
+
+        final StringBuilder trxComment =
+                new StringBuilder().append(Messages.getSystemMessage(
+                        getClass(), "msg-user-credit-transfer-comment",
+                        dto.getUserIdFrom(), dto.getUserIdTo()));
+
+        if (StringUtils.isNotBlank(dto.getComment())) {
+            trxComment.append(" - ").append(dto.getComment());
+        }
+
+        addAccountTrx(lockedUserFrom, accountTypeTransfer,
+                AccountTrxTypeEnum.TRANSFER, currencyCode,
+                transferAmount.negate(), trxComment.toString());
+
+        addAccountTrx(lockedUserTo, accountTypeTransfer,
+                AccountTrxTypeEnum.TRANSFER, currencyCode, transferAmount,
+                trxComment.toString());
+
+        /*
+         * Notifications.
+         */
+        final String userNotification;
+
+        try {
+            userNotification =
+                    localize(
+                            "msg-user-credit-transfer-for-user",
+                            BigDecimalUtil.localize(transferAmount,
+                                    userBalanceDecimals,
+                                    ServiceContext.getLocale(),
+                                    ServiceContext.getAppCurrencySymbol(), true),
+                            dto.getUserIdTo());
+
+            AdminPublisher.instance().publish(
+                    PubTopicEnum.USER,
+                    PubLevelEnum.INFO,
+                    Messages.getSystemMessage(getClass(),
+                            "msg-user-credit-transfer-for-system", dto
+                                    .getUserIdFrom(), BigDecimalUtil.localize(
+                                    transferAmount, userBalanceDecimals,
+                                    ConfigManager.getDefaultLocale(),
+                                    ConfigManager.getAppCurrencyCode(), true),
+                            dto.getUserIdTo()));
+
+            UserMsgIndicator.notifyAccountInfoEvent(dto.getUserIdFrom());
+            UserMsgIndicator.notifyAccountInfoEvent(dto.getUserIdTo());
+
+        } catch (ParseException e) {
+            throw new SpException(e.getMessage(), e);
+        }
+
+        return JsonRpcMethodResult.createOkResult(userNotification);
+    }
 }

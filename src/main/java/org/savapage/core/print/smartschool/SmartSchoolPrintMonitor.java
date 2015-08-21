@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -41,7 +41,6 @@ import javax.xml.soap.SOAPException;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.time.DateUtils;
-import org.savapage.core.OutputProducer;
 import org.savapage.core.ShutdownException;
 import org.savapage.core.SpException;
 import org.savapage.core.cometd.AdminPublisher;
@@ -112,6 +111,8 @@ import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.core.services.helpers.PrinterAttrLookup;
 import org.savapage.core.services.helpers.SmartSchoolConnection;
 import org.savapage.core.users.IUserSource;
+import org.savapage.core.util.DateUtil;
+import org.savapage.core.util.FileSystemHelper;
 import org.savapage.core.util.Messages;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -438,7 +439,8 @@ public final class SmartSchoolPrintMonitor {
         try {
 
             final long sessionEndTime =
-                    new Date().getTime() + 1000 * sessionDurationSecs;
+                    System.currentTimeMillis() + DateUtil.DURATION_MSEC_SECOND
+                            * sessionDurationSecs;
 
             final Date sessionEndDate = new Date(sessionEndTime);
 
@@ -711,7 +713,7 @@ public final class SmartSchoolPrintMonitor {
         final Document document = new Document();
         documentList.add(document);
 
-        document.setId(Long.toString(new Date().getTime()));
+        document.setId(Long.toString(System.currentTimeMillis()));
         document.setComment("Simulation Document (simulation).");
         document.setName("simulate & test.pdf");
 
@@ -950,7 +952,9 @@ public final class SmartSchoolPrintMonitor {
                 msg.append("No account found in DocLog supplier data for [")
                         .append(papercutLog.getDocumentName()).append("].");
 
-                LOGGER.warn(msg.toString());
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn(msg.toString());
+                }
 
                 if (SmartSchoolLogger.getLogger().isDebugEnabled()) {
                     SmartSchoolLogger.logDebug(msg.toString());
@@ -966,7 +970,9 @@ public final class SmartSchoolPrintMonitor {
                         .append("] of [").append(papercutLog.getDocumentName())
                         .append("].");
 
-                LOGGER.warn(msg.toString());
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn(msg.toString());
+                }
 
                 if (SmartSchoolLogger.getLogger().isDebugEnabled()) {
                     SmartSchoolLogger.logDebug(msg.toString());
@@ -1710,9 +1716,10 @@ public final class SmartSchoolPrintMonitor {
             final boolean simulationMode, final Document document)
             throws SmartSchoolException, SOAPException {
 
-        LOGGER.warn("Document [" + document.getId() + "] ["
-                + document.getName() + "] skipped: no copies identified.");
-
+        if (LOGGER.isWarnEnabled()) {
+            LOGGER.warn("Document [" + document.getId() + "] ["
+                    + document.getName() + "] skipped: no copies identified.");
+        }
         publishAdminMsg(PubLevelEnum.WARN,
                 "SmartSchool document [" + document.getName() + "]: "
                         + MSG_COMMENT_PRINT_ERROR_NO_COPIES);
@@ -1855,8 +1862,10 @@ public final class SmartSchoolPrintMonitor {
              * INVARIANT: Role MUST be specified.
              */
             if (StringUtils.isBlank(role)) {
-                LOGGER.warn("Account [" + userName
-                        + "] skipped: no role specified.");
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn("Account [" + userName
+                            + "] skipped: no role specified.");
+                }
                 continue;
             }
 
@@ -1867,8 +1876,10 @@ public final class SmartSchoolPrintMonitor {
              * INVARIANT: Role MUST be known.
              */
             if (roleEnum == null) {
-                LOGGER.warn("Account [" + userName
-                        + "] skipped: unknown role [" + role + "].");
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn("Account [" + userName
+                            + "] skipped: unknown role [" + role + "].");
+                }
                 continue;
             }
 
@@ -1881,8 +1892,10 @@ public final class SmartSchoolPrintMonitor {
              * INVARIANT: Student MUST have a class.
              */
             if (personalAccount && roleEnum == SmartSchoolRoleEnum.STUDENT) {
-                LOGGER.warn("Account [" + userName
-                        + "] skipped: no class specified.");
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn("Account [" + userName
+                            + "] skipped: no class specified.");
+                }
                 continue;
             }
 
@@ -1948,8 +1961,10 @@ public final class SmartSchoolPrintMonitor {
              * INVARIANT: Copies MUST be more zero.
              */
             if (nCopies == 0) {
-                LOGGER.warn("Account [" + userName
-                        + "] skipped: no (extra) copies.");
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn("Account [" + userName
+                            + "] skipped: no (extra) copies.");
+                }
                 continue;
             }
 
@@ -2161,7 +2176,7 @@ public final class SmartSchoolPrintMonitor {
                             printInInfo.getUuidJob().toString() + "."
                                     + DocContent.FILENAME_EXT_PDF);
 
-            OutputProducer.doAtomicFileMove(source, target);
+            FileSystemHelper.doAtomicFileMove(source, target);
         }
 
         /*

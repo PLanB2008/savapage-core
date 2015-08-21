@@ -21,8 +21,6 @@
  */
 package org.savapage.core.job;
 
-import java.util.Date;
-
 import org.quartz.JobDataMap;
 import org.quartz.JobExecutionContext;
 import org.quartz.JobExecutionException;
@@ -82,14 +80,12 @@ public final class GcpRegisterJob extends AbstractJob {
             final String pollingUrl = map.getString(KEY_POLLING_URL);
             final Integer tokenDuration = map.getIntValue(KEY_TOKEN_DURATION);
 
-            // ConfigManager cm = ConfigManager.instance();
-
             adminPub.publish(PubTopicEnum.GCP_REGISTER, PubLevelEnum.INFO,
-                    localizeMsg("GcpPollForAuthCode.started"));
+                    localizeSysMsg("GcpPollForAuthCode.started"));
 
             final GcpClient gcp = GcpClient.instance();
 
-            long now = new Date().getTime();
+            long now = System.currentTimeMillis();
             final long maxTime = now + (tokenDuration * 1000);
 
             /*
@@ -129,13 +125,13 @@ public final class GcpRegisterJob extends AbstractJob {
                  */
                 sleep = pollFrequency;
                 pollRsp = null;
-                now = new Date().getTime();
+                now = System.currentTimeMillis();
             }
 
             if (pollRsp != null && pollRsp.isSuccess()) {
 
                 adminPub.publish(PubTopicEnum.GCP_REGISTER, PubLevelEnum.INFO,
-                        localizeMsg("GcpPollForAuthCode.success"));
+                        localizeSysMsg("GcpPollForAuthCode.success"));
 
                 GcpPrinter.store(pollRsp);
 
@@ -146,7 +142,7 @@ public final class GcpRegisterJob extends AbstractJob {
                         gcp.getAuthTokens(pollRsp.getAuthorizationCode());
 
                 adminPub.publish(PubTopicEnum.GCP_REGISTER, PubLevelEnum.INFO,
-                        localizeMsg("GcpGetAuthTokens.success"));
+                        localizeSysMsg("GcpGetAuthTokens.success"));
                 /*
                  * Note: next statement throws an exception when authentication
                  * failed.
@@ -155,7 +151,7 @@ public final class GcpRegisterJob extends AbstractJob {
 
             } else {
                 adminPub.publish(PubTopicEnum.GCP_REGISTER, PubLevelEnum.WARN,
-                        localizeMsg("GcpPollForAuthCode.timeout"));
+                        localizeSysMsg("GcpPollForAuthCode.timeout"));
             }
 
         } catch (GcpAuthException e) {

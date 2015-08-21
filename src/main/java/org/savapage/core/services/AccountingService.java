@@ -22,15 +22,20 @@
 package org.savapage.core.services;
 
 import java.math.BigDecimal;
+import java.util.Currency;
 import java.util.Locale;
 
+import org.savapage.core.concurrent.ReadWriteLockEnum;
 import org.savapage.core.dao.PrinterDao;
 import org.savapage.core.dao.helpers.AccountTrxTypeEnum;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dto.AccountDisplayInfoDto;
 import org.savapage.core.dto.AccountVoucherRedeemDto;
+import org.savapage.core.dto.FinancialDisplayInfoDto;
 import org.savapage.core.dto.PosDepositDto;
 import org.savapage.core.dto.PosDepositReceiptDto;
 import org.savapage.core.dto.UserAccountingDto;
+import org.savapage.core.dto.UserCreditTransferDto;
 import org.savapage.core.dto.UserPaymentGatewayDto;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
@@ -152,6 +157,18 @@ public interface AccountingService {
      * @return The {@link AccountDisplayInfoDto} object.
      */
     AccountDisplayInfoDto getAccountDisplayInfo(User user, Locale locale,
+            String currencySymbol);
+
+    /**
+     * Gets global financial information meant for display.
+     *
+     * @param locale
+     *            The {@link Locale} used for formatting financial data.
+     * @param currencySymbol
+     *            {@code null} or empty when not applicable.
+     * @return The {@link FinancialDisplayInfoDto} object.
+     */
+    FinancialDisplayInfoDto getFinancialDisplayInfo(Locale locale,
             String currencySymbol);
 
     /**
@@ -362,16 +379,49 @@ public interface AccountingService {
     AbstractJsonRpcMethodResponse depositFunds(PosDepositDto dto);
 
     /**
-     * Accepts funds from a Payment Gateway.
+     * Accepts funds from a Payment Gateway: an {@link AccountTrx} is created
+     * and the user {@link Account} is incremented.
      *
+     * @param lockedUser
+     *            The requesting {@link User} as locked by the caller (can be
+     *            {@code null} when user is unknown).
      * @param dto
      *            The {@link UserPaymentGatewayDto}
      * @param orphanedPaymentAccount
      *            The {@link Account} to add funds on when the requesting
-     *            {@link User} of the transaction is not found.
+     *            {@link User} of the transaction is unknown.
+     * @since 0.9.9
      */
-    void acceptFundsFromGateway(UserPaymentGatewayDto dto,
-            Account orphanedPaymentAccount);
+    void acceptFundsFromGateway(final User lockedUser,
+            UserPaymentGatewayDto dto, Account orphanedPaymentAccount);
+
+    /**
+     * Creates pending funds from a Payment Gateway: an {@link AccountTrx} is
+     * created but the user {@link Account} is <i>not</i> incremented.
+     *
+     * @param lockedUser
+     *            The {@link User} as locked by the caller.
+     * @param dto
+     *            The {@link UserPaymentGatewayDto}
+     * @since 0.9.9
+     */
+    void createPendingFundsFromGateway(User lockedUser,
+            UserPaymentGatewayDto dto);
+
+    /**
+     * Accepts pending funds from a Payment Gateway: the {@link AccountTrx} is
+     * updated <i>and</i> the user {@link Account} is incremented.
+     *
+     * @param trx
+     *            The {@link AccountTrx} to acknowledge.
+     * @param dto
+     *            The {@link UserPaymentGatewayDto}
+     * @throws AccountingException
+     *             When invariant is violated.
+     * @since 0.9.9
+     */
+    void acceptPendingFundsFromGateway(final AccountTrx trx,
+            UserPaymentGatewayDto dto) throws AccountingException;
 
     /**
      * Creates the DTO of a {@link AccountTrx.AccountTrxTypeEnum#DEPOSIT}
@@ -394,5 +444,36 @@ public interface AccountingService {
      * @return {@code true} if cost can be charged.
      */
     boolean isBalanceSufficient(Account account, BigDecimal cost);
+
+    /**
+     * Changes the base application currency. This action creates financial
+     * transactions to align each account to the new currency.
+     * <p>
+     * NOTE: Use {@link ReadWriteLockEnum#DATABASE_READONLY} and
+     * {@link ReadWriteLockEnum#setWriteLock(boolean)} scope for this method.
+     * </p>
+     *
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
+     * @param currencyFrom
+     *            The current base {@link Currency}.
+     * @param currencyTo
+     *            The new base {@link Currency}.
+     * @param exchangeRate
+     *            The exchange rate.
+     * @return The JSON-RPC Return message (either a result or an error);
+     */
+    AbstractJsonRpcMethodResponse changeBaseCurrency(
+            DaoBatchCommitter batchCommitter, Currency currencyFrom,
+            Currency currencyTo, double exchangeRate);
+
+    /**
+     * Transfers credit from one user account to another.
+     *
+     * @param dto
+     *            The {@link UserCreditTransferDto}.
+     * @return The JSON-RPC Return message (either a result or an error);
+     */
+    AbstractJsonRpcMethodResponse transferUserCredit(UserCreditTransferDto dto);
 
 }

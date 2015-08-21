@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.MalformedURLException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Date;
@@ -47,7 +48,6 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.savapage.core.LetterheadNotFoundException;
-import org.savapage.core.OutputProducer;
 import org.savapage.core.PerformanceLogger;
 import org.savapage.core.PostScriptDrmException;
 import org.savapage.core.SpException;
@@ -70,6 +70,8 @@ import org.savapage.core.dto.PrinterSnmpDto;
 import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.inbox.InboxInfoDto.InboxJob;
 import org.savapage.core.inbox.InboxInfoDto.InboxJobRange;
+import org.savapage.core.inbox.OutputProducer;
+import org.savapage.core.ipp.IppSyntaxException;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.job.SpJobScheduler;
@@ -96,6 +98,7 @@ import org.savapage.core.json.rpc.impl.ParamsPrinterSnmp;
 import org.savapage.core.json.rpc.impl.ResultAttribute;
 import org.savapage.core.json.rpc.impl.ResultPrinterSnmp;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJob;
+import org.savapage.core.pdf.PdfCreateRequest;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq;
 import org.savapage.core.print.proxy.IppConnectException;
 import org.savapage.core.print.proxy.IppNotificationRecipient;
@@ -232,7 +235,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
             createCommonCupsOptions();
 
     @Override
-    public void init() throws Exception {
+    public void init() {
 
         /*
          * We have never contacted CUPS at this point.
@@ -249,22 +252,23 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
     }
 
-    /**
-     * Closes the CUPS services.
-     * <p>
-     * The subscription to CUPS events is stopped. However, when this method is
-     * called as a reaction to a <i>Linux OS shutdown</i>, CUPS probably is
-     * stopped before SavaPage. In that case we encounter an exception because
-     * the CUPS API fails in {@link #CUPS_BIN}. The exception is catched and
-     * logged at INFO level.
-     * </p>
-     */
     @Override
-    public void exit() throws Exception {
+    public void exit() throws IppConnectException, IppSyntaxException {
+        /*
+         * Closes the CUPS services.
+         *
+         * The subscription to CUPS events is stopped. However, when this method
+         * is called as a reaction to a <i>Linux OS shutdown</i>, CUPS probably
+         * is stopped before SavaPage. In that case we encounter an exception
+         * because the CUPS API fails in {@link #CUPS_BIN}. The exception is
+         * catched and logged at INFO level.
+         */
         try {
             stopSubscription(null);
         } catch (SpException e) {
-            LOGGER.info(e.getMessage());
+            if (LOGGER.isInfoEnabled()) {
+                LOGGER.info(e.getMessage());
+            }
         }
     }
 
@@ -495,7 +499,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
     @Override
     public final JsonPrinterList getUserPrinterList(final Device terminal,
-            final String userName) throws Exception {
+            final String userName) throws IppConnectException,
+            IppSyntaxException {
 
         lazyInitPrinterCache();
 
@@ -656,8 +661,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
                     }
 
                 } catch (IOException e) {
-                    // be forgiving
-                    LOGGER.error(e.getMessage());
+                    // Be forgiving when old JSON format.
+                    LOGGER.debug(e.getMessage());
                 }
             }
         }
@@ -866,10 +871,13 @@ public abstract class AbstractProxyPrintService extends AbstractService
      * Retrieves printer details from CUPS.
      *
      * @return A list of {@link JsonProxyPrinter} objects.
-     * @throws Exception
+     * @throws IppConnectException
+     * @throws URISyntaxException
+     * @throws MalformedURLException
      */
     protected abstract List<JsonProxyPrinter> retrieveCupsPrinters()
-            throws Exception;
+            throws IppConnectException, URISyntaxException,
+            MalformedURLException;
 
     /**
      * Retrieves the printer details. Note that the details are a subset of all
@@ -894,14 +902,16 @@ public abstract class AbstractProxyPrintService extends AbstractService
      * @param jobIds
      *            The job ids.
      * @return A list of print job objects.
-     * @throws Exception
+     * @throws IppConnectException
+     *             When a connection error occurs.
      */
     protected abstract List<JsonProxyPrintJob> retrievePrintJobs(
-            String printerName, List<Integer> jobIds) throws Exception;
+            String printerName, List<Integer> jobIds)
+            throws IppConnectException;
 
     @Override
     public final JsonProxyPrintJob retrievePrintJob(final String printerName,
-            final Integer jobId) throws Exception {
+            final Integer jobId) throws IppConnectException {
 
         JsonProxyPrintJob printJob = null;
 
@@ -918,7 +928,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
     }
 
     @Override
-    public final int[] syncPrintJobs() throws Exception {
+    public final int[] syncPrintJobs() throws IppConnectException {
 
         final int[] stats = new int[3];
 
@@ -1017,11 +1027,14 @@ public abstract class AbstractProxyPrintService extends AbstractService
                             && !printOutWlk.getCupsCreationTime().equals(
                                     cupsJob.getCreationTime())) {
 
-                        LOGGER.trace("MISMATCH printer [" + printerPrv
-                                + "] job [" + cupsJob.getJobId() + "] state ["
-                                + cupsJob.getJobState() + "] created in CUPS ["
-                                + cupsJob.getCreationTime() + "] in log ["
-                                + printOutWlk.getCupsCreationTime() + "]");
+                        if (LOGGER.isTraceEnabled()) {
+                            LOGGER.trace("MISMATCH printer [" + printerPrv
+                                    + "] job [" + cupsJob.getJobId()
+                                    + "] state [" + cupsJob.getJobState()
+                                    + "] created in CUPS ["
+                                    + cupsJob.getCreationTime() + "] in log ["
+                                    + printOutWlk.getCupsCreationTime() + "]");
+                        }
 
                     } else if (!printOutWlk.getCupsJobState().equals(
                             cupsJob.getJobState())) {
@@ -1035,11 +1048,12 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
                         printOutDAO().update(printOutWlk);
 
-                        LOGGER.trace("printer [" + printerPrv + "] job ["
-                                + cupsJob.getJobId() + "] state ["
-                                + cupsJob.getJobState() + "] completed ["
-                                + cupsJob.getCompletedTime() + "]");
-
+                        if (LOGGER.isTraceEnabled()) {
+                            LOGGER.trace("printer [" + printerPrv + "] job ["
+                                    + cupsJob.getJobId() + "] state ["
+                                    + cupsJob.getJobState() + "] completed ["
+                                    + cupsJob.getCompletedTime() + "]");
+                        }
                         stats[1]++;
                     }
 
@@ -1050,10 +1064,11 @@ public abstract class AbstractProxyPrintService extends AbstractService
             }
         }
 
-        LOGGER.debug("Syncing [" + stats[0] + "] active PrintOut jobs "
-                + "with CUPS : updated [" + stats[1] + "], not found ["
-                + stats[2] + "]");
-
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("Syncing [" + stats[0] + "] active PrintOut jobs "
+                    + "with CUPS : updated [" + stats[1] + "], not found ["
+                    + stats[2] + "]");
+        }
         return stats;
     }
 
@@ -1141,45 +1156,64 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
     @Override
     public final void startSubscription(final String requestingUser)
-            throws Exception {
+            throws IppConnectException, IppSyntaxException {
         startSubscription(getSubscrRequestingUser(requestingUser),
                 getSubscrNotifyLeaseSeconds(), getSubscrNotifyRecipientUri());
     }
 
     @Override
     public final void stopSubscription(final String requestingUser)
-            throws Exception {
+            throws IppConnectException, IppSyntaxException {
         stopSubscription(getSubscrRequestingUser(requestingUser),
                 getSubscrNotifyRecipientUri());
     }
 
+    /**
+     *
+     * @param requestingUser
+     * @param recipientUri
+     * @throws IppConnectException
+     * @throws IppSyntaxException
+     */
     abstract protected void stopSubscription(final String requestingUser,
-            String recipientUri) throws Exception;
+            String recipientUri) throws IppConnectException, IppSyntaxException;
 
     /**
      *
      * @param requestingUser
      * @param leaseSeconds
      * @param recipientUri
-     * @throws Exception
+     * @throws IppConnectException
+     * @throws IppSyntaxException
      */
     abstract protected void startSubscription(final String requestingUser,
-            String leaseSeconds, String recipientUri) throws Exception;
+            String leaseSeconds, String recipientUri)
+            throws IppConnectException, IppSyntaxException;
 
     @Override
-    public final void lazyInitPrinterCache() throws Exception {
+    public final void lazyInitPrinterCache() throws IppConnectException,
+            IppSyntaxException {
 
         if (!this.isFirstTimeCupsContact.get()) {
             return;
         }
 
-        updatePrinterCache();
+        try {
+            updatePrinterCache();
+        } catch (MalformedURLException | URISyntaxException e) {
+            throw new IppConnectException(e);
+        }
     }
 
     @Override
-    public final void initPrinterCache() throws Exception {
+    public final void initPrinterCache() throws IppConnectException,
+            IppSyntaxException {
 
-        updatePrinterCache();
+        try {
+            updatePrinterCache();
+        } catch (MalformedURLException | URISyntaxException e) {
+            throw new IppConnectException(e);
+        }
     }
 
     /**
@@ -1200,10 +1234,16 @@ public abstract class AbstractProxyPrintService extends AbstractService
      * re-activated.</li>
      * </ul>
      *
-     * @throws Exception
-     *             When an error occurs.
+     * @throws URISyntaxException
+     * @throws MalformedURLException
+     * @throws IppConnectException
+     *             When a connection error occurs.
+     * @throws IppSyntaxException
+     *             When a syntax error.
      */
-    protected synchronized final void updatePrinterCache() throws Exception {
+    protected synchronized final void updatePrinterCache()
+            throws MalformedURLException, IppConnectException,
+            URISyntaxException, IppSyntaxException {
 
         final boolean firstTimeCupsContact =
                 this.isFirstTimeCupsContact.getAndSet(false);
@@ -1242,7 +1282,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
         final Map<String, Boolean> printersPresent = new HashMap<>();
 
         for (final String key : this.cupsPrinterCache.keySet()) {
-            printersPresent.put(key, false);
+            printersPresent.put(key, Boolean.FALSE);
         }
 
         /*
@@ -1269,7 +1309,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
             /*
              * Mark as present.
              */
-            printersPresent.put(cupsPrinterKey, true);
+            printersPresent.put(cupsPrinterKey, Boolean.TRUE);
 
             /*
              * Get the cached replicate.
@@ -1285,8 +1325,10 @@ public abstract class AbstractProxyPrintService extends AbstractService
                 /*
                  * New cached object.
                  */
-                LOGGER.info("CUPS printer [" + cupsPrinter.getName()
-                        + "] detected");
+                if (LOGGER.isInfoEnabled()) {
+                    LOGGER.info("CUPS printer [" + cupsPrinter.getName()
+                            + "] detected");
+                }
                 /*
                  * Add the extra groups.
                  */
@@ -1347,11 +1389,16 @@ public abstract class AbstractProxyPrintService extends AbstractService
          * Remove printers from cache which are no longer present in CUPS.
          */
         for (Map.Entry<String, Boolean> entry : printersPresent.entrySet()) {
-            if (!entry.getValue()) {
-                JsonProxyPrinter removed =
+
+            if (!entry.getValue().booleanValue()) {
+
+                final JsonProxyPrinter removed =
                         this.cupsPrinterCache.remove(entry.getKey());
-                LOGGER.info("removed CUPS printer [" + removed.getName()
-                        + "] detected");
+
+                if (LOGGER.isInfoEnabled()) {
+                    LOGGER.info("removed CUPS printer [" + removed.getName()
+                            + "] detected");
+                }
             }
         }
 
@@ -1533,7 +1580,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
         }
 
         accountingService().validateProxyPrintUserCost(lockedUser, totCost,
-                ServiceContext.getLocale(), ServiceContext.getCurrencySymbol());
+                ServiceContext.getLocale(),
+                ServiceContext.getAppCurrencySymbol());
 
         int nTotWlk = 0;
 
@@ -1548,6 +1596,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
             printReq.setNumberOfCopies(job.getCopies());
             printReq.setPrinterName(job.getPrinterName());
             printReq.setRemoveGraphics(job.isRemoveGraphics());
+            printReq.setEcoPrint(job.isEcoPrint());
             printReq.setLocale(ServiceContext.getLocale());
             printReq.setIdUser(lockedUser.getId());
             printReq.putOptionValues(job.getOptionValues());
@@ -1774,6 +1823,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
             costParms.setDuplex(printReq.isDuplex());
             costParms.setGrayscale(printReq.isGrayscale());
             costParms.setNumberOfCopies(printReq.getNumberOfCopies());
+            costParms.setPagesPerSide(printReq.getNup());
 
             printReq.setCost(accountingService().calcProxyPrintCost(
                     ServiceContext.getLocale(), currencySymbol, user, printer,
@@ -1847,14 +1897,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
         docLog.setRefunded(false);
         docLog.setInvoiced(true);
 
-        /*
-         * We need to abbreviate the comment since it can be provided by an
-         * external supplier.
-         */
-        final String comment =
-                docLogDAO().abbreviateComment(request.getComment());
-
-        docLog.setLogComment(comment);
+        docLog.setLogComment(request.getComment());
 
         /*
          * External supplier.
@@ -2018,6 +2061,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
         costParms.setDuplex(request.isDuplex());
         costParms.setGrayscale(request.isGrayscale());
         costParms.setNumberOfCopies(request.getNumberOfCopies());
+        costParms.setPagesPerSide(request.getNup());
 
         /*
          * Set the parameters for this single PDF file.
@@ -2028,7 +2072,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
         final BigDecimal cost =
                 accountingService().calcProxyPrintCost(
                         ServiceContext.getLocale(),
-                        ServiceContext.getCurrencySymbol(), lockedUser,
+                        ServiceContext.getAppCurrencySymbol(), lockedUser,
                         printer, costParms, request.getJobChunkInfo());
 
         request.setCost(cost);
@@ -2202,15 +2246,25 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
             final String pdfFileName =
                     OutputProducer.createUniqueTempPdfName(lockedUser,
-                            "printjob-" + nChunk + "-");
+                            String.format("printjob-%d-", nChunk));
 
             final LinkedHashMap<String, Integer> uuidPageCount =
                     new LinkedHashMap<>();
 
+            final PdfCreateRequest pdfRequest = new PdfCreateRequest();
+
+            pdfRequest.setUserObj(lockedUser);
+            pdfRequest.setPdfFile(pdfFileName);
+            pdfRequest.setInboxInfo(inboxInfo);
+            pdfRequest.setRemoveGraphics(request.isRemoveGraphics());
+            pdfRequest.setEcoPdf(request.isEcoPrint());
+            pdfRequest.setApplyPdfProps(false);
+            pdfRequest.setApplyLetterhead(true);
+            pdfRequest.setForPrinting(true);
+
             pdfFileToPrint =
-                    outputProducer().generatePdf(lockedUser, pdfFileName,
-                            inboxInfo, request.isRemoveGraphics(), false, true,
-                            true, uuidPageCount, docLog);
+                    outputProducer().generatePdf(pdfRequest, uuidPageCount,
+                            docLog);
 
             docLogService().collectData4DocOut(lockedUser, docLog,
                     pdfFileToPrint, uuidPageCount);
@@ -2226,8 +2280,14 @@ public abstract class AbstractProxyPrintService extends AbstractService
         } finally {
 
             if (pdfFileToPrint != null && pdfFileToPrint.exists()) {
+
                 if (pdfFileToPrint.delete()) {
-                    LOGGER.trace("deleted temp file [" + pdfFileToPrint + "]");
+
+                    if (LOGGER.isTraceEnabled()) {
+                        LOGGER.trace("deleted temp file [" + pdfFileToPrint
+                                + "]");
+                    }
+
                 } else {
                     LOGGER.error("delete of temp file [" + pdfFileToPrint
                             + "] FAILED");

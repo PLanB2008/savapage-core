@@ -21,7 +21,6 @@
  */
 package org.savapage.core.rfid;
 
-import java.util.Date;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
@@ -104,8 +103,11 @@ public class RfIdReader {
             /*
              * Tell the world about produced the event!
              */
-            LOGGER.trace("Producer: signalled " + event.getEvent().toString()
-                    + " [" + event.getCardNumber() + "]");
+            if (LOGGER.isTraceEnabled()) {
+                LOGGER.trace("Producer: signalled "
+                        + event.getEvent().toString() + " ["
+                        + event.getCardNumber() + "]");
+            }
 
             this.notEmpty.signal();
 
@@ -127,8 +129,10 @@ public class RfIdReader {
     public RfidEvent take(long timeout, TimeUnit timeUnit)
             throws InterruptedException {
 
-        LOGGER.trace("Consumer: waiting for event ... (max " + timeout + " "
-                + timeUnit.toString() + ")");
+        if (LOGGER.isTraceEnabled()) {
+            LOGGER.trace("Consumer: waiting for event ... (max " + timeout
+                    + " " + timeUnit.toString() + ")");
+        }
 
         this.lock.lock();
 
@@ -141,20 +145,21 @@ public class RfIdReader {
              */
             if (this.lastEvent != null) {
 
-                final Date now = new Date();
-
                 final long expiryMsec =
                         ConfigManager.instance().getConfigLong(
                                 Key.AUTH_MODE_CARD_IP_EXPIRY_MSECS);
 
                 final boolean eventExpired =
-                        (now.getTime() - this.lastEvent.getDate().getTime()) > expiryMsec;
+                        (System.currentTimeMillis() - this.lastEvent.getDate()
+                                .getTime()) > expiryMsec;
 
                 if (eventExpired) {
 
-                    LOGGER.trace("Consumer: skipped expired "
-                            + lastEvent.getEvent().toString() + " ["
-                            + lastEvent.getCardNumber() + "]");
+                    if (LOGGER.isTraceEnabled()) {
+                        LOGGER.trace("Consumer: skipped expired "
+                                + lastEvent.getEvent().toString() + " ["
+                                + lastEvent.getCardNumber() + "]");
+                    }
 
                     this.lastEvent = null;
                     this.notFull.signal();
@@ -181,9 +186,11 @@ public class RfIdReader {
 
             if (event != null) {
 
-                LOGGER.trace("Consumer: consumed "
-                        + event.getEvent().toString() + " ["
-                        + event.getCardNumber() + "]");
+                if (LOGGER.isTraceEnabled()) {
+                    LOGGER.trace("Consumer: consumed "
+                            + event.getEvent().toString() + " ["
+                            + event.getCardNumber() + "]");
+                }
                 /*
                  * Tell the world the next event can be produced!
                  */

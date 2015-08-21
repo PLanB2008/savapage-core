@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
  *
  * @author Datraverse B.V.
  */
-public class EmailValidator {
+public final class EmailValidator {
 
     /**
      *

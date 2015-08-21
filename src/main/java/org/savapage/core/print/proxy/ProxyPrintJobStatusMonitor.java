@@ -27,6 +27,7 @@ import java.util.Iterator;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.SpInfo;
 import org.savapage.core.cometd.AdminPublisher;
@@ -295,8 +296,9 @@ public class ProxyPrintJobStatusMonitor extends Thread {
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug(String.format("Add job [%s] [%d] [%s] [%s] [%s]",
                         jobUpdate.getPrinterName(), jobUpdate.getJobId(),
-                        jobUpdate.getJobName(), jobUpdate.getJobState()
-                                .toString(), jobUpdate.getStatusSource()));
+                        StringUtils.defaultString(jobUpdate.getJobName()),
+                        jobUpdate.getJobState().toString(),
+                        jobUpdate.getStatusSource()));
             }
 
             return;
@@ -313,7 +315,8 @@ public class ProxyPrintJobStatusMonitor extends Thread {
 
             msg.append("Update job [").append(jobUpdate.getPrinterName())
                     .append("] [").append(jobUpdate.getJobId()).append("] [")
-                    .append(jobUpdate.getJobName()).append("] : current [");
+                    .append(StringUtils.defaultString(jobUpdate.getJobName()))
+                    .append("] : current [");
 
             if (jobCurrent.getJobStateCups() != null) {
 
@@ -331,7 +334,9 @@ public class ProxyPrintJobStatusMonitor extends Thread {
                     .append("] [").append(jobUpdate.getStatusSource())
                     .append("]");
 
-            LOGGER.debug(msg.toString());
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug(msg.toString());
+            }
         }
 
         /*
@@ -374,7 +379,7 @@ public class ProxyPrintJobStatusMonitor extends Thread {
 
         while (this.keepProcessing) {
 
-            final long timeNow = new Date().getTime();
+            final long timeNow = System.currentTimeMillis();
 
             final Iterator<Integer> iter =
                     this.jobStatusMap.keySet().iterator();
@@ -416,8 +421,10 @@ public class ProxyPrintJobStatusMonitor extends Thread {
                      */
                     final StringBuilder msg = new StringBuilder();
 
-                    msg.append("External CUPS job #").append(job.getJobId())
-                            .append(" \"").append(job.getJobName())
+                    msg.append("External CUPS job #")
+                            .append(job.getJobId())
+                            .append(" \"")
+                            .append(StringUtils.defaultString(job.getJobName()))
                             .append("\" on printer ")
                             .append(job.getPrinterName()).append(" completed.");
 
@@ -442,8 +449,10 @@ public class ProxyPrintJobStatusMonitor extends Thread {
                         final StringBuilder msg = new StringBuilder();
 
                         msg.append("Print log of CUPS job #")
-                                .append(job.getJobId()).append(" \"")
-                                .append(job.getJobName())
+                                .append(job.getJobId())
+                                .append(" \"")
+                                .append(StringUtils.defaultString(job
+                                        .getJobName()))
                                 .append("\" on printer ")
                                 .append(job.getPrinterName())
                                 .append(" not found.");
@@ -459,8 +468,11 @@ public class ProxyPrintJobStatusMonitor extends Thread {
 
                         final StringBuilder msg = new StringBuilder();
 
-                        msg.append("CUPS job #").append(job.getJobId())
-                                .append(" \"").append(job.getJobName())
+                        msg.append("CUPS job #")
+                                .append(job.getJobId())
+                                .append(" \"")
+                                .append(StringUtils.defaultString(job
+                                        .getJobName()))
                                 .append("\" on printer ")
                                 .append(job.getPrinterName())
                                 .append(" completed.");
@@ -505,7 +517,9 @@ public class ProxyPrintJobStatusMonitor extends Thread {
                     Thread.sleep(POLLING_MSEC);
                 }
             } catch (InterruptedException e) {
-                LOGGER.info(e.getMessage());
+                if (LOGGER.isInfoEnabled()) {
+                    LOGGER.info(e.getMessage());
+                }
             }
         }
 
@@ -595,8 +609,9 @@ public class ProxyPrintJobStatusMonitor extends Thread {
             }
         }
 
-        SpInfo.instance().log(
-                String.format("%s shutdown completed.", OBJECT_NAME_FOR_LOG));
+        SpInfo.instance()
+                .log(String.format("... %s shutdown completed.",
+                        OBJECT_NAME_FOR_LOG));
 
     }
 

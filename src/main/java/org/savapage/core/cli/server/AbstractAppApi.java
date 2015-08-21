@@ -29,7 +29,6 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
@@ -167,7 +166,7 @@ public abstract class AbstractAppApi extends AbstractApp {
      */
     protected AbstractAppApi() {
         try {
-            serverProps = ConfigManager.readServerProperties();
+            serverProps = ConfigManager.loadServerProperties();
         } catch (Exception e) {
             throw new SpException(e);
         }
@@ -194,6 +193,14 @@ public abstract class AbstractAppApi extends AbstractApp {
      * @return The short description of the CLI method.
      */
     protected abstract String getShortDecription();
+
+    /**
+     *
+     * @return The long description of the CLI method.
+     */
+    protected String getLongDecription() {
+        return null;
+    }
 
     /**
      *
@@ -689,11 +696,11 @@ public abstract class AbstractAppApi extends AbstractApp {
      * key.
      * </p>
      *
-     * @param jsonIn
+     * @param request
      * @return
      * @throws Exception
      */
-    final protected String send(final JsonRpcMethod request) throws Exception {
+    protected final String send(final JsonRpcMethod request) throws Exception {
 
         request.getParams().setApiKey(
                 "302c02145da35d18d85dcc724aabcb237b63092802e7ec"
@@ -837,7 +844,7 @@ public abstract class AbstractAppApi extends AbstractApp {
      *
      * @return
      */
-    private final String getUsageCmdLineSyntax() {
+    private String getUsageCmdLineSyntax() {
         return "--" + getCliMethodName() + " [OPTION]...";
     }
 
@@ -851,15 +858,26 @@ public abstract class AbstractAppApi extends AbstractApp {
      *
      * @return
      */
-    private final String getUsageDescript() {
+    private String getUsageDescript() {
+
         final String eol = System.lineSeparator();
-        return getApiDescriptHeader() + "Method  : " + getMethodName() + eol
-                + "Version : " + getApiVersion() + eol + eol
-                + getShortDecription();
+
+        final StringBuilder txt =
+                new StringBuilder().append(getApiDescriptHeader())
+                        .append("Method  : ").append(getMethodName())
+                        .append(eol).append("Version : ")
+                        .append(getApiVersion()).append(eol).append(eol)
+                        .append(getShortDecription());
+
+        if (getLongDecription() != null) {
+            txt.append(eol).append(eol).append(getLongDecription());
+        }
+
+        return txt.toString();
     }
 
     @Override
-    protected int run(String[] args) throws Exception {
+    protected final int run(final String[] args) throws Exception {
 
         // ......................................................
         // Parse parameters from CLI
@@ -921,7 +939,7 @@ public abstract class AbstractAppApi extends AbstractApp {
          */
         while (performMethod && exitCode == EXIT_CODE_OK) {
 
-            request.setId(String.valueOf(new Date().getTime()));
+            request.setId(String.valueOf(System.currentTimeMillis()));
             request.setParams(createMethodParms(cmd));
 
             final String jsonOut = send(request);

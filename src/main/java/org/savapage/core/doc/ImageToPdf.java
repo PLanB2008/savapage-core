@@ -177,22 +177,36 @@ public class ImageToPdf implements IStreamConverter {
     }
 
     /**
+     * Adds an image to the current a page of an PDF {@link Document}.
+     * <ul>
+     * <li>A landscape image is rotated when PDF Document page is portrait.</li>
+     * <li>The image is scaled to the document width.</li>
+     * </ul>
      *
      * @param document
+     *            a PDF {@link Document} to add the image to.
      * @param marginLeft
+     *            Left margin.
      * @param marginRight
+     *            Right margin.
      * @param image
+     *            The {@link com.itextpdf.text.Image} to add
      * @throws DocumentException
+     *             When things go wrong.
      */
-    private void addImagePage(final Document document, final float marginLeft,
-            final float marginRight, final com.itextpdf.text.Image image)
-            throws DocumentException {
+    public static void addImagePage(final Document document,
+            final float marginLeft, final float marginRight,
+            final com.itextpdf.text.Image image) throws DocumentException {
 
-        final boolean landscape = image.getWidth() > image.getHeight();
+        final boolean landscapeImg = image.getWidth() > image.getHeight();
+        final boolean landscapePdf =
+                document.getPageSize().getWidth() > document.getPageSize()
+                        .getHeight();
 
-        if (landscape) {
+        if (landscapeImg && !landscapePdf) {
             image.setRotation((float) (Math.PI * .5));
         }
+
         /*
          * Now the larger image that did not fit into current page's remaining
          * space will always be inserted as coding instructed, but it will
@@ -216,7 +230,9 @@ public class ImageToPdf implements IStreamConverter {
      * Writes the inputStream to a File (for debug purposes).
      *
      * @param inputStream
+     *            The {@link InputStream}.
      * @param file
+     *            The {@link File} to stream to.
      * @throws IOException
      *             When read errors.
      */

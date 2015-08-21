@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -36,7 +36,6 @@ import java.util.Date;
 import java.util.List;
 
 import org.apache.commons.lang3.StringUtils;
-import org.savapage.core.OutputProducer;
 import org.savapage.core.PostScriptDrmException;
 import org.savapage.core.cometd.AdminPublisher;
 import org.savapage.core.cometd.PubLevelEnum;
@@ -62,6 +61,7 @@ import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.UserService;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
 import org.savapage.core.users.UserAliasList;
+import org.savapage.core.util.FileSystemHelper;
 import org.savapage.core.util.Messages;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -299,8 +299,6 @@ public class DocContentPrintProcessor {
 
         this.requestingUserId = requestingUserId;
 
-        final Date dateNow = new Date();
-
         String uid = null;
 
         if (requestingUserId == null) {
@@ -315,8 +313,10 @@ public class DocContentPrintProcessor {
             uid = UserAliasList.instance().getUserName(this.requestingUserId);
 
             if (!uid.equals(this.requestingUserId)) {
-                LOGGER.debug("using user [" + uid + "] for alias ["
-                        + this.requestingUserId + "]");
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("using user [" + uid + "] for alias ["
+                            + this.requestingUserId + "]");
+                }
             }
 
             ConfigManager cm = ConfigManager.instance();
@@ -380,6 +380,8 @@ public class DocContentPrintProcessor {
 
             if (this.userDb.getPerson()) {
 
+                final Date dateNow = new Date();
+
                 if (USER_SERVICE.isUserPrintInDisabled(this.userDb, dateNow)) {
                     reason = "is DISABLED for printing";
                 } else {
@@ -395,11 +397,15 @@ public class DocContentPrintProcessor {
         if (isAuthorized) {
 
             if (!this.uidTrusted.equals(uid)) {
-                LOGGER.debug("Requesting user [" + uid + "] is unknown:"
-                        + " using WebApp user [" + uidTrusted + "]");
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("Requesting user [" + uid + "] is unknown:"
+                            + " using WebApp user [" + uidTrusted + "]");
+                }
             }
 
-            LOGGER.info("job-name: [" + getJobName() + "]");
+            if (LOGGER.isInfoEnabled()) {
+                LOGGER.info("job-name: [" + getJobName() + "]");
+            }
 
         } else {
 
@@ -410,13 +416,18 @@ public class DocContentPrintProcessor {
 
                 if (this.uidTrusted != null && !this.uidTrusted.equals(uid)) {
 
-                    LOGGER.info("Requesting user [" + uid
-                            + "] is unknown -> WebApp user [" + this.uidTrusted
-                            + "] " + reason + ": print denied");
+                    if (LOGGER.isInfoEnabled()) {
+                        LOGGER.info("Requesting user [" + uid
+                                + "] is unknown -> WebApp user ["
+                                + this.uidTrusted + "] " + reason
+                                + ": print denied");
+                    }
 
                 } else {
-                    LOGGER.info("Requesting user [" + uid + "] " + reason
-                            + ": print denied");
+                    if (LOGGER.isInfoEnabled()) {
+                        LOGGER.info("Requesting user [" + uid + "] " + reason
+                                + ": print denied");
+                    }
                 }
             }
 
@@ -490,8 +501,10 @@ public class DocContentPrintProcessor {
         switch (PostScriptFilter.process(reader, writer, respectDRM)) {
         case DRM_NEGLECTED:
             setDrmRestricted(true);
-            LOGGER.debug("DRM protected PostScript from user [" + uidTrusted
-                    + "] accepted");
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("DRM protected PostScript from user ["
+                        + uidTrusted + "] accepted");
+            }
             break;
         case DRM_NO:
             break;
@@ -604,12 +617,12 @@ public class DocContentPrintProcessor {
                                         + StringUtils
                                                 .defaultString(this.signatureString)
                                         + "] unknown");
+
                 if (SAVE_UNSUPPORTED_CONTENT) {
-                    Date now = new Date();
                     fostr =
                             new FileOutputStream(ConfigManager.getAppTmpDir()
-                                    + "/" + delivery + "_" + now.getTime()
-                                    + ".unknown");
+                                    + "/" + delivery + "_"
+                                    + System.currentTimeMillis() + ".unknown");
                     fostr.write(readAheadInputBytes);
                     saveBinary(content, fostr);
                 }
@@ -678,7 +691,9 @@ public class DocContentPrintProcessor {
          * Skip CUPS_COMMAND for now.
          */
         if (inputType == DocContentTypeEnum.CUPS_COMMAND) {
-            LOGGER.debug(CupsCommandFile.FIRST_LINE_SIGNATURE + " ignored");
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug(CupsCommandFile.FIRST_LINE_SIGNATURE + " ignored");
+            }
             return;
         }
 
@@ -845,7 +860,7 @@ public class DocContentPrintProcessor {
              */
             this.logPrintIn(protocol);
 
-            OutputProducer.doAtomicFileMove(//
+            FileSystemHelper.doAtomicFileMove(//
                     // source
                     FileSystems.getDefault().getPath(tempPathPdf),
                     // target
@@ -860,8 +875,10 @@ public class DocContentPrintProcessor {
                 setDrmRestricted(true);
                 setDrmViolationDetected(true);
 
-                LOGGER.debug("DRM protected PostScript from user ["
-                        + uidTrusted + "] REJECTED");
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("DRM protected PostScript from user ["
+                            + uidTrusted + "] REJECTED");
+                }
 
                 /*
                  * We also need to log the rejected print-in, since we want to
@@ -1103,22 +1120,28 @@ public class DocContentPrintProcessor {
 
             if (exception instanceof PostScriptDrmException) {
 
-                LOGGER.warn("Distilling PostScript to PDF from user [" + userid
-                        + "] FAILED: " + exception.getMessage());
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn("Distilling PostScript to PDF from user ["
+                            + userid + "] FAILED: " + exception.getMessage());
+                }
 
                 setDeferredException(null);
 
             } else if (exception instanceof PdfSecurityException) {
 
-                LOGGER.warn("Opening PDF from user [" + userid + "] FAILED: "
-                        + exception.getMessage());
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn("Opening PDF from user [" + userid
+                            + "] FAILED: " + exception.getMessage());
+                }
 
                 setDeferredException(null);
 
             } else if (exception instanceof UnsupportedPrintJobContent) {
 
-                LOGGER.warn("Unsupported Print Job content from user ["
-                        + userid + "] : " + exception.getMessage());
+                if (LOGGER.isWarnEnabled()) {
+                    LOGGER.warn("Unsupported Print Job content from user ["
+                            + userid + "] : " + exception.getMessage());
+                }
 
                 setDeferredException(null);
 

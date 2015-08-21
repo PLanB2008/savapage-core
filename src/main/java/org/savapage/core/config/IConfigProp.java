@@ -24,7 +24,8 @@ package org.savapage.core.config;
 import java.math.BigDecimal;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.Date;
+import java.text.MessageFormat;
+import java.util.Currency;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.Set;
@@ -35,6 +36,7 @@ import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.community.CommunityDictEnum;
+import org.savapage.core.dao.helpers.DeviceTypeEnum;
 import org.savapage.core.dao.helpers.ReservedIppQueueEnum;
 import org.savapage.core.dao.impl.DaoBatchCommitterImpl;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
@@ -109,6 +111,93 @@ public interface IConfigProp {
     InternalFontFamilyEnum DEFAULT_INTERNAL_FONT_FAMILY =
             InternalFontFamilyEnum.DEFAULT;
 
+    final String V_YES = "Y";
+    final String V_NO = "N";
+
+    /**
+     * Null value for numerics.
+     */
+    final String V_NULL = "-1";
+
+    final String AUTH_METHOD_V_LDAP = "ldap";
+    final String AUTH_METHOD_V_UNIX = "unix";
+    final String AUTH_METHOD_V_NONE = "none";
+
+    final String AUTH_MODE_V_NAME = UserAuth.MODE_NAME;
+    final String AUTH_MODE_V_ID = UserAuth.MODE_ID;
+    final String AUTH_MODE_V_CARD_LOCAL = UserAuth.MODE_CARD_LOCAL;
+    final String AUTH_MODE_V_CARD_IP = UserAuth.MODE_CARD_IP;
+
+    final String LDAP_TYPE_V_APPLE = "APPLE_OPENDIR";
+    final String LDAP_TYPE_V_OPEN_LDAP = "OPEN_LDAP";
+    final String LDAP_TYPE_V_E_DIR = "NOVELL_EDIRECTORY";
+    final String LDAP_TYPE_V_ACTIV = "ACTIVE_DIRECTORY";
+
+    final String PAPERSIZE_V_SYSTEM = "";
+    final String PAPERSIZE_V_A4 = MediaSizeName.ISO_A4.toString();
+    final String PAPERSIZE_V_LETTER = MediaSizeName.NA_LETTER.toString();
+
+    /**
+     *
+     */
+    final String SMTP_SECURITY_V_NONE = "";
+
+    /**
+     * Set to Y to enable STARTTLS, or N to disable it. STARTTLS is for
+     * connecting to an SMTP server port using a plain (non-encrypted)
+     * connection, then elevating to an encrypted connection on the same port.
+     */
+    final String SMTP_SECURITY_V_STARTTLS = "starttls";
+    /**
+     *
+     */
+    final String SMTP_SECURITY_V_SSL = "ssl";
+
+    /**
+     *
+     */
+    final String IMAP_SECURITY_V_NONE = "";
+
+    /**
+     *
+     */
+    final String IMAP_SECURITY_V_STARTTLS = "starttls";
+
+    /**
+     *
+     */
+    final String IMAP_SECURITY_V_SSL = "ssl";
+
+    /**
+     *
+     */
+    final Integer IMAP_CONNECTION_TIMEOUT_V_DEFAULT = 10000;
+    final Integer IMAP_TIMEOUT_V_DEFAULT = 10000;
+
+    final Long IMAP_MAX_FILE_MB_V_DEFAULT = 5L;
+    final Integer IMAP_MAX_FILES_V_DEFAULT = 1;
+
+    /**
+     *
+     */
+    final Long WEBPRINT_MAX_FILE_MB_V_DEFAULT = 5L;
+
+    /**
+     *
+     */
+    final Integer WEBAPP_MAX_IDLE_SECS_V_NONE = 0;
+
+    final String CARD_NUMBER_FORMAT_V_DEC = "DEC";
+    final String CARD_NUMBER_FORMAT_V_HEX = "HEX";
+
+    final String CARD_NUMBER_FIRSTBYTE_V_LSB = "LSB";
+    final String CARD_NUMBER_FIRSTBYTE_V_MSB = "MSB";
+
+    /**
+     *
+     */
+    final Integer NUMBER_V_NONE = 0;
+
     /**
      * @author Datraverse B.V.
      */
@@ -155,6 +244,12 @@ public interface IConfigProp {
                 KeyType.BIG_DECIMAL, "0.00"),
 
         /**
+         * ISO 4217 codes, like EUR, USD, JPY, ...
+         */
+        FINANCIAL_GLOBAL_CURRENCY_CODE("financial.global.currency-code",
+                CURRENCY_VALIDATOR),
+
+        /**
          * A comma separated list of Point-of-Sale payment methods.
          */
         FINANCIAL_POS_PAYMENT_METHODS("financial.pos.payment-methods"),
@@ -179,6 +274,52 @@ public interface IConfigProp {
                 DEFAULT_FINANCIAL_USER_BALANCE_DECIMALS),
 
         /**
+         * .
+         */
+        FINANCIAL_USER_TRANSFER_ENABLE("financial.user.transfers.enable",
+                BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         * .
+         */
+        FINANCIAL_USER_TRANSFER_ENABLE_COMMENTS(
+                "financial.user.transfers.enable-comments", BOOLEAN_VALIDATOR,
+                V_YES),
+
+        /**
+         * .
+         */
+        FINANCIAL_USER_TRANSFER_AMOUNT_MIN(
+                "financial.user.transfers.amount-min", KeyType.BIG_DECIMAL,
+                "0.01"),
+
+        /**
+         * .
+         */
+        FINANCIAL_USER_TRANSFER_AMOUNT_MAX(
+                "financial.user.transfers.amount-max", KeyType.BIG_DECIMAL,
+                "999999999.99"),
+
+        /**
+         * .
+         */
+        FINANCIAL_USER_TRANSFER_ENABLE_LIMIT_GROUP(
+                "financial.user.transfers.enable-limit-group",
+                BOOLEAN_VALIDATOR, V_NO),
+
+        /**
+         * .
+         */
+        FINANCIAL_USER_TRANSFER_LIMIT_GROUP(
+                "financial.user.transfers.limit-group"),
+
+        /**
+         * .
+         */
+        FINANCIAL_USER_VOUCHERS_ENABLE("financial.user.vouchers.enable",
+                BOOLEAN_VALIDATOR, V_YES),
+
+        /**
          *
          */
         FINANCIAL_VOUCHER_CARD_HEADER("financial.voucher.card-header",
@@ -198,15 +339,32 @@ public interface IConfigProp {
                         .toString()),
 
         /**
-         * E.g.: €.
+         * URL of external user page with information about the Bitcoin
+         * transaction hash. The value is in {@link MessageFormat} pattern where
+         * {0} is the hash. E.g.
+         *
+         * <pre>
+         * https://blockchain.info/tx-index/{0}
+         * https://blockexplorer.com/tx/{0}
+         * </pre>
          */
-        USER_FIN_CURRENCY_SYMBOL_CUSTOM("user.fin.currency-symbol.custom"),
+        FINANCIAL_BITCOIN_USER_PAGE_URL_PATTERN_TRX(
+                "financial.bitcoin.user-page.url-pattern.trx",
+                URL_VALIDATOR_OPT, "https://blockchain.info/tx-index/{0}"),
 
         /**
+         * URL of external user page with information about the Bitcoin address.
+         * The value is in {@link MessageFormat} pattern where {0} is the
+         * address. E.g.
          *
+         * <pre>
+         * https://blockchain.info/address/{0}
+         * https://blockexplorer.com/address/{0}
+         * </pre>
          */
-        USER_FIN_CURRENTCY_SYMBOL_SHOWS("user.fin.currency-symbol.show",
-                BOOLEAN_VALIDATOR, V_YES),
+        FINANCIAL_BITCOIN_USER_PAGE_URL_PATTERN_ADDRESS(
+                "financial.bitcoin.user-page.url-pattern.address",
+                URL_VALIDATOR_OPT, "https://blockchain.info/address/{0}"),
 
         /**
          *
@@ -414,6 +572,12 @@ public interface IConfigProp {
         DELETE_DOC_LOG_DAYS("delete.doc-log.days", NUMBER_VALIDATOR, "365"),
 
         /**
+         * The default port for {@link DeviceTypeEnum#CARD_READER}.
+         */
+        DEVICE_CARD_READER_DEFAULT_PORT("device.card-reader.default-port",
+                NUMBER_VALIDATOR, "7772"),
+
+        /**
          *
          */
         DOC_CONVERT_XPS_TO_PDF_ENABLED("doc.convert.xpstopdf-enabled",
@@ -440,6 +604,20 @@ public interface IConfigProp {
          *
          */
         ENV_WATT_HOURS_PER_SHEET("environment.watt-hours-per-sheet", "12.5"),
+
+        /**
+         * The base URL, i.e. "protocol://authority" <i>without</i> the path, of
+         * the Web API callback interface (no trailing slash) (optional).
+         */
+        EXT_WEBAPI_CALLBACK_URL_BASE("ext.webapi.callback.url-base",
+                URL_VALIDATOR_OPT, ""),
+
+        /**
+         * The URL of the User Web App used by the Web API to redirect to after
+         * remote Web App dialog is done (optional).
+         */
+        EXT_WEBAPI_REDIRECT_URL_WEBAPP_USER(
+                "ext.webapi.redirect.url-webapp-user", URL_VALIDATOR_OPT, ""),
 
         /**
          * Google Cloud Print enabled (boolean).
@@ -682,6 +860,11 @@ public interface IConfigProp {
          */
         COMMUNITY_HELPDESK_URL("community.helpdesk.url", URL_VALIDATOR,
                 DEFAULT_COMMUNITY_HELPDESK_URL),
+
+        /**
+         * PaperCut Database JDBC driver, like "org.postgresql.Driver".
+         */
+        PAPERCUT_DB_JDBC_DRIVER("papercut.db.jdbc-driver"),
 
         /**
          * PaperCut Database JDBC url.
@@ -1208,8 +1391,8 @@ public interface IConfigProp {
         /**
          *
          */
-        STATS_TOTAL_RESET_DATE("stats.total.reset-date", String
-                .valueOf(new Date().getTime())),
+        STATS_TOTAL_RESET_DATE("stats.total.reset-date", String.valueOf(System
+                .currentTimeMillis())),
 
         /**
          *
@@ -1386,6 +1569,11 @@ public interface IConfigProp {
                 "cliapp.auth.trust-webapp-user-auth", BOOLEAN_VALIDATOR, V_YES),
 
         /**
+         * .
+         */
+        ECO_PRINT_ENABLE("eco-print.enable", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
          * Trust authenticated user in Client App on same IP address as User Web
          * App (Boolean, default TRUE).
          */
@@ -1422,6 +1610,14 @@ public interface IConfigProp {
         WEBAPP_ADMIN_DASHBOARD_SHOW_TECH_INFO(
                 "webapp.admin.dashboard.show-tech-info", BOOLEAN_VALIDATOR,
                 V_NO),
+
+        /**
+         * Number of seconds after which cached Bitcoin wallet information
+         * expires.
+         */
+        WEBAPP_ADMIN_BITCOIN_WALLET_CACHE_EXPIRY_SECS(
+                "webapp.admin.bitcoin.wallet.cache-expiry-secs",
+                NUMBER_VALIDATOR, "3600"),
 
         /**
          * User WebApp: Max. copies for proxy printing.
@@ -1655,6 +1851,10 @@ public interface IConfigProp {
          */
         ERROR_LOCALE,
         /**
+         * .
+         */
+        ERROR_CURRENCY,
+        /**
          *
          */
         ERROR_NOT_NUMERIC,
@@ -1762,15 +1962,32 @@ public interface IConfigProp {
     */
     static class UrlValidator implements Validator {
 
+        /**
+         * {@code true} if value is optional.
+         */
+        private final boolean isOptional;
+
+        /**
+         * @param optional
+         *            {@code true} if value is optional.
+         */
+        public UrlValidator(final boolean optional) {
+            super();
+            this.isOptional = optional;
+        }
+
         @Override
-        public ValidationResult validate(String value) {
+        public ValidationResult validate(final String value) {
 
             ValidationResult res = new ValidationResult(value);
 
-            try {
-                new URL(value);
-            } catch (MalformedURLException e) {
-                res.setStatus(ValidationStatusEnum.ERROR_SYNTAX);
+            if (!this.isOptional || !value.isEmpty()) {
+
+                try {
+                    new URL(value);
+                } catch (MalformedURLException e) {
+                    res.setStatus(ValidationStatusEnum.ERROR_SYNTAX);
+                }
             }
 
             if (!res.isValid()) {
@@ -1806,6 +2023,41 @@ public interface IConfigProp {
     /**
      *
      */
+    static class CurrencyCodeValidator implements Validator {
+
+        /**
+         * {@code true} if value is optional.
+         */
+        private final boolean isOptional;
+
+        /**
+         * @param optional
+         *            {@code true} if value is optional.
+         */
+        public CurrencyCodeValidator(final boolean optional) {
+            super();
+            this.isOptional = optional;
+        }
+
+        @Override
+        public ValidationResult validate(String value) {
+            ValidationResult res = new ValidationResult(value);
+
+            try {
+                if (!this.isOptional || !value.isEmpty()) {
+                    Currency.getInstance(value);
+                }
+            } catch (Exception e) {
+                res.setStatus(ValidationStatusEnum.ERROR_CURRENCY);
+                res.setMessage(e.getMessage());
+            }
+            return res;
+        }
+    }
+
+    /**
+    *
+    */
     static class LocaleValidator implements Validator {
 
         @Override
@@ -1948,12 +2200,22 @@ public interface IConfigProp {
     /**
      * .
      */
+    CurrencyCodeValidator CURRENCY_VALIDATOR = new CurrencyCodeValidator(false);
+
+    /**
+     * .
+     */
     NotEmptyValidator NOT_EMPTY_VALIDATOR = new NotEmptyValidator();
 
     /**
      * .
      */
-    UrlValidator URL_VALIDATOR = new UrlValidator();
+    UrlValidator URL_VALIDATOR = new UrlValidator(false);
+
+    /**
+     * URL is not required (may be empty).
+     */
+    UrlValidator URL_VALIDATOR_OPT = new UrlValidator(true);
 
     /**
      * .
@@ -2176,93 +2438,6 @@ public interface IConfigProp {
         }
 
     };
-
-    final String V_YES = "Y";
-    final String V_NO = "N";
-
-    /**
-     * Null value for numerics.
-     */
-    final String V_NULL = "-1";
-
-    final String AUTH_METHOD_V_LDAP = "ldap";
-    final String AUTH_METHOD_V_UNIX = "unix";
-    final String AUTH_METHOD_V_NONE = "none";
-
-    final String AUTH_MODE_V_NAME = UserAuth.MODE_NAME;
-    final String AUTH_MODE_V_ID = UserAuth.MODE_ID;
-    final String AUTH_MODE_V_CARD_LOCAL = UserAuth.MODE_CARD_LOCAL;
-    final String AUTH_MODE_V_CARD_IP = UserAuth.MODE_CARD_IP;
-
-    final String LDAP_TYPE_V_APPLE = "APPLE_OPENDIR";
-    final String LDAP_TYPE_V_OPEN_LDAP = "OPEN_LDAP";
-    final String LDAP_TYPE_V_E_DIR = "NOVELL_EDIRECTORY";
-    final String LDAP_TYPE_V_ACTIV = "ACTIVE_DIRECTORY";
-
-    final String PAPERSIZE_V_SYSTEM = "";
-    final String PAPERSIZE_V_A4 = MediaSizeName.ISO_A4.toString();
-    final String PAPERSIZE_V_LETTER = MediaSizeName.NA_LETTER.toString();
-
-    /**
-     *
-     */
-    final String SMTP_SECURITY_V_NONE = "";
-
-    /**
-     * Set to Y to enable STARTTLS, or N to disable it. STARTTLS is for
-     * connecting to an SMTP server port using a plain (non-encrypted)
-     * connection, then elevating to an encrypted connection on the same port.
-     */
-    final String SMTP_SECURITY_V_STARTTLS = "starttls";
-    /**
-     *
-     */
-    final String SMTP_SECURITY_V_SSL = "ssl";
-
-    /**
-     *
-     */
-    final String IMAP_SECURITY_V_NONE = "";
-
-    /**
-     *
-     */
-    final String IMAP_SECURITY_V_STARTTLS = "starttls";
-
-    /**
-     *
-     */
-    final String IMAP_SECURITY_V_SSL = "ssl";
-
-    /**
-     *
-     */
-    final Integer IMAP_CONNECTION_TIMEOUT_V_DEFAULT = 10000;
-    final Integer IMAP_TIMEOUT_V_DEFAULT = 10000;
-
-    final Long IMAP_MAX_FILE_MB_V_DEFAULT = 5L;
-    final Integer IMAP_MAX_FILES_V_DEFAULT = 1;
-
-    /**
-     *
-     */
-    final Long WEBPRINT_MAX_FILE_MB_V_DEFAULT = 5L;
-
-    /**
-     *
-     */
-    final Integer WEBAPP_MAX_IDLE_SECS_V_NONE = 0;
-
-    final String CARD_NUMBER_FORMAT_V_DEC = "DEC";
-    final String CARD_NUMBER_FORMAT_V_HEX = "HEX";
-
-    final String CARD_NUMBER_FIRSTBYTE_V_LSB = "LSB";
-    final String CARD_NUMBER_FIRSTBYTE_V_MSB = "MSB";
-
-    /**
-     *
-     */
-    final Integer NUMBER_V_NONE = 0;
 
     /**
      *

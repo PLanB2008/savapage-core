@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -38,9 +38,7 @@ import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.filter.MessageTypeFilter;
 import org.jivesoftware.smack.packet.Message.Type;
 import org.jivesoftware.smack.packet.Packet;
-import org.savapage.core.OutputProducer;
 import org.savapage.core.SpException;
-import org.savapage.core.circuitbreaker.CircuitBreakerException;
 import org.savapage.core.cometd.AdminPublisher;
 import org.savapage.core.cometd.PubLevelEnum;
 import org.savapage.core.cometd.PubTopicEnum;
@@ -54,6 +52,8 @@ import org.savapage.core.print.server.DocContentPrintException;
 import org.savapage.core.print.server.PrintInResultEnum;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.UserService;
+import org.savapage.core.services.helpers.email.EmailMsgParms;
+import org.savapage.core.util.DateUtil;
 import org.savapage.core.util.Messages;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,14 +65,22 @@ import org.slf4j.LoggerFactory;
  * @author Datraverse B.V.
  *
  */
-public class GcpListener {
+public final class GcpListener {
 
     private static final String XMPP_SERVICENAME = "gmail.com";
 
     private static final Logger LOGGER = LoggerFactory
             .getLogger(GcpListener.class);
 
+    /**
+     * The {@link XMPPConnection}: {@code null} if disconnected (GCP printer is
+     * offline).
+     */
     private XMPPConnection xmppConnection = null;
+
+    /**
+     * .
+     */
     private PacketCollector jobCollector;
 
     /**
@@ -142,7 +150,7 @@ public class GcpListener {
         connConfig.setSendPresence(false);
         connConfig.setReconnectionAllowed(false);
 
-        xmppConnection = new XMPPConnection(connConfig);
+        this.xmppConnection = new XMPPConnection(connConfig);
 
         /*
          * Register OAuth2 support for XMPP authentication.
@@ -158,8 +166,9 @@ public class GcpListener {
          * server is used as a probe to check if the server can be reached.
          */
         final String urlSpec =
-                "http://" + xmppConnection.getHost() + ":"
-                        + xmppConnection.getPort();
+                "http://" + this.xmppConnection.getHost() + ":"
+                        + this.xmppConnection.getPort();
+
         final URL url = new URL(urlSpec);
 
         final HttpURLConnection con = (HttpURLConnection) url.openConnection();
@@ -172,25 +181,25 @@ public class GcpListener {
          * Connect.
          */
         LOGGER.debug("Connecting...");
-        xmppConnection.connect();
+        this.xmppConnection.connect();
         LOGGER.debug("Connected.");
 
         /*
          * Login.
          */
         LOGGER.debug("Login...");
-        xmppConnection.login(googleId, accessToken, resourceName);
+        this.xmppConnection.login(googleId, accessToken, resourceName);
         LOGGER.debug("Logged in.");
 
         /*
          * Subscribe to Google Cloud Print notifications
          */
-        xmppConnection.sendPacket(new GcpSubscriptionIQ(googleId));
+        this.xmppConnection.sendPacket(new GcpSubscriptionIQ(googleId));
 
         /*
          * Subscription successful?
          */
-        if (xmppConnection.isAuthenticated()) {
+        if (this.xmppConnection.isAuthenticated()) {
             LOGGER.debug("Subscribed to Print notifications.");
         } else {
             throw new SpException("Authenticated failed.");
@@ -200,13 +209,18 @@ public class GcpListener {
          * Setup a packet collector for incoming job notifications.
          */
         this.jobCollector =
-                xmppConnection.createPacketCollector(new MessageTypeFilter(
-                        Type.normal));
+                this.xmppConnection
+                        .createPacketCollector(new MessageTypeFilter(
+                                Type.normal));
 
-        LOGGER.trace("Created packet collector for incoming"
-                + " job notifications.");
+        if (LOGGER.isTraceEnabled()) {
+            LOGGER.trace("Created packet collector for incoming"
+                    + " job notifications.");
+        }
 
-        LOGGER.info("Connection is ready to use.");
+        if (LOGGER.isInfoEnabled()) {
+            LOGGER.info("Connection is ready to use.");
+        }
     }
 
     /**
@@ -295,10 +309,10 @@ public class GcpListener {
             final ConfigManager cm = ConfigManager.instance();
             final String subject =
                     cm.getConfigValue(Key.GCP_JOB_OWNER_UNKNOWN_CANCEL_MAIL_SUBJECT);
-            final String body =
+            final String content =
                     cm.getConfigValue(Key.GCP_JOB_OWNER_UNKNOWN_CANCEL_MAIL_BODY);
 
-            this.sendEmail(emailFrom, subject, body);
+            this.sendEmail(emailFrom, subject, content);
 
         } else {
 
@@ -337,8 +351,10 @@ public class GcpListener {
 
                 final String rejectedReason = e.getMessage();
 
-                LOGGER.info("File [" + job.getTitle() + "] rejected. Reason: "
-                        + rejectedReason);
+                if (LOGGER.isInfoEnabled()) {
+                    LOGGER.info("File [" + job.getTitle()
+                            + "] rejected. Reason: " + rejectedReason);
+                }
 
                 final String subject =
                         CommunityDictEnum.SAVAPAGE.getWord()
@@ -367,18 +383,31 @@ public class GcpListener {
      *            The email address.
      * @param subject
      *            The subject of the message.
-     * @param body
-     *            The body text with optional newline {@code \n} characters.
+     * @param content
+     *            The body content text with optional newline {@code \n}
+     *            characters.
      */
     private void sendEmail(final String toAddress, final String subject,
-            final String body) {
+            final String content) {
 
         try {
-            OutputProducer.sendEmail(toAddress, subject, body);
-            LOGGER.trace("Sent email to [" + toAddress + "] subject ["
-                    + subject + "]");
-        } catch (MessagingException | IOException | InterruptedException
-                | CircuitBreakerException e) {
+
+            final EmailMsgParms emailParms = new EmailMsgParms();
+
+            emailParms.setToAddress(toAddress);
+            emailParms.setSubject(subject);
+            emailParms.setBodyFromTemplate(subject,
+                    content.replace("\n", "<br/>"));
+
+            ServiceContext.getServiceFactory().getEmailService()
+                    .writeEmail(emailParms);
+
+            if (LOGGER.isTraceEnabled()) {
+                LOGGER.trace("Sent email to [" + toAddress + "] subject ["
+                        + subject + "]");
+            }
+
+        } catch (MessagingException | IOException e) {
             LOGGER.error("Sending email to [" + toAddress + "] failed: "
                     + e.getMessage());
         }
@@ -401,12 +430,14 @@ public class GcpListener {
      * duration is reached. A {@link #disconnect()} is called before returning.
      * </p>
      *
-     * @param maxDateSnapshot
+     * @param maxDate
      *            The timeout date/time after which this method returns.
      * @param waitForEventTimeoutSecs
      *            The interval in seconds to wait for GCP (printer) events
      *            within the session.
-     * @return {@code true} when session is expired (maxDate was reached).
+     * @return {@code true} when session is expired (maxDate was reached),
+     *         {@code false} when {@link XMPPConnection} was closed, i.e. GCP
+     *         was put off-line.
      * @throws InterruptedException
      * @throws MessagingException
      * @throws IOException
@@ -423,7 +454,9 @@ public class GcpListener {
         final Date maxDateSnapshot = new Date(maxDate.getTime());
 
         final SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
-        final long nextResultTimeOut = waitForEventTimeoutSecs * 1000;
+
+        final long nextResultTimeOut =
+                waitForEventTimeoutSecs * DateUtil.DURATION_MSEC_SECOND;
 
         boolean isExpired = false;
 
@@ -433,7 +466,7 @@ public class GcpListener {
 
             final long maxTime = maxDateSnapshot.getTime();
 
-            while (xmppConnection != null) {
+            while (this.xmppConnection != null) {
 
                 if (Thread.interrupted()) {
                     break;
@@ -478,7 +511,7 @@ public class GcpListener {
                 /*
                  * Wait for processing to finish.
                  */
-                waitForProcessing(1000L);
+                waitForProcessing(1 * DateUtil.DURATION_MSEC_SECOND);
             }
 
         } finally {
@@ -510,7 +543,10 @@ public class GcpListener {
      */
     public void onNotification(Packet p) throws IOException,
             MessagingException, GcpPrinterNotFoundException, GcpAuthException {
-        LOGGER.trace("XMPP notification: " + p.toXML());
+
+        if (LOGGER.isTraceEnabled()) {
+            LOGGER.trace("XMPP notification: " + p.toXML());
+        }
         processQueue();
     }
 
@@ -536,12 +572,12 @@ public class GcpListener {
         /*
          * Wait for processing to finish.
          */
-        waitForProcessing(1000L);
+        waitForProcessing(DateUtil.DURATION_MSEC_SECOND);
 
-        if (xmppConnection != null) {
+        if (this.xmppConnection != null) {
 
-            xmppConnection.disconnect();
-            xmppConnection = null;
+            this.xmppConnection.disconnect();
+            this.xmppConnection = null;
 
             LOGGER.trace("disconnected");
         }

@@ -142,13 +142,13 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
     }
 
     @Override
-    public void init() throws Exception {
+    public void init() {
         super.init();
         ippClient.init();
     }
 
     @Override
-    public void exit() throws Exception {
+    public void exit() throws IppConnectException, IppSyntaxException {
         super.exit();
         ippClient.shutdown();
     }
@@ -222,6 +222,9 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             final JsonProxyPrinter proxyPrinterFromGroup =
                     createUserPrinter(defaultPrinter, group);
 
+            if (proxyPrinterFromGroup == null) {
+                continue;
+            }
             // proxyPrinterToAdd.setPrinterUri(uriPrinter);
 
             /*
@@ -369,37 +372,38 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      *            {@code null} when default printer is unknown.
      * @param group
      *            The (raw) IPP printer options.
-     * @return the {@link JsonProxyPrinter}.
+     * @return the {@link JsonProxyPrinter} or {@code null} when printer
+     *         definition is not valid somehow.
      */
     private JsonProxyPrinter createUserPrinter(
             final JsonProxyPrinter defaultPrinter, final IppAttrGroup group) {
 
         final JsonProxyPrinter printer = new JsonProxyPrinter();
 
-        // Printer URI
-        final URI printerUri;
+        /*
+         * Mantis #403: Cache CUPS printer-name internally as upper-case.
+         */
+        printer.setName(ProxyPrinterName.getDaoName(group
+                .getAttrSingleValue(IppDictPrinterDescAttr.ATTR_PRINTER_NAME)));
 
-        try {
-            printerUri =
-                    new URI(
-                            group.getAttrSingleValue(IppDictPrinterDescAttr.ATTR_PRINTER_URI_SUPPORTED));
-        } catch (URISyntaxException e) {
-            throw new SpException(e.getMessage());
-        }
-
-        printer.setPrinterUri(printerUri);
+        printer.setManufacturer(group
+                .getAttrSingleValue(IppDictPrinterDescAttr.ATTR_PRINTER_MORE_INFO_MANUFACTURER));
+        printer.setModelName(group
+                .getAttrSingleValue(IppDictPrinterDescAttr.ATTR_PRINTER_MAKE_MODEL));
 
         // Device URI
         final URI deviceUri;
 
+        final String deviceUriValue;
+
         try {
-            final String uriValue =
+            deviceUriValue =
                     group.getAttrSingleValue(IppDictPrinterDescAttr.ATTR_DEVICE_URI);
 
-            if (uriValue == null) {
+            if (deviceUriValue == null) {
                 deviceUri = null;
             } else {
-                deviceUri = new URI(uriValue);
+                deviceUri = new URI(deviceUriValue);
             }
         } catch (URISyntaxException e) {
             throw new SpException(e.getMessage());
@@ -407,11 +411,28 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         printer.setDeviceUri(deviceUri);
 
-        /*
-         * Mantis #403: Cache CUPS printer-name internally as upper-case.
-         */
-        printer.setName(ProxyPrinterName.getDaoName(group
-                .getAttrSingleValue(IppDictPrinterDescAttr.ATTR_PRINTER_NAME)));
+        // Printer URI
+        final URI printerUri;
+
+        try {
+            final String uriValue =
+                    group.getAttrSingleValue(IppDictPrinterDescAttr.ATTR_PRINTER_URI_SUPPORTED);
+            if (uriValue == null) {
+                // Mantis #585
+                LOGGER.warn(String.format(
+                        "Skipping printer [%s] model [%s] device URI [%s]"
+                                + ": no printer URI", printer.getName(),
+                        StringUtils.defaultString(printer.getModelName(), ""),
+                        StringUtils.defaultString(deviceUriValue, "")));
+                return null;
+            } else {
+                printerUri = new URI(uriValue);
+            }
+        } catch (URISyntaxException e) {
+            throw new SpException(e.getMessage());
+        }
+
+        printer.setPrinterUri(printerUri);
 
         //
         printer.setInfo(group
@@ -433,11 +454,6 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         printer.setColorDevice(group.getAttrSingleValue(
                 IppDictPrinterDescAttr.ATTR_COLOR_SUPPORTED, IppBoolean.FALSE)
                 .equals(IppBoolean.TRUE));
-
-        printer.setManufacturer(group
-                .getAttrSingleValue(IppDictPrinterDescAttr.ATTR_PRINTER_MORE_INFO_MANUFACTURER));
-        printer.setModelName(group
-                .getAttrSingleValue(IppDictPrinterDescAttr.ATTR_PRINTER_MAKE_MODEL));
 
         printer.setDuplexDevice(Boolean.FALSE);
 
@@ -776,7 +792,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
     @Override
     protected List<JsonProxyPrintJob> retrievePrintJobs(
             final String printerName, final List<Integer> jobIds)
-            throws Exception {
+            throws IppConnectException {
 
         final List<JsonProxyPrintJob> jobs = new ArrayList<>();
 
@@ -787,8 +803,14 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
             final String printerUri = proxyPrinter.getPrinterUri().toString();
 
-            final URL urlCupsServer =
-                    this.getCupsServerUrl(proxyPrinter.getPrinterUri());
+            final URL urlCupsServer;
+
+            try {
+                urlCupsServer =
+                        this.getCupsServerUrl(proxyPrinter.getPrinterUri());
+            } catch (MalformedURLException e) {
+                throw new IppConnectException(e);
+            }
 
             for (final Integer jobId : jobIds) {
                 final JsonProxyPrintJob job =
@@ -804,9 +826,11 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
              * Remote printer might not be present when remote CUPS is down, or
              * when connection is refused.
              */
-            LOGGER.warn("Proxy printer [" + printerName
-                    + "] not found in cache: possibly due "
-                    + "to remote CUPS connection problem.");
+            if (LOGGER.isWarnEnabled()) {
+                LOGGER.warn("Proxy printer [" + printerName
+                        + "] not found in cache: possibly due "
+                        + "to remote CUPS connection problem.");
+            }
         }
 
         return jobs;
@@ -945,7 +969,9 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         final JsonProxyPrinter printer =
                 createUserPrinter(null, response.get(1));
 
-        printer.setDfault(true);
+        if (printer != null) {
+            printer.setDfault(true);
+        }
 
         return printer;
     }
@@ -1020,14 +1046,15 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
     @Override
     protected void stopSubscription(final String requestingUser,
-            final String recipientUri) throws Exception {
+            final String recipientUri) throws IppConnectException,
+            IppSyntaxException {
 
         /*
          * Step 1: Get the existing printer subscriptions for requestingUser.
          */
-        List<IppAttrGroup> response = new ArrayList<>();
+        final List<IppAttrGroup> response = new ArrayList<>();
 
-        IppStatusCode statusCode =
+        final IppStatusCode statusCode =
                 ippClient.send(
                         getUrlDefaultServer(),
                         IppOperationId.GET_SUBSCRIPTIONS,
@@ -1045,7 +1072,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         /*
          * Step 2: Cancel only our OWN printer subscription.
          */
-        for (IppAttrGroup group : response) {
+        for (final IppAttrGroup group : response) {
 
             if (group.getDelimiterTag() != IppDelimiterTag.SUBSCRIPTION_ATTR) {
                 continue;
@@ -1063,7 +1090,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 continue;
             }
 
-            String subscriptionId =
+            final String subscriptionId =
                     group.getAttrSingleValue(IppDictSubscriptionAttr.ATTR_NOTIFY_SUBSCRIPTION_ID);
 
             ippClient
@@ -1078,7 +1105,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
     @Override
     protected void startSubscription(final String requestingUser,
             final String leaseSeconds, final String recipientUri)
-            throws Exception {
+            throws IppConnectException, IppSyntaxException {
 
         if (ConfigManager.isCupsPushNotification()) {
 
@@ -1821,14 +1848,14 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
     }
 
     @Override
-    public String getCupsApiVersion() throws Exception {
+    public String getCupsApiVersion() {
         return null;
     }
 
     @Override
     public IppStatusCode getNotifications(final String requestingUser,
             final String subscriptionId, final List<IppAttrGroup> response)
-            throws Exception {
+            throws IppConnectException {
 
         List<IppAttrGroup> request = new ArrayList<>();
 
@@ -1872,12 +1899,12 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      *            The recipient uri.
      * @param leaseSeconds
      *            The lease seconds.
-     *
-     * @throws Exception
+     * @throws IppConnectException
+     * @throws IppSyntaxException
      */
     private void startPushSubscription(final String requestingUser,
             final String recipientUri, final String leaseSeconds)
-            throws Exception {
+            throws IppConnectException, IppSyntaxException {
 
         /*
          * Step 1: Get the existing printer subscriptions for requestingUser.
@@ -1892,23 +1919,10 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                                 requestingUser), response);
 
         /*
-         * NOTE: it is possible that there are NO subscriptions for the user,
-         * this will result in status IppStatusCode.CLI_NOTFND or
-         * IppStatusCode.CLI_NOTPOS.
-         *
-         * This occurs when the installation was not fully completed, i.e. some
-         * scripts must be executed as root (one of them installing the CUPS
-         * notifier).
+         * NOTE: When this is a first-time subscription it is possible that
+         * there are NO subscriptions for the user, this will result in status
+         * IppStatusCode.CLI_NOTFND or IppStatusCode.CLI_NOTPOS.
          */
-        if (statusCode == IppStatusCode.CLI_NOTFND
-                || statusCode != IppStatusCode.CLI_NOTPOS) {
-            LOGGER.error(String.format(
-                    "Failed to get CUPS subscriptions [%s] : "
-                            + "did you install the %s CUPS notifier?",
-                    statusCode.toString(), CommunityDictEnum.SAVAPAGE.getWord()));
-            return;
-        }
-
         if (statusCode != IppStatusCode.OK
                 && statusCode != IppStatusCode.CLI_NOTFND
                 && statusCode != IppStatusCode.CLI_NOTPOS) {
@@ -1973,10 +1987,12 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      * @param leaseSeconds
      *            The lease seconds.
      * @return
-     * @throws Exception
+     * @throws IppConnectException
+     * @throws IppSyntaxException
      */
     private String startPullSubscription(final String requestingUser,
-            final String leaseSeconds) throws Exception {
+            final String leaseSeconds) throws IppConnectException,
+            IppSyntaxException {
 
         String subscriptionId = null;
 
@@ -1985,7 +2001,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
          */
         List<IppAttrGroup> response = new ArrayList<>();
 
-        IppStatusCode statusCode =
+        final IppStatusCode statusCode =
                 ippClient.send(
                         getUrlDefaultServer(),
                         IppOperationId.GET_SUBSCRIPTIONS,
@@ -2005,7 +2021,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
          */
         boolean isRenewed = false;
 
-        for (IppAttrGroup group : response) {
+        for (final IppAttrGroup group : response) {
 
             if (group.getDelimiterTag() != IppDelimiterTag.SUBSCRIPTION_ATTR) {
                 continue;
@@ -2282,9 +2298,11 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                     iterAttr.remove();
 
                     //
-                    LOGGER.warn("Auto-correct: removed invalid attribute ["
-                            + key + "] " + "from printer ["
-                            + printer.getPrinterName() + "]");
+                    if (LOGGER.isWarnEnabled()) {
+                        LOGGER.warn("Auto-correct: removed invalid attribute ["
+                                + key + "] " + "from printer ["
+                                + printer.getPrinterName() + "]");
+                    }
                     continue;
                 }
 
@@ -2354,9 +2372,11 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                     iterAttr.remove();
 
                     //
-                    LOGGER.warn("Auto-correct: removed invalid attribute ["
-                            + key + "] " + "from printer ["
-                            + printer.getPrinterName() + "]");
+                    if (LOGGER.isWarnEnabled()) {
+                        LOGGER.warn("Auto-correct: removed invalid attribute ["
+                                + key + "] " + "from printer ["
+                                + printer.getPrinterName() + "]");
+                    }
                     continue;
                 }
 
@@ -2595,7 +2615,10 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             final String mediaKey = dto.getMedia();
 
             if (!dto.isDefault() && IppMediaSizeEnum.find(mediaKey) == null) {
-                LOGGER.debug("Media [" + mediaKey + "] is invalid.");
+
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("Media [" + mediaKey + "] is invalid.");
+                }
                 continue;
             }
 
@@ -2750,7 +2773,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             final Printer printer, final ProxyPrinterCostDto dto) {
 
         final Locale locale =
-                new Locale.Builder().setLanguageTag(dto.getLocale()).build();
+                new Locale.Builder().setLanguageTag(dto.getLanguage())
+                        .setRegion(dto.getCountry()).build();
 
         if (dto.getChargeType() == Printer.ChargeType.SIMPLE) {
             return setPrinterSimpleCost(printer, dto.getDefaultCost(), locale);
@@ -2766,7 +2790,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         final Locale locale =
                 new Locale.Builder()
-                        .setLanguageTag(dtoMediaSources.getLocale()).build();
+                        .setLanguageTag(dtoMediaSources.getLanguage())
+                        .setRegion(dtoMediaSources.getCountry()).build();
 
         /*
          * Put into map for easy lookup of objects to handle. Validate along the

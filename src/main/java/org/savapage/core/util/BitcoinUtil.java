@@ -1,7 +1,7 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
- * Authors: Rijk Ravestein.
+ * Copyright (c) 2011-2015 Datraverse B.V.
+ * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -19,55 +19,38 @@
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
-package org.savapage.core.dto;
-
-import org.savapage.core.jpa.PosPurchase;
+package org.savapage.core.util;
 
 /**
- * Information for an {@link PosPurchase} deposit.
  *
  * @author Datraverse B.V.
- *
  */
-public class UserPaymentRequestDto extends AbstractDto {
+public final class BitcoinUtil {
 
     /**
-     * The user who requested the payment.
+     * The BTC precision (number of decimals).
      */
-    private String userId;
+    public static final int BTC_DECIMALS = 8;
 
     /**
-     * The deposited main amount.
+     * The number of satoshi in one (1) BTC.
      */
-    private String amountMain;
+    public static final long SATOSHIS_IN_BTC = 100000000L;
 
     /**
-     * The deposited amount cents.
+     * The number of μBTC (micro-bitcoin) in one (1) BTC.
      */
-    private String amountCents;
+    public static final long MICRO_IN_BTC = 1000000L;
 
-    public String getUserId() {
-        return userId;
-    }
+    /**
+     * The number of mBTC (milli-bitcoin) in one (1) BTC.
+     */
+    public static final long MILLI_IN_BTC = 1000L;
 
-    public void setUserId(String userId) {
-        this.userId = userId;
-    }
-
-    public String getAmountMain() {
-        return amountMain;
-    }
-
-    public void setAmountMain(String amountMain) {
-        this.amountMain = amountMain;
-    }
-
-    public String getAmountCents() {
-        return amountCents;
-    }
-
-    public void setAmountCents(String amountCents) {
-        this.amountCents = amountCents;
+    /**
+     *
+     */
+    private BitcoinUtil() {
     }
 
 }

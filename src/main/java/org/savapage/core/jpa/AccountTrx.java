@@ -37,6 +37,7 @@ import javax.persistence.OneToOne;
 import javax.persistence.Table;
 import javax.persistence.TableGenerator;
 
+import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.dao.helpers.AccountTrxTypeEnum;
 
 /**
@@ -49,6 +50,8 @@ import org.savapage.core.dao.helpers.AccountTrxTypeEnum;
 public class AccountTrx extends org.savapage.core.jpa.Entity {
 
     public static final String TABLE_NAME = "tbl_account_trx";
+
+    public static final int COL_COMMENT_LENGTH = 255;
 
     @Id
     @Column(name = "account_trx_id")
@@ -146,10 +149,9 @@ public class AccountTrx extends org.savapage.core.jpa.Entity {
     private String transactedBy;
 
     /**
-     * An optional comment. E.g: "Bulk credit adjustment" |
-     * "from custom PHP application".
+     * An optional comment.
      */
-    @Column(name = "trx_comment", length = 255, nullable = true)
+    @Column(name = "trx_comment", length = COL_COMMENT_LENGTH, nullable = true)
     private String comment;
 
     /**
@@ -157,6 +159,109 @@ public class AccountTrx extends org.savapage.core.jpa.Entity {
      */
     @Column(name = "trx_type", length = 20, nullable = false)
     private String trxType;
+
+    // -------------------------------------------------------------------------
+
+    /**
+     * Currency Code: EUR, USD, etc.
+     *
+     * @since 0.9.9
+     */
+    @Column(name = "currency_code", length = 3, nullable = true)
+    private String currencyCode;
+
+    /**
+     * External source ID.
+     *
+     * @since 0.9.9
+     */
+    @Column(name = "ext_source", length = 32, nullable = true)
+    private String extSource;
+
+    /**
+     * External transaction ID.
+     *
+     * @since 0.9.9
+     */
+    @Column(name = "ext_id", length = 128, nullable = true)
+    private String extId;
+
+    /**
+     * PaymentMethodEnum:. "ideal", "bitcoin", etc.
+     *
+     * @since 0.9.9
+     *
+     */
+    @Column(name = "ext_method", length = 20, nullable = true)
+    private String extMethod;
+
+    /**
+     * The number of confirmations for the transaction from the external source.
+     *
+     * @since 0.9.9
+     *
+     */
+    @Column(name = "ext_confirmations", nullable = true)
+    private Integer extConfirmations;
+
+    /**
+     * When extMethod == OTHER
+     *
+     * @since 0.9.9
+     */
+    @Column(name = "ext_method_other", length = 32, nullable = true)
+    private String extMethodOther;
+
+    /**
+     * @since 0.9.9
+     */
+    @Column(name = "ext_method_address", length = 128, nullable = true)
+    private String extMethodAddress;
+
+    /**
+     * Currency Code: BTC, EUR, USD, etc.
+     *
+     * @since 0.9.9
+     */
+    @Column(name = "ext_currency_code", length = 3, nullable = true)
+    private String extCurrencyCode;
+
+    /**
+     * Exchange rate.
+     *
+     * @since 0.9.9
+     */
+    @Column(name = "ext_exchange_rate", nullable = true,
+            precision = DECIMAL_PRECISION_16, scale = DECIMAL_SCALE_8)
+    private BigDecimal extExchangeRate;
+
+    /**
+     * The amount of the transaction in external currency.
+     *
+     * @since 0.9.9
+     */
+    @Column(name = "ext_amount", nullable = true,
+            precision = DECIMAL_PRECISION_16, scale = DECIMAL_SCALE_8)
+    private BigDecimal extAmount;
+
+    /**
+     * The fee of the transaction in external currency.
+     *
+     * @since 0.9.9
+     */
+    @Column(name = "ext_fee", nullable = true,
+            precision = DECIMAL_PRECISION_16, scale = DECIMAL_SCALE_8)
+    private BigDecimal extFee;
+
+    /**
+     * Free format details.
+     *
+     * @since 0.9.9
+     */
+    @Column(name = "ext_details", length = 2000, nullable = true)
+    private String extDetails;
+
+    // ------------------------------------------------------------------------
 
     public Long getId() {
         return id;
@@ -250,8 +355,14 @@ public class AccountTrx extends org.savapage.core.jpa.Entity {
         return comment;
     }
 
-    public void setComment(String comment) {
-        this.comment = comment;
+    /**
+     * Truncate, to protect overflow (when user input is used).
+     *
+     * @param rawComment
+     *            The raw comment.
+     */
+    public void setComment(final String rawComment) {
+        this.comment = StringUtils.abbreviate(rawComment, COL_COMMENT_LENGTH);
     }
 
     public String getTrxType() {
@@ -260,6 +371,102 @@ public class AccountTrx extends org.savapage.core.jpa.Entity {
 
     public void setTrxType(String trxType) {
         this.trxType = trxType;
+    }
+
+    public String getCurrencyCode() {
+        return currencyCode;
+    }
+
+    public void setCurrencyCode(String currencyCode) {
+        this.currencyCode = currencyCode;
+    }
+
+    public String getExtSource() {
+        return extSource;
+    }
+
+    public void setExtSource(String extSource) {
+        this.extSource = extSource;
+    }
+
+    public String getExtId() {
+        return extId;
+    }
+
+    public void setExtId(String extId) {
+        this.extId = extId;
+    }
+
+    public String getExtMethod() {
+        return extMethod;
+    }
+
+    public void setExtMethod(String extMethod) {
+        this.extMethod = extMethod;
+    }
+
+    public Integer getExtConfirmations() {
+        return extConfirmations;
+    }
+
+    public void setExtConfirmations(Integer extConfirmations) {
+        this.extConfirmations = extConfirmations;
+    }
+
+    public String getExtMethodOther() {
+        return extMethodOther;
+    }
+
+    public void setExtMethodOther(String extMethodOther) {
+        this.extMethodOther = extMethodOther;
+    }
+
+    public String getExtMethodAddress() {
+        return extMethodAddress;
+    }
+
+    public void setExtMethodAddress(String extMethodAddress) {
+        this.extMethodAddress = extMethodAddress;
+    }
+
+    public String getExtCurrencyCode() {
+        return extCurrencyCode;
+    }
+
+    public void setExtCurrencyCode(String extCurrencyCode) {
+        this.extCurrencyCode = extCurrencyCode;
+    }
+
+    public BigDecimal getExtExchangeRate() {
+        return extExchangeRate;
+    }
+
+    public void setExtExchangeRate(BigDecimal extExchangeRate) {
+        this.extExchangeRate = extExchangeRate;
+    }
+
+    public BigDecimal getExtAmount() {
+        return extAmount;
+    }
+
+    public void setExtAmount(BigDecimal extAmount) {
+        this.extAmount = extAmount;
+    }
+
+    public BigDecimal getExtFee() {
+        return extFee;
+    }
+
+    public void setExtFee(BigDecimal extFee) {
+        this.extFee = extFee;
+    }
+
+    public String getExtDetails() {
+        return extDetails;
+    }
+
+    public void setExtDetails(String extDetails) {
+        this.extDetails = extDetails;
     }
 
 }

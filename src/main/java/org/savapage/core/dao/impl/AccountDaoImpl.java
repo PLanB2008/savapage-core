@@ -21,12 +21,14 @@
  */
 package org.savapage.core.dao.impl;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import javax.persistence.NoResultException;
 import javax.persistence.Query;
 
 import org.savapage.core.dao.AccountDao;
+import org.savapage.core.dao.helpers.AggregateResult;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 
@@ -142,6 +144,131 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
         this.create(account);
 
         return account;
+    }
+
+    @Override
+    public AggregateResult<BigDecimal> getBalanceStats(
+            final boolean userAccounts, final boolean debit) {
+
+        final StringBuilder jpql = new StringBuilder();
+
+        jpql.append("SELECT count(*), sum(A.balance), "
+                + "min(A.balance), max(A.balance), avg(A.balance) "
+                + "FROM Account A WHERE A.deleted = false AND A.accountType ");
+
+        if (userAccounts) {
+            jpql.append("is not");
+        } else {
+            jpql.append("=");
+        }
+
+        jpql.append(" :accountType AND A.balance ");
+
+        if (debit) {
+            jpql.append("> 0");
+        } else {
+            jpql.append("< 0");
+        }
+
+        final Query query = getEntityManager().createQuery(jpql.toString());
+
+        query.setParameter("accountType", AccountTypeEnum.SHARED.toString());
+
+        try {
+            final Object[] result = (Object[]) query.getSingleResult();
+
+            return new AggregateResult<BigDecimal>((Long) result[0],
+                    (BigDecimal) result[1], (BigDecimal) result[2],
+                    (BigDecimal) result[3], (Double) result[4]);
+
+        } catch (NoResultException e) {
+            return new AggregateResult<BigDecimal>();
+        }
+
+    }
+
+    /**
+     * Applies the list filter to the JPQL string.
+     *
+     * @param jpql
+     *            The JPA query string.
+     * @param filter
+     *            The {@link ListFilter}.
+     */
+    private void applyListFilter(final StringBuilder jpql,
+            final ListFilter filter) {
+    }
+
+    /**
+     * Creates the List Query and sets the filter parameters.
+     *
+     * @param jpql
+     *            The JPA query string.
+     * @param filter
+     *            The {@link ListFilter}.
+     * @return The {@link Query}.
+     */
+    private Query createListQuery(final StringBuilder jpql,
+            final ListFilter filter) {
+
+        final Query query = getEntityManager().createQuery(jpql.toString());
+
+        return query;
+    }
+
+    @Override
+    public long getListCount(final ListFilter filter) {
+
+        final StringBuilder jpql =
+                new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
+
+        jpql.append("SELECT COUNT(ACC.id) FROM Account ACC");
+
+        applyListFilter(jpql, filter);
+
+        final Query query = createListQuery(jpql, filter);
+        final Number countResult = (Number) query.getSingleResult();
+
+        return countResult.longValue();
+    }
+
+    @Override
+    public List<Account> getListChunk(ListFilter filter, Integer startPosition,
+            Integer maxResults, Field orderBy, boolean sortAscending) {
+
+        final StringBuilder jpql =
+                new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
+
+        jpql.append("SELECT ACC FROM Account ACC");
+
+        applyListFilter(jpql, filter);
+
+        //
+        jpql.append(" ORDER BY ");
+
+        if (orderBy == Field.ACCOUNT_TYPE) {
+            jpql.append("ACC.accountType");
+        } else {
+            jpql.append("ACC.accountType");
+        }
+
+        if (!sortAscending) {
+            jpql.append(" DESC");
+        }
+
+        jpql.append(", ACC.id DESC");
+
+        //
+        final Query query = createListQuery(jpql, filter);
+
+        if (startPosition != null) {
+            query.setFirstResult(startPosition);
+        }
+        if (maxResults != null) {
+            query.setMaxResults(maxResults);
+        }
+
+        return query.getResultList();
     }
 
 }

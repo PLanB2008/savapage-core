@@ -46,9 +46,11 @@ import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dto.JrPageLayoutDto;
 import org.savapage.core.dto.JrPageSizeDto;
 import org.savapage.core.dto.PosDepositReceiptDto;
+import org.savapage.core.fonts.FontLocation;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.util.BigDecimalUtil;
+import org.savapage.core.util.CurrencyUtil;
 import org.savapage.core.util.LocaleHelper;
 
 /**
@@ -172,8 +174,9 @@ public final class JrPosDepositReceipt extends AbstractJrDesign {
         try {
             parms.put(PARM_RECEIPT_AMOUNT, helper.getCurrencyDecimal(
                     BigDecimalUtil.valueOf(receipt.getPlainAmount()),
-                    ConfigManager.getUserBalanceDecimals(),
-                    ServiceContext.getCurrencySymbol()));
+                    ConfigManager.getUserBalanceDecimals(), CurrencyUtil
+                            .getCurrencySymbol(receipt.getAccountTrx()
+                                    .getCurrencyCode(), locale)));
         } catch (ParseException e) {
             throw new SpException(e);
         }
@@ -261,7 +264,9 @@ public final class JrPosDepositReceipt extends AbstractJrDesign {
         jasperDesign.setPrintOrder(layout.getPrintOrder());
 
         // Default Style
-        jasperDesign.addStyle(createDefaultBaseStyle(defaultFontName));
+        if (FontLocation.isFontPresent(defaultFontName)) {
+            jasperDesign.addStyle(createDefaultBaseStyle(defaultFontName));
+        }
 
         // Parameters
         addParameters(jasperDesign, new String[] { PARM_APP_VERSION,

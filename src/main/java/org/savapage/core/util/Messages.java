@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,21 +29,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Generic message loader and parser. This class looks for
- * {@code message_<locale>.xml} files in the same directory as the reference
+ * Generic XML message loader and parser. This class looks for an
+ * {@code message_<locale>.xml} file in the same directory as the requester
  * class, which is passed as parameter to all public methods.
- * <p>
- * NOTE: When a {@code message_<locale>.properties} files is already loaded in
- * the cache, the content of this file is used instead of the XML variant. See
- * {@link ResourceBundle#getBundle(String, Locale, ClassLoader, java.util.ResourceBundle.Control)}
- * .
- * </p>
  *
  * @author Datraverse B.V.
  *
  */
-public final class Messages {
+public final class Messages extends MessagesBundleMixin {
 
+    /**
+     * .
+     */
     private static final Logger LOGGER = LoggerFactory
             .getLogger(Messages.class);
 
@@ -55,77 +52,163 @@ public final class Messages {
     /**
      *
      */
-    private static final String DEFAULT_LOCALE_LANGUAGE = "en";
-
-    /**
-     *
-     */
-    private static final Locale LOCALE_NO_LANGUAGE = new Locale("");
-
     private Messages() {
-
     }
 
     /**
+     * Loads a {@link ResourceBundle}.
      *
-     * @param klasse
-     * @param xmlResource
+     * @param reqClass
+     *            The requester {@link Class}.
+     * @param resourceName
+     *            The name of the resource bundle without the locale suffix and
+     *            file extension.
      * @param locale
-     * @return
+     *            The {@link Locale}.
+     * @return The {@link ResourceBundle}.
      */
-    public static ResourceBundle loadResource(Class<? extends Object> klasse,
-            final String xmlResource, Locale locale) {
+    public static ResourceBundle loadXmlResource(
+            final Class<? extends Object> reqClass, final String resourceName,
+            final Locale locale) {
+        return getResourceBundle(reqClass, resourceName, locale,
+                new XMLResourceBundleControl());
+    }
+
+    /**
+     * Loads a {@link ResourceBundle}.
+     * <p>
+     * NOTE: When a {@code message_<locale>.properties} files is already loaded
+     * in the cache, the content of this file is used instead of the XML
+     * variant. See
+     * {@link ResourceBundle#getBundle(String, Locale, ClassLoader, java.util.ResourceBundle.Control)}
+     * .
+     * </p>
+     *
+     * @param reqClass
+     *            The requester {@link Class}.
+     * @param resourceName
+     *            The name of the resource bundle without the locale suffix and
+     *            file extension.
+     * @param candidate
+     *            The {@link Locale} candidate.
+     * @param control
+     *            The {@link XMLResourceBundleControl}.
+     * @return The {@link ResourceBundle}.
+     */
+    private static ResourceBundle getResourceBundle(
+            final Class<? extends Object> reqClass, final String resourceName,
+            final Locale candidate, final XMLResourceBundleControl control) {
 
         final String bundleName =
-                klasse.getPackage().getName() + "." + xmlResource;
+                getResourceBundleBaseName(reqClass.getPackage(), resourceName);
 
-        Locale localeWrk = locale;
+        Locale locale = determineLocale(candidate);
 
-        if (locale == null) {
-            localeWrk = Locale.getDefault();
+        ResourceBundle bundle =
+                ResourceBundle.getBundle(bundleName, locale,
+                        reqClass.getClassLoader(), control);
+
+        locale = checkAlternative(locale, bundle);
+
+        if (locale != null) {
+            bundle =
+                    ResourceBundle.getBundle(bundleName, locale,
+                            reqClass.getClassLoader(), control);
         }
 
-        /*
-         * Make sure the default locale language falls back to 'message.xml'
-         */
-        if (DEFAULT_LOCALE_LANGUAGE.equalsIgnoreCase(localeWrk.getLanguage())) {
-            localeWrk = LOCALE_NO_LANGUAGE;
-        }
-
-        return ResourceBundle.getBundle(bundleName, localeWrk,
-                klasse.getClassLoader(), new XMLResourceBundleControl());
+        return bundle;
     }
 
     /**
+     * Gets the localized message from {@code message*.xml} residing in the same
+     * package as the requester class.
      *
-     * @param klasse
+     * @param reqClass
+     *            The requester {@link Class}.
      * @param locale
+     *            The {@link Locale}.
      * @param key
-     * @return
+     *            The message key.
+     * @return The message.
      */
-    private static String loadMessagePattern(Class<? extends Object> klasse,
-            Locale locale, String key) {
-        return loadResource(klasse, DEFAULT_XML_RESOURCE, locale)
+    private static String loadMessagePattern(
+            final Class<? extends Object> reqClass, final Locale locale,
+            final String key) {
+        return loadXmlResource(reqClass, DEFAULT_XML_RESOURCE, locale)
                 .getString(key);
     }
 
-    public static String getMessage(Class<? extends Object> klasse, String key,
-            String[] args) {
-        return getMessage(klasse, null, key, args);
+    /**
+     * Gets the default locale (system) message from {@code message*.xml}
+     * residing in the same package as the requester class.
+     *
+     * @param reqClass
+     *            The requester {@link Class}.
+     * @param key
+     *            The message key.
+     * @param args
+     *            The message arguments.
+     * @return The message.
+     */
+    public static String getMessage(final Class<? extends Object> reqClass,
+            final String key, final String[] args) {
+        return getMessage(reqClass, null, key, args);
     }
 
     /**
+     * Gets the default locale (system) message from {@code message*.xml}
+     * residing in the same package as the requester class.
      *
-     * @param klasse
-     * @param locale
+     * @param reqClass
+     *            The requester {@link Class}.
      * @param key
+     *            The message key.
      * @param args
-     * @return
+     *            The message arguments.
+     * @return The message.
      */
-    public static String getMessage(Class<? extends Object> klasse,
+    public static String getSystemMessage(
+            final Class<? extends Object> reqClass, final String key,
+            final String... args) {
+        return getMessage(reqClass, null, key, args);
+    }
+
+    /**
+     * Gets the locale message for technical logging from {@code message.xml}
+     * residing in the same package as the requester class.
+     *
+     * @param reqClass
+     *            The requester {@link Class}.
+     * @param key
+     *            The message key.
+     * @param args
+     *            The message arguments.
+     * @return The message.
+     */
+    public static String getLogFileMessage(
+            final Class<? extends Object> reqClass, final String key,
+            final String... args) {
+        return getMessage(reqClass, LOCALE_NO_LANGUAGE, key, args);
+    }
+
+    /**
+     * Gets the localized message from {@code message*.xml} residing in the same
+     * package as the requester class.
+     *
+     * @param reqClass
+     *            The requester {@link Class}.
+     * @param locale
+     *            The {@link Locale}.
+     * @param key
+     *            The message key.
+     * @param args
+     *            The message arguments.
+     * @return The message.
+     */
+    public static String getMessage(final Class<? extends Object> reqClass,
             final Locale locale, final String key, final String... args) {
 
-        final String pattern = loadMessagePattern(klasse, locale, key);
+        final String pattern = loadMessagePattern(reqClass, locale, key);
 
         String msg;
 
@@ -157,27 +240,35 @@ public final class Messages {
     }
 
     /**
+     * Checks if if default (system) message key exists.
      *
-     * @param klasse
+     * @param reqClass
+     *            The requester {@link Class}.
      * @param key
-     * @return
+     *            The message key.
+     * @return {@code true} if default (system) message key exists.
      */
-    public static boolean
-            containsKey(Class<? extends Object> klasse, String key) {
-        return loadResource(klasse, DEFAULT_XML_RESOURCE, null)
+    public static boolean containsKey(final Class<? extends Object> reqClass,
+            final String key) {
+        return loadXmlResource(reqClass, DEFAULT_XML_RESOURCE, null)
                 .containsKey(key);
     }
 
     /**
+     * Checks if locale message key exists.
      *
-     * @param klasse
+     * @param reqClass
+     *            The requester {@link Class}.
      * @param key
-     * @return
+     *            The message key.
+     * @param locale
+     *            The {@link Locale}.
+     * @return {@code true} if locale message key exists.
      */
-    public static boolean containsKey(Class<? extends Object> klasse,
-            String key, Locale locale) {
-        return loadResource(klasse, DEFAULT_XML_RESOURCE, locale).containsKey(
-                key);
+    public static boolean containsKey(final Class<? extends Object> reqClass,
+            final String key, final Locale locale) {
+        return loadXmlResource(reqClass, DEFAULT_XML_RESOURCE, locale)
+                .containsKey(key);
     }
 
 }
