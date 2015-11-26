@@ -456,7 +456,7 @@ public final class AccountingServiceImpl extends AbstractService implements
     @Override
     public void createAccountTrx(final Account account, final DocLog docLog,
             final AccountTrxTypeEnum trxType) {
-        createAccountTrx(account, docLog, trxType, 1, 1);
+        createAccountTrx(account, docLog, trxType, 1, 1, null);
     }
 
     @Override
@@ -469,7 +469,7 @@ public final class AccountingServiceImpl extends AbstractService implements
                 .getAccountTrxInfoList()) {
 
             createAccountTrx(trxInfo.getAccount(), docLog, trxType,
-                    nTotalWeight, trxInfo.getWeight());
+                    nTotalWeight, trxInfo.getWeight(), trxInfo.getExtDetails());
         }
     }
 
@@ -510,10 +510,12 @@ public final class AccountingServiceImpl extends AbstractService implements
      * @param weight
      *            The mathematical weight of the transaction in the context of a
      *            transaction set.
+     * @param extDetails
+     *            Free format details from external source.
      */
     private void createAccountTrx(final Account account, final DocLog docLog,
             final AccountTrxTypeEnum trxType, final int weightTotal,
-            final int weight) {
+            final int weight, final String extDetails) {
 
         final String actor = ServiceContext.getActor();
         final Date trxDate = ServiceContext.getTransactionDate();
@@ -560,6 +562,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         trx.setTransactedBy(ServiceContext.getActor());
         trx.setTransactionDate(ServiceContext.getTransactionDate());
 
+        trx.setExtDetails(extDetails);
+
         accountTrxDAO().create(trx);
 
         /*
@@ -593,13 +597,14 @@ public final class AccountingServiceImpl extends AbstractService implements
      *            Cost per page when single-sided.
      * @param pageCostTwoSided
      *            Cost per page when double-sided.
+     * @param discountPerc
+     *            The discount percentage. 10% is passed as 0.10
      * @return The {@link BigDecimal}.
      */
-    public static BigDecimal
-            calcPrintJobCost(final int nPages, final int nPagesPerSide,
-                    final int nCopies, final boolean duplex,
-                    final BigDecimal pageCostOneSided,
-                    final BigDecimal pageCostTwoSided) {
+    public static BigDecimal calcPrintJobCost(final int nPages,
+            final int nPagesPerSide, final int nCopies, final boolean duplex,
+            final BigDecimal pageCostOneSided,
+            final BigDecimal pageCostTwoSided, final BigDecimal discountPerc) {
 
         final BigDecimal copies = BigDecimal.valueOf(nCopies);
 
@@ -620,8 +625,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         }
 
         return pageCostOneSided.multiply(pagesOneSided).multiply(copies)
-                .add(pageCostTwoSided.multiply(pagesTwoSided).multiply(copies));
-
+                .add(pageCostTwoSided.multiply(pagesTwoSided).multiply(copies))
+                .multiply(BigDecimal.ONE.subtract(discountPerc));
     }
 
     /**
@@ -728,10 +733,22 @@ public final class AccountingServiceImpl extends AbstractService implements
             }
         }
 
+        final BigDecimal discountPerc;
+
+        if (costParms.isEcoPrint()) {
+            discountPerc =
+                    BigDecimal.valueOf(
+                            ConfigManager.instance().getConfigLong(
+                                    Key.ECO_PRINT_DISCOUNT_PERC, 0L)).divide(
+                            BigDecimal.valueOf(100L));
+        } else {
+            discountPerc = BigDecimal.ZERO;
+        }
+
         return calcPrintJobCost(costParms.getNumberOfPages(),
-                costParms.getPagesPerSide(),
-                costParms.getNumberOfCopies(),
-                costParms.isDuplex(), pageCostOneSided, pageCostTwoSided);
+                costParms.getPagesPerSide(), costParms.getNumberOfCopies(),
+                costParms.isDuplex(), pageCostOneSided, pageCostTwoSided,
+                discountPerc);
     }
 
     /**

@@ -86,7 +86,7 @@ public final class SmartSchoolPrintMonitorJob extends AbstractJob {
     public static final String ATTR_SIMULATION = "simulation";
 
     /**
-     * Simulation flag.
+     * {@code true} when running in simulation mode.
      */
     private boolean isSimulation = false;
 
@@ -136,53 +136,41 @@ public final class SmartSchoolPrintMonitorJob extends AbstractJob {
         @Override
         public Object execute(final CircuitBreaker circuitBreaker) {
 
+            PaperCutServerProxy papercutServerProxy = null;
+            PaperCutDbProxy papercutDbProxy = null;
+
             try {
 
                 final ConfigManager cm = ConfigManager.instance();
 
-                /*
-                 *
-                 */
-                final PaperCutServerProxy papercutServerProxy;
-                final PaperCutDbProxy papercutDbProxy;
-
                 if (cm.isConfigValue(Key.SMARTSCHOOL_PAPERCUT_ENABLE)) {
 
-                    papercutServerProxy =
-                            PaperCutServerProxy
-                                    .create(cm
-                                            .getConfigValue(Key.PAPERCUT_SERVER_HOST),
-                                            cm.getConfigInt(Key.PAPERCUT_SERVER_PORT),
-                                            cm.getConfigValue(Key.PAPERCUT_XMLRPC_URL_PATH),
-                                            cm.getConfigValue(Key.PAPERCUT_SERVER_AUTH_TOKEN),
-                                            true);
-
-                    papercutDbProxy =
-                            PaperCutDbProxy
-                                    .create(cm
-                                            .getConfigValue(Key.PAPERCUT_DB_JDBC_DRIVER),
-                                            cm.getConfigValue(Key.PAPERCUT_DB_JDBC_URL),
-                                            cm.getConfigValue(Key.PAPERCUT_DB_USER),
-                                            cm.getConfigValue(Key.PAPERCUT_DB_PASSWORD),
-                                            true);
+                    papercutServerProxy = PaperCutServerProxy.create(cm, true);
+                    papercutDbProxy = PaperCutDbProxy.create(cm, true);
 
                     papercutServerProxy.connect();
                     papercutDbProxy.connect();
-
-                } else {
-                    papercutServerProxy = null;
-                    papercutDbProxy = null;
                 }
 
-                /*
-                 *
-                 */
+                //
                 final int pollingHeartbeatSecs =
                         cm.getConfigInt(IConfigProp.Key.SMARTSCHOOL_SOAP_PRINT_POLL_HEARTBEAT_SECS);
 
-                final int sessionHeartbeatSecs =
-                        cm.getConfigInt(IConfigProp.Key.SMARTSCHOOL_SOAP_PRINT_POLL_HEARTBEATS);
+                //
+                final IConfigProp.Key sessionHeartbeatSecsKey;
 
+                if (this.parentJob.isSimulation) {
+                    sessionHeartbeatSecsKey =
+                            IConfigProp.Key.SMARTSCHOOL_SIMULATION_SOAP_PRINT_POLL_HEARTBEATS;
+                } else {
+                    sessionHeartbeatSecsKey =
+                            IConfigProp.Key.SMARTSCHOOL_SOAP_PRINT_POLL_HEARTBEATS;
+                }
+
+                final int sessionHeartbeatSecs =
+                        cm.getConfigInt(sessionHeartbeatSecsKey);
+
+                //
                 final int sessionDurationSecs =
                         cm.getConfigInt(IConfigProp.Key.SMARTSCHOOL_SOAP_PRINT_POLL_SESSION_DURATION_SECS);
 
@@ -252,6 +240,15 @@ public final class SmartSchoolPrintMonitorJob extends AbstractJob {
                         LOGGER.error(e.getMessage(), e);
                     }
                 }
+
+                if (papercutDbProxy != null) {
+                    papercutDbProxy.disconnect();
+                }
+
+                if (papercutServerProxy != null) {
+                    papercutServerProxy.disconnect();
+                }
+
             }
             //
             return null;

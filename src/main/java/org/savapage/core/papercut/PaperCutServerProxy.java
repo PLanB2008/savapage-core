@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -43,6 +43,7 @@ import org.savapage.core.circuitbreaker.CircuitNonTrippingException;
 import org.savapage.core.circuitbreaker.CircuitTrippingException;
 import org.savapage.core.config.CircuitBreakerEnum;
 import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.IConfigProp.Key;
 
 /**
  *
@@ -70,7 +71,7 @@ public final class PaperCutServerProxy {
      * INVARIANT: PaperCut is configured with Multiple Personal Accounts, and
      * this is the account name to use.
      */
-    private static final String USER_ACCOUNT_NAME = "SmartSchool";
+    private static final String USER_ACCOUNT_NAME = "Smartschool";
 
     /**
      * .
@@ -198,6 +199,27 @@ public final class PaperCutServerProxy {
         this.authToken = authToken;
         this.xmlRpcClient = xmlRpcClient;
         this.useCircuitBreaker = useCircuitBreaker;
+    }
+
+    /**
+     * Creates a {@link PaperCutServerProxy} instance from the application
+     * configuration.
+     *
+     * @param cm
+     *            The {@link ConfigManager}.
+     * @param useCircuitBreaker
+     *            If {@code true} a {@link CircuitBreakerOperation} is used.
+     * @return The {@link PaperCutServerProxy} instance.
+     */
+    public static PaperCutServerProxy create(final ConfigManager cm,
+            final boolean useCircuitBreaker) {
+
+        return PaperCutServerProxy.create(
+                cm.getConfigValue(Key.PAPERCUT_SERVER_HOST),
+                cm.getConfigInt(Key.PAPERCUT_SERVER_PORT),
+                cm.getConfigValue(Key.PAPERCUT_XMLRPC_URL_PATH),
+                cm.getConfigValue(Key.PAPERCUT_SERVER_AUTH_TOKEN),
+                useCircuitBreaker);
     }
 
     /**
@@ -401,6 +423,13 @@ public final class PaperCutServerProxy {
      */
     public void connect() {
         isUserExists("some-dummy-user");
+    }
+
+    /**
+     * Disconnects from PaperCut.
+     */
+    public void disconnect() {
+        // no code intended
     }
 
     /**

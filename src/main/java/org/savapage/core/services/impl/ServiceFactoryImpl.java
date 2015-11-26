@@ -26,6 +26,7 @@ import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.AppLogService;
 import org.savapage.core.services.DeviceService;
 import org.savapage.core.services.DocLogService;
+import org.savapage.core.services.EcoPrintPdfTaskService;
 import org.savapage.core.services.EmailService;
 import org.savapage.core.services.InboxService;
 import org.savapage.core.services.OutboxService;
@@ -37,6 +38,7 @@ import org.savapage.core.services.QueueService;
 import org.savapage.core.services.RfIdReaderService;
 import org.savapage.core.services.ServiceFactory;
 import org.savapage.core.services.SmartSchoolService;
+import org.savapage.core.services.StatefulService;
 import org.savapage.core.services.UserGroupService;
 import org.savapage.core.services.UserService;
 
@@ -80,6 +82,11 @@ public final class ServiceFactoryImpl implements ServiceFactory {
 
     private static class DocLogServiceHolder {
         public static final DocLogService SERVICE = new DocLogServiceImpl();
+    }
+
+    private static class EcoPrintPdfTaskServiceHolder {
+        public static final EcoPrintPdfTaskService SERVICE =
+                new EcoPrintPdfTaskServiceImpl();
     }
 
     private static class EmailServiceHolder {
@@ -136,6 +143,9 @@ public final class ServiceFactoryImpl implements ServiceFactory {
                 new SmartSchoolServiceImpl();
     }
 
+    private final static StatefulService statefullServices[] =
+            new StatefulService[] { EcoPrintPdfTaskServiceHolder.SERVICE };
+
     @Override
     public AccountingService getAccountingService() {
         return AccountingServiceHolder.SERVICE;
@@ -159,6 +169,11 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     @Override
     public DocLogService getDocLogService() {
         return DocLogServiceHolder.SERVICE;
+    }
+
+    @Override
+    public EcoPrintPdfTaskService getEcoPrintPdfTaskService() {
+        return EcoPrintPdfTaskServiceHolder.SERVICE;
     }
 
     @Override
@@ -219,6 +234,20 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     @Override
     public SmartSchoolService getSmartSchoolService() {
         return SmartSchoolServiceHolder.SERVICE;
+    }
+
+    @Override
+    public void start() {
+        for (final StatefulService service : statefullServices) {
+            service.start();
+        }
+    }
+
+    @Override
+    public void shutdown() {
+        for (final StatefulService service : statefullServices) {
+            service.shutdown();
+        }
     }
 
 }

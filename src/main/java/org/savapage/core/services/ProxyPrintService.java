@@ -37,9 +37,13 @@ import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.dto.ProxyPrinterCostDto;
 import org.savapage.core.dto.ProxyPrinterDto;
 import org.savapage.core.dto.ProxyPrinterMediaSourcesDto;
+import org.savapage.core.imaging.EcoPrintPdfTask;
+import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.ipp.IppSyntaxException;
 import org.savapage.core.ipp.attribute.IppAttrGroup;
+import org.savapage.core.ipp.client.IppConnectException;
+import org.savapage.core.ipp.client.IppNotificationRecipient;
 import org.savapage.core.ipp.operation.IppStatusCode;
 import org.savapage.core.jpa.Device;
 import org.savapage.core.jpa.Printer;
@@ -53,8 +57,6 @@ import org.savapage.core.json.rpc.AbstractJsonRpcMethodResponse;
 import org.savapage.core.json.rpc.JsonRpcMethodError;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
 import org.savapage.core.json.rpc.impl.ParamsPrinterSnmp;
-import org.savapage.core.print.proxy.IppConnectException;
-import org.savapage.core.print.proxy.IppNotificationRecipient;
 import org.savapage.core.print.proxy.JsonProxyPrintJob;
 import org.savapage.core.print.proxy.JsonProxyPrinter;
 import org.savapage.core.print.proxy.JsonProxyPrinterOpt;
@@ -65,6 +67,7 @@ import org.savapage.core.print.proxy.ProxyPrintInboxReq;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.services.helpers.PageScalingEnum;
 import org.savapage.core.services.helpers.PrinterAttrLookup;
+import org.savapage.core.services.helpers.SyncPrintJobsResult;
 import org.savapage.core.snmp.SnmpConnectException;
 
 /**
@@ -375,19 +378,11 @@ public interface ProxyPrintService {
      * creation-time. If there is no match, i.e. when creation times differs, no
      * update is done.
      *
-     * @return A three element int array with statistics.
-     *         <ul>
-     *         <li>Index 0 : the number of active PrintOut jobs.</li>
-     *         <li>Index 1 : the number of jobs that were update with a new CUPS
-     *         state.</li>
-     *         <li>Index 2 : the number of jobs that were not found in CUPS:
-     *         this could be due to an off-line or disabled printer, or a
-     *         printer that has been removed.</li>
-     *         </ul>
+     * @return The {@link SyncPrintJobsResult}.
      * @throws IppConnectException
      *             When a connection error occurs.
      */
-    int[] syncPrintJobs() throws IppConnectException;
+    SyncPrintJobsResult syncPrintJobs() throws IppConnectException;
 
     /**
      * Gets the {@link Printer} object while validating {@link User} access.
@@ -504,9 +499,12 @@ public interface ProxyPrintService {
      *            The {@link ProxyPrintInboxReq}.
      * @throws IppConnectException
      *             When CUPS connection is broken.
+     * @throws EcoPrintPdfTaskPendingException
+     *             When {@link EcoPrintPdfTask} objects needed for this PDF are
+     *             pending.
      */
     void proxyPrintInbox(User lockedUser, ProxyPrintInboxReq request)
-            throws IppConnectException;
+            throws IppConnectException, EcoPrintPdfTaskPendingException;
 
     /**
      * Creates a CUPS event subscription. This is an idempotent operation: when

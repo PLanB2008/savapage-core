@@ -40,16 +40,26 @@ public final class DateUtil {
      */
     public static final long DURATION_MSEC_MINUTE = 60 * DURATION_MSEC_SECOND;
 
-
     /**
      * An hour in milliseconds.
      */
     public static final long DURATION_MSEC_HOUR = 60 * DURATION_MSEC_MINUTE;
 
     /**
+     * A day in milliseconds.
+     */
+    public static final long DURATION_MSEC_DAY = 24 * DURATION_MSEC_HOUR;
+
+    /**
      * A hundredth of a second in milliseconds.
      */
     public static final int MSEC_IN_HUNDREDTH_OF_SECOND = 10;
+
+    /**
+     * The number of seconds in a minute.
+     */
+    public static final int SECONDS_IN_MINUTE = 60;
+
 
     /**
      *

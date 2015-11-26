@@ -46,6 +46,8 @@ import org.savapage.core.SpException;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.doc.DocContent;
+import org.savapage.core.imaging.EcoPrintPdfTask;
+import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.inbox.InboxInfoDto.InboxJobRange;
 import org.savapage.core.jpa.DocLog;
@@ -54,6 +56,7 @@ import org.savapage.core.outbox.OutboxInfoDto;
 import org.savapage.core.outbox.OutboxInfoDto.LocaleInfo;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJob;
 import org.savapage.core.pdf.PdfCreateRequest;
+import org.savapage.core.pdf.PdfPrintCollector;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq.Status;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
@@ -198,7 +201,8 @@ public final class OutboxServiceImpl extends AbstractService implements
 
     @Override
     public void proxyPrintInbox(final User lockedUser,
-            final ProxyPrintInboxReq request) {
+            final ProxyPrintInboxReq request)
+            throws EcoPrintPdfTaskPendingException {
 
         final Date submitDate = ServiceContext.getTransactionDate();
         final Date expiryDate =
@@ -315,11 +319,14 @@ public final class OutboxServiceImpl extends AbstractService implements
      *            The data the proxy print was submitted.
      * @param expiryDate
      *            The data the proxy print expires.
+     * @throws EcoPrintPdfTaskPendingException
+     *             When {@link EcoPrintPdfTask} objects needed for this PDF are
+     *             pending.
      */
     private void proxyPrintInboxChunk(final User lockedUser,
             final ProxyPrintInboxReq request, final InboxInfoDto inboxInfo,
             final OutboxInfoDto outboxInfo, final Date submitDate,
-            final Date expiryDate) {
+            final Date expiryDate) throws EcoPrintPdfTaskPendingException {
 
         final DocLog docLog = null;
 
@@ -345,7 +352,10 @@ public final class OutboxServiceImpl extends AbstractService implements
             pdfRequest.setPdfFile(pdfFileName);
             pdfRequest.setInboxInfo(inboxInfo);
             pdfRequest.setRemoveGraphics(request.isRemoveGraphics());
+
             pdfRequest.setEcoPdf(request.isEcoPrint());
+            pdfRequest.setEcoPdfShadow(request.isEcoPrintShadow());
+
             pdfRequest.setApplyPdfProps(!APPLY_PDF_PROPS);
             pdfRequest.setApplyLetterhead(APPLY_LETTERHEAD);
             pdfRequest.setForPrinting(PDF_FOR_PRINTING);
@@ -363,7 +373,8 @@ public final class OutboxServiceImpl extends AbstractService implements
             job.setPages(request.getNumberOfPages());
             job.setSheets(calNumberOfSheets(request));
             job.setRemoveGraphics(request.isRemoveGraphics());
-            job.setEcoPrint(request.isEcoPrint());
+            job.setEcoPrint(request.isEcoPrint() || request.isEcoPrintShadow());
+            job.setCollate(request.isCollate());
             job.setCost(request.getCost());
             job.setSubmitTime(submitDate.getTime());
             job.setExpiryTime(expiryDate.getTime());
@@ -419,11 +430,7 @@ public final class OutboxServiceImpl extends AbstractService implements
      * @return The number of sheets.
      */
     private static int calNumberOfSheets(final ProxyPrintInboxReq request) {
-        return AbstractProxyPrintService.calcNumberOfPrintedSheets(
-                request.getNumberOfPages(), request.getNumberOfCopies(),
-                request.isDuplex(), request.getNup(),
-                request.isOddOrEvenSheets(), request.isCoverPageBefore(),
-                request.isCoverPageAfter());
+        return PdfPrintCollector.calcNumberOfPrintedSheets(request);
     }
 
     /**

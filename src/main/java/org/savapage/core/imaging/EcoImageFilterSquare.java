@@ -32,6 +32,11 @@ import java.awt.image.BufferedImage;
  * is calculated that exclusively contains filterable pixels with the traversed
  * pixel as top-left corner. This square is colored white (less the border).
  * </p>
+ * <p>
+ * Since anti-aliasing may be part of the filter border we try to correct things
+ * to make sure that sans-serif letters with vertical bars, like "i,l,r", have a
+ * sharp contour.
+ * </p>
  *
  * @author Datraverse B.V.
  * @since 0.9.9
@@ -54,6 +59,21 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
      * The image height in pixels.
      */
     private int imageHeight;
+
+    /**
+     * The total number of non-white pixels in the image.
+     */
+    private int totPixelsNonWhite;
+
+    /**
+     * The total number of eco filtered pixels in the image.
+     */
+    private int totPixelsFiltered;
+
+    /**
+     * The number of copy ahead max filter squares to imageOut.
+     */
+    private static final int INITIAL_COPY_AHEAD_MAX_FILTER_SQUARES = 5;
 
     /**
      * No anti-aliasing check.
@@ -84,6 +104,9 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
     private final int antiAliasingRgbThreshold =
             ANTI_ALIASING_RGB_THRESHOLD_LIGHT;
 
+    /**
+     * The {@link Parms}.
+     */
     private final Parms parms;
 
     /**
@@ -115,6 +138,11 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
 
         /**
          *
+         */
+        private boolean convertToGrayscale;
+
+        /**
+         *
          * @return The minimum width of a filter square.
          */
         public int getFilterSquareWidthMin() {
@@ -126,7 +154,7 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
          * @param minWidth
          *            The minimum width of a filter square.
          */
-        public void setFilterSquareWidthMin(int minWidth) {
+        public void setFilterSquareWidthMin(final int minWidth) {
             this.filterSquareWidthMin = minWidth;
         }
 
@@ -171,8 +199,21 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
             return filterSquareBorderFraction;
         }
 
+        /**
+         *
+         * @param fraction
+         *            The fraction of a filter square width used as border.
+         */
         public void setFilterSquareBorderFraction(final double fraction) {
             this.filterSquareBorderFraction = fraction;
+        }
+
+        public boolean isConvertToGrayscale() {
+            return convertToGrayscale;
+        }
+
+        public void setConvertToGrayscale(boolean convertToGrayscale) {
+            this.convertToGrayscale = convertToGrayscale;
         }
 
         /**
@@ -183,10 +224,14 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
 
             final Parms parms = new Parms();
 
-            parms.setFilterSquareWidthMin(4);
+            // A value of "3" will even speckle 6pt fonts.
+            parms.setFilterSquareWidthMin(3);
+
             parms.setFilterSquareWidthMax(12);
             parms.setFilterSquareBorderWidthMin(1);
             parms.setFilterSquareBorderFraction(0.25);
+
+            parms.setConvertToGrayscale(false);
 
             return parms;
         }
@@ -201,7 +246,8 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
 
     /**
      *
-     * @param parms The {@link Parms}.
+     * @param parms
+     *            The {@link Parms}.
      */
     public EcoImageFilterSquare(final Parms parms) {
         this.parms = parms;
@@ -264,6 +310,14 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
             }
         }
 
+        final int filterSquareCenter = filterSquareWidth / 2;
+
+        final int filterSquareCenterX = x + filterSquareCenter;
+        final int filterSquareCenterY = y + filterSquareCenter;
+
+        final int rgbCenter =
+                image.getRGB(filterSquareCenterX, filterSquareCenterY);
+
         for (int iY = y; iY < filterBottomY; iY++) {
 
             final boolean borderHorz =
@@ -279,10 +333,35 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
                                 || iX >= filterRightX - filterSquareBorder;
 
                 if (borderHorz || borderVert) {
+                    /*
+                     * Since anti-aliasing may be part of the filter border we
+                     * try to correct things to make sure that sans-serif
+                     * letters with vertical bars, like "i,l,r", have a sharp
+                     * contour.
+                     */
+                    final int rgbBorder = image.getRGB(iX, iY);
+
+                    if (rgbBorder != rgbCenter) {
+
+                        if (filterSquareBorder == 1) {
+                            image.setRGB(iX, iY, rgbCenter);
+                        } else if (borderHorz
+                                && (iY == y || iY == y + filterSquareWidth - 1)) {
+                            // outermost horizontal border pixels: noop.
+                        } else if (borderVert
+                                && (iX == x || iX == x + filterSquareWidth - 1)) {
+                            // outermost vertical border pixels: noop.
+                        } else {
+                            image.setRGB(iX, iY, rgbCenter);
+                        }
+                    }
+
                     continue;
                 }
 
                 image.setRGB(iX, iY, RGB_WHITE);
+
+                this.totPixelsFiltered++;
             }
         }
 
@@ -321,7 +400,6 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
         }
 
         // Maybe, depending on aliasing threshold.
-
         if (this.antiAliasingRgbThreshold == ANTI_ALIASING_RGB_THRESHOLD_NONE) {
             return true;
         }
@@ -333,9 +411,56 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
         return antiAliasingIndex <= this.antiAliasingRgbThreshold;
     }
 
+    /**
+     * Copies and optionally converts a pixel to grayscale from input to output
+     * image.
+     *
+     * @param imageIn
+     *            The input image.
+     * @param imageOut
+     *            The output image.
+     * @param x
+     *            Pixel x-coordinate.
+     * @param y
+     *            Pixel y-coordinate.
+     */
+    private void copyPixel(final BufferedImage imageIn,
+            final BufferedImage imageOut, int x, int y) {
+
+        Color color;
+        int r;
+        int g;
+        int b;
+        int grayPart;
+
+        int rgb = imageIn.getRGB(x, y);
+
+        if (rgb != RGB_WHITE) {
+            this.totPixelsNonWhite++;
+        }
+
+        if (this.parms.isConvertToGrayscale()) {
+
+            color = new Color(rgb);
+
+            r = color.getRed();
+            g = color.getGreen();
+            b = color.getBlue();
+
+            if (!(r == b && b == g)) {
+                grayPart = (r + g + b) / 3;
+                rgb = new Color(grayPart, grayPart, grayPart).getRGB();
+            }
+        }
+        imageOut.setRGB(x, y, rgb);
+    }
+
     @Override
     protected void filter(final BufferedImage imageIn,
             final BufferedImage imageOut) {
+
+        this.totPixelsNonWhite = 0;
+        this.totPixelsFiltered = 0;
 
         this.imageWidth = imageOut.getWidth();
         this.imageHeight = imageOut.getHeight();
@@ -349,10 +474,12 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
         int yCopy = 0;
         int xCopy = 0;
 
-        for (yCopy = 0; yCopy < 5 * this.parms.getFilterSquareWidthMax()
+        for (yCopy = 0; yCopy < INITIAL_COPY_AHEAD_MAX_FILTER_SQUARES
+                * this.parms.getFilterSquareWidthMax()
                 && yCopy < this.imageHeight; yCopy++) {
+
             for (xCopy = 0; xCopy < this.imageWidth; xCopy++) {
-                imageOut.setRGB(xCopy, yCopy, imageIn.getRGB(xCopy, yCopy));
+                copyPixel(imageIn, imageOut, xCopy, yCopy);
             }
         }
 
@@ -374,9 +501,7 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
 
                     if (xCopy < this.imageWidth && yCopy < this.imageHeight
                             && !this.filterSquarePixels[xCopy][yCopy]) {
-
-                        imageOut.setRGB(xCopy, yCopy,
-                                imageIn.getRGB(xCopy, yCopy));
+                        copyPixel(imageIn, imageOut, xCopy, yCopy);
                     }
                 }
 
@@ -393,13 +518,16 @@ public final class EcoImageFilterSquare extends EcoImageFilterMixin {
                  */
                 if (xCopy < this.imageWidth && yCopy < this.imageHeight
                         && !this.filterSquarePixels[xCopy][yCopy]) {
-
-                    imageOut.setRGB(xCopy, yCopy, imageIn.getRGB(xCopy, yCopy));
+                    copyPixel(imageIn, imageOut, xCopy, yCopy);
                     xCopy++;
                 }
 
             }
         }
+    }
 
+    @Override
+    public double getFractionFiltered() {
+        return (double) this.totPixelsFiltered / this.totPixelsNonWhite;
     }
 }

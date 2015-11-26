@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -19,43 +19,24 @@
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
-package org.savapage.core.print.proxy;
+package org.savapage.core.services;
 
 /**
+ * A stateful service.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
+ *
  */
-public class IppConnectException extends Exception {
+public interface StatefulService {
 
     /**
-     *
+     * Starts the service.
      */
-    private static final long serialVersionUID = 1L;
+    void start();
+
 
     /**
-     *
-     * @param cause
-     *            The cause.
+     * Shuts the service down and blocks till is has terminated.
      */
-    public IppConnectException(final Throwable cause) {
-        super(cause);
-    }
-
-    /**
-     *
-     * @param message
-     */
-    public IppConnectException(final String message) {
-        super(message);
-    }
-
-    /**
-     *
-     * @param message
-     * @param cause
-     */
-    public IppConnectException(final String message, final Throwable cause) {
-        super(message, cause);
-    }
-
+    void shutdown();
 }

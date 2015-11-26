@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -36,9 +36,19 @@ import org.savapage.core.jpa.IppQueue;
 public enum ReservedIppQueueEnum {
 
     /**
+     * The AirPrint queue.
+     */
+    AIRPRINT("airprint", "AirPrint", true),
+
+    /**
      * The default IPP queue for driver printing.
      */
     IPP_PRINT("", "IPP Printer", true),
+
+    /**
+     * The default IPP queue for driver printing over public internet.
+     */
+    IPP_PRINT_INTERNET("internet", "Internet Printer", true),
 
     /**
      * The dedicated queue for FTP printing.
@@ -129,4 +139,13 @@ public enum ReservedIppQueueEnum {
         return this.driverPrint;
     }
 
+    /**
+     *
+     * @return {@code true} when this queue can NOT be set to trusted (always
+     *         untrusted).
+     */
+    public boolean isNotTrusted() {
+        return this == ReservedIppQueueEnum.AIRPRINT
+                || this == ReservedIppQueueEnum.IPP_PRINT_INTERNET;
+    }
 }

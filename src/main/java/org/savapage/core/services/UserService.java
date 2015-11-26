@@ -24,6 +24,7 @@ package org.savapage.core.services;
 import java.io.File;
 import java.io.IOException;
 import java.util.Date;
+import java.util.UUID;
 
 import org.savapage.core.dao.helpers.UserAttrEnum;
 import org.savapage.core.dto.UserDto;
@@ -224,14 +225,28 @@ public interface UserService {
     /**
      * Finds a {@link User} by ID number.
      * <p>
-     * When offered idNUmber is blank, {@code null} is returned.
+     * When offered number is blank, {@code null} is returned.
      * </p>
      *
-     * @param idNumber
+     * @param number
      *            The unique ID number.
      * @return The User or {@code null} when not found.
      */
-    User findUserByNumber(String idNumber);
+    User findUserByNumber(String number);
+
+    /**
+     * Finds a {@link User} by ID number that has {@link UUID}.
+     * <p>
+     * When offered number is blank, {@code null} is returned.
+     * </p>
+     *
+     * @param number
+     *            The unique ID number.
+     * @param uuid
+     *            The {@link UUID}.
+     * @return The User or {@code null} when not found.
+     */
+    User findUserByNumberUuid(final String number, final UUID uuid);
 
     /**
      * Add/Replace the Primary Card to/of the {@link User}.
@@ -393,6 +408,18 @@ public interface UserService {
     void performLogicalDelete(User user);
 
     /**
+     * Gets the (un-encrypted) {@link UserAttr#getValue()} from
+     * {@link User#getAttributes()} list.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param attrEnum
+     *            The {@link UserAttrEnum} to search for.
+     * @return The (un-encrypted) value string or {@code null} when not found.
+     */
+    String getUserAttrValue(final User user, final UserAttrEnum attrEnum);
+
+    /**
      * Removes an attribute from the User's list of attributes AND from the
      * database.
      *
@@ -413,7 +440,7 @@ public interface UserService {
      * </p>
      *
      * @param user
-     *            The user.
+     *            The {@link User}.
      * @param name
      *            The name of the {@link UserAttr}.
      * @param value
@@ -422,10 +449,21 @@ public interface UserService {
     void addUserAttr(User user, UserAttrEnum name, final String value);
 
     /**
+     * Adds the {@link UserAttrEnum#UUID} to the User's list of attributes and
+     * creates the {@link UserAttr} in the database when the attribute is NOT
+     * already on the list (the list is lazy created when it does not exist).
+     *
+     * @param user
+     *            The {@link User}.
+     * @return The {@link UUID}.
+     */
+    UUID lazyAddUserAttrUuid(User user);
+
+    /**
      * Reads the attribute value from the database.
      *
      * @param user
-     *            The user.
+     *            The {@link User}.
      * @param name
      *            The name of the {@link UserAttr}.
      * @return The attribute value or {@code null} when NOT found.

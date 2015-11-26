@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -92,23 +92,65 @@ public class SmartSchoolConnection {
     private final char[] password;
 
     /**
+     *
+     */
+    private final boolean chargeToStudents;
+
+    /**
+     * The default proxy printer (can be {@code null} or empty).
+     */
+    private final String proxyPrinterName;
+
+    /**
+     * The default proxy printer for duplex printing (can be {@code null} or
+     * empty).
+     */
+    private final String proxyPrinterDuplexName;
+
+    /**
+     * The proxy printer for grayscale printing (can be {@code null} or empty).
+     */
+    private final String proxyPrinterGrayscaleName;
+
+    /**
+     * The proxy printer for grayscale duplex printing (can be {@code null} or
+     * empty).
+     */
+    private final String proxyPrinterGrayscaleDuplexName;
+    /**
      * .
      *
      */
     private volatile boolean shutdownRequested = false;
 
-    private final String proxyPrinterName;
-
     /**
      *
      * @param endpoint
+     *            The SOAP endpoint.
      * @param password
+     *            Password for the Smartschool Afdrukcentrum.
      * @param proxyPrinterName
      *            Name of the proxy printer, can be {@code null} or empty.
+     * @param proxyPrinterDuplexName
+     *            Name of the duplex proxy printer, can be {@code null} or
+     *            empty.
+     * @param proxyPrinterGrayscaleName
+     *            Name of the grayscale proxy printer, can be {@code null} or
+     *            empty.
+     * @param proxyPrinterGrayscaleDuplexName
+     *            Name of the grayscale duplex proxy printer, can be
+     *            {@code null} or empty.
+     * @param chargeToStudents
+     *            {@code true} if costs are charged to individual students,
+     *            {@code false} if costs are charged to shared "Klas" accounts
+     *            only.
      * @throws SOAPException
      */
     public SmartSchoolConnection(final String endpoint, final char[] password,
-            final String proxyPrinterName) throws SOAPException {
+            final String proxyPrinterName, final String proxyPrinterDuplexName,
+            final String proxyPrinterGrayscaleName,
+            final String proxyPrinterGrayscaleDuplexName,
+            final boolean chargeToStudents) throws SOAPException {
 
         try {
             this.endpointUri = new URI(endpoint);
@@ -123,6 +165,8 @@ public class SmartSchoolConnection {
             throw new SOAPException(String.format("%s: %s", e.getClass()
                     .getSimpleName(), e.getMessage()), e);
         }
+
+        this.chargeToStudents = chargeToStudents;
 
         this.accountName =
                 StringUtils.substringBefore(this.endpointUrl.getHost(), ".");
@@ -139,6 +183,10 @@ public class SmartSchoolConnection {
         this.httpClient = builder.build();
 
         this.proxyPrinterName = proxyPrinterName;
+        this.proxyPrinterDuplexName = proxyPrinterDuplexName;
+
+        this.proxyPrinterGrayscaleName = proxyPrinterGrayscaleName;
+        this.proxyPrinterGrayscaleDuplexName = proxyPrinterGrayscaleDuplexName;
     }
 
     public SOAPConnection getConnection() {
@@ -196,7 +244,47 @@ public class SmartSchoolConnection {
         return httpClient;
     }
 
+    /**
+     * @return The default proxy printer (can be {@code null} or empty).
+     */
     public String getProxyPrinterName() {
         return proxyPrinterName;
     }
+
+    /**
+     * @return The default proxy printer for duplex printing (can be
+     *         {@code null} or empty).
+     */
+    public String getProxyPrinterDuplexName() {
+        return proxyPrinterDuplexName;
+    }
+
+    /**
+     *
+     * @return The proxy printer for grayscale printing (can be {@code null} or
+     *         empty).
+     */
+    public String getProxyPrinterGrayscaleName() {
+        return proxyPrinterGrayscaleName;
+    }
+
+    /**
+     *
+     * @return The proxy printer for grayscale duplex printing (can be
+     *         {@code null} or empty).
+     */
+    public String getProxyPrinterGrayscaleDuplexName() {
+        return proxyPrinterGrayscaleDuplexName;
+    }
+
+    /**
+     *
+     * @return {@code true} if costs are charged to individual students,
+     *         {@code false} if costs are charged to shared "Klas" accounts
+     *         only.
+     */
+    public boolean isChargeToStudents() {
+        return chargeToStudents;
+    }
+
 }

@@ -48,7 +48,7 @@ import org.savapage.core.print.server.PrintInResultEnum;
 import org.savapage.core.print.server.UnsupportedPrintJobContent;
 import org.savapage.core.services.QueueService;
 import org.savapage.core.services.ServiceContext;
-import org.savapage.core.services.helpers.InetUtils;
+import org.savapage.core.util.InetUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -227,13 +227,23 @@ public final class QueueServiceImpl extends AbstractService implements
     public IppQueue getOrCreateReservedQueue(
             final ReservedIppQueueEnum reservedQueue) {
 
-        IppQueue group = ippQueueDAO().find(reservedQueue);
+        IppQueue queue = ippQueueDAO().find(reservedQueue);
 
-        if (group == null) {
-            group = createQueueDefault(reservedQueue.getUrlPath());
-            ippQueueDAO().create(group);
+        if (queue == null) {
+            queue = createQueueDefault(reservedQueue.getUrlPath());
+            ippQueueDAO().create(queue);
+
+        } else if (reservedQueue == ReservedIppQueueEnum.AIRPRINT
+                || reservedQueue == ReservedIppQueueEnum.IPP_PRINT_INTERNET) {
+
+            // Force to untrusted.
+            if (queue.getTrusted()) {
+                queue.setTrusted(Boolean.FALSE);
+                ippQueueDAO().update(queue);
+            }
         }
-        return group;
+
+        return queue;
     }
 
     /**
@@ -248,6 +258,7 @@ public final class QueueServiceImpl extends AbstractService implements
         final IppQueue queue = new IppQueue();
 
         queue.setUrlPath(urlPath);
+        queue.setTrusted(Boolean.FALSE);
         queue.setCreatedBy(ServiceContext.getActor());
         queue.setCreatedDate(ServiceContext.getTransactionDate());
 
@@ -415,7 +426,7 @@ public final class QueueServiceImpl extends AbstractService implements
 
     @Override
     public boolean hasClientIpAccessToQueue(final IppQueue queue,
-            final String uri, final String clientIpAddr) {
+            final String printerNameForLogging, final String clientIpAddr) {
 
         /*
          * Assume remote host has NO access to printing.
@@ -427,11 +438,13 @@ public final class QueueServiceImpl extends AbstractService implements
          * Is IppQueue present ... and can it be used?
          */
         if (queue == null || queue.getDeleted()) {
-            throw new SpException("No queue found for [" + uri.toString() + "]");
+            throw new SpException(String.format("No queue found for [%s]",
+                    printerNameForLogging));
         }
 
         if (queue.getDisabled()) {
-            throw new SpException("queue [" + uri.toString() + "] is disabled");
+            throw new SpException(String.format("queue [%s] is disabled.",
+                    queue.getUrlPath()));
         }
 
         /*
@@ -474,6 +487,11 @@ public final class QueueServiceImpl extends AbstractService implements
         }
 
         return hasPrintAccessToQueue;
+    }
+
+    @Override
+    public boolean isQueueEnabled(final ReservedIppQueueEnum queue) {
+        return !ippQueueDAO().find(queue).getDisabled();
     }
 
 }

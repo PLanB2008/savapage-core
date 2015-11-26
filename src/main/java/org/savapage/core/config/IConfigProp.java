@@ -22,7 +22,7 @@
 package org.savapage.core.config;
 
 import java.math.BigDecimal;
-import java.net.MalformedURLException;
+import java.net.URI;
 import java.net.URL;
 import java.text.MessageFormat;
 import java.util.Currency;
@@ -685,6 +685,13 @@ public interface IConfigProp {
                 NUMBER_VALIDATOR, "6"),
 
         /**
+         * The base URL, i.e. "protocol://authority" <i>without</i> the path, of
+         * the IPP Internet Printer URI (no trailing slash) (optional).
+         */
+        IPP_INTERNET_PRINTER_URI_BASE("ipp.internet-printer.uri-base",
+                URI_VALIDATOR_OPT, ""),
+
+        /**
          * See this <a href=
          * "http://docs.oracle.com/javase/jndi/tutorial/ldap/search/batch.html"
          * >explanation</a> and this <a href=
@@ -1018,6 +1025,14 @@ public interface IConfigProp {
                 DEFAULT_SMARTSCHOOL_SIMULATION_STUDENT_2),
 
         /**
+         * The simulation variant of
+         * {@link #SMARTSCHOOL_SOAP_PRINT_POLL_HEARTBEATS}.
+         */
+        SMARTSCHOOL_SIMULATION_SOAP_PRINT_POLL_HEARTBEATS(
+                "smartschool.simulation.soap.print.poll.heartbeats",
+                NUMBER_VALIDATOR, "15"),
+
+        /**
          * Is PaperCut integration for SmartSchool component enabled?
          */
         SMARTSCHOOL_PAPERCUT_ENABLE("smartschool.papercut.enable",
@@ -1029,7 +1044,7 @@ public interface IConfigProp {
          */
         SMARTSCHOOL_SOAP_CONNECT_TIMEOUT_MILLIS(
                 "smartschool.soap.connect-timeout-millis", NUMBER_VALIDATOR,
-                "3000"),
+                "20000"),
 
         /**
          * Timeout in milliseconds to receive data from SmartSchool SOAP
@@ -1037,7 +1052,7 @@ public interface IConfigProp {
          */
         SMARTSCHOOL_SOAP_SOCKET_TIMEOUT_MILLIS(
                 "smartschool.soap.socket-timeout-millis", NUMBER_VALIDATOR,
-                "3000"),
+                "20000"),
 
         /**
          * Is SmartSchool (1) enabled?
@@ -1049,6 +1064,33 @@ public interface IConfigProp {
          */
         SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER(
                 "smartschool.1.soap.print.proxy-printer"),
+
+        /**
+         * Printer name for SmartSchool direct duplex proxy printing (1).
+         */
+        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_DUPLEX(
+                "smartschool.1.soap.print.proxy-printer-duplex"),
+
+        /**
+         * Printer name for SmartSchool direct proxy grayscale printing (1).
+         */
+        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE(
+                "smartschool.1.soap.print.proxy-printer-grayscale"),
+
+        /**
+         * Printer name for SmartSchool direct proxy grayscale duplex printing
+         * (1).
+         */
+        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE_DUPLEX(
+                "smartschool.1.soap.print.proxy-printer-grayscale-duplex"),
+
+        /**
+         * {@code true} if costs are charged to individual students,
+         * {@code false} if costs are charged to shared "Klas" accounts only.
+         */
+        SMARTSCHOOL_1_SOAP_PRINT_CHARGE_TO_STUDENTS(
+                "smartschool.1.soap.print.charge-to-students",
+                BOOLEAN_VALIDATOR, V_YES),
 
         /**
          * SOAP endpoint URL of SmartSchool Print Center (1).
@@ -1074,6 +1116,33 @@ public interface IConfigProp {
                 "smartschool.2.soap.print.proxy-printer"),
 
         /**
+         * Printer name for SmartSchool direct duplex proxy printing (1).
+         */
+        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_DUPLEX(
+                "smartschool.2.soap.print.proxy-printer-duplex"),
+
+        /**
+         * Printer name for SmartSchool direct proxy grayscale printing (2).
+         */
+        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE(
+                "smartschool.2.soap.print.proxy-printer-grayscale"),
+
+        /**
+         * Printer name for SmartSchool direct proxy grayscale duplex printing
+         * (2).
+         */
+        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE_DUPLEX(
+                "smartschool.2.soap.print.proxy-printer-grayscale-duplex"),
+
+        /**
+         * {@code true} if costs are charged to individual students,
+         * {@code false} if costs are charged to shared "Klas" accounts only.
+         */
+        SMARTSCHOOL_2_SOAP_PRINT_CHARGE_TO_STUDENTS(
+                "smartschool.2.soap.print.charge-to-students",
+                BOOLEAN_VALIDATOR, V_YES),
+
+        /**
          * SOAP endpoint URL of SmartSchool Print Center (2).
          */
         SMARTSCHOOL_2_SOAP_PRINT_ENDPOINT_URL(
@@ -1093,16 +1162,17 @@ public interface IConfigProp {
                 "2"),
 
         /**
-         * The number of heartbeats within a SmartSchool print polling after
-         * which an actual poll to SmartSchool is executed.
+         * The number of heartbeats within a SmartSchool print polling session
+         * after which an actual poll to SmartSchool is executed.
          * <p>
-         * SmartSchool tech support advises a poll frequency between 60 and 120
-         * seconds.
+         * SmartSchool has a rate-limit of one (1) poll per 2 minutes. When
+         * limit is exceeded an error message is returned. Note: status updates
+         * can be send unlimited.
          * </p>
          */
         SMARTSCHOOL_SOAP_PRINT_POLL_HEARTBEATS(
                 "smartschool.soap.print.poll.heartbeats", NUMBER_VALIDATOR,
-                "60"),
+                "61"),
 
         /**
          * The duration (seconds) of a SmartSchool print polling session.
@@ -1574,6 +1644,26 @@ public interface IConfigProp {
         ECO_PRINT_ENABLE("eco-print.enable", BOOLEAN_VALIDATOR, V_NO),
 
         /**
+         * Threshold for automatically creating an EcoPrint shadow file when PDF
+         * arrives in SafePages inbox: if number of PDF pages is GT threshold
+         * the shadow is not created.
+         */
+        ECO_PRINT_AUTO_THRESHOLD_SHADOW_PAGE_COUNT(
+                "eco-print.auto-threshold.page-count", NUMBER_VALIDATOR, "0"),
+
+        /**
+         * .
+         */
+        ECO_PRINT_RESOLUTION_DPI("eco-print.resolution-dpi", NUMBER_VALIDATOR,
+                "300"),
+
+        /**
+         * Discount percentage for EcoPrint proxy printing.
+         */
+        ECO_PRINT_DISCOUNT_PERC("eco-print.discount-percent", NUMBER_VALIDATOR,
+                "15"),
+
+        /**
          * Trust authenticated user in Client App on same IP address as User Web
          * App (Boolean, default TRUE).
          */
@@ -1645,6 +1735,12 @@ public interface IConfigProp {
          */
         WEBAPP_CARD_ASSOC_DIALOG_MAX_SECS("webapp.card-assoc.dialog-max-secs",
                 NUMBER_VALIDATOR, "30"),
+
+        /**
+         * .
+         */
+        WEB_LOGIN_AUTHTOKEN_ENABLE("web-login.authtoken.enable",
+                BOOLEAN_VALIDATOR, V_YES),
 
         /**
          * Inactivity timeout (minutes) for the admin web interface.
@@ -1976,6 +2072,10 @@ public interface IConfigProp {
             this.isOptional = optional;
         }
 
+        protected void customCheck(final String value) throws Exception {
+            new URL(value);
+        }
+
         @Override
         public ValidationResult validate(final String value) {
 
@@ -1984,8 +2084,8 @@ public interface IConfigProp {
             if (!this.isOptional || !value.isEmpty()) {
 
                 try {
-                    new URL(value);
-                } catch (MalformedURLException e) {
+                    this.customCheck(value);
+                } catch (Exception e) {
                     res.setStatus(ValidationStatusEnum.ERROR_SYNTAX);
                 }
             }
@@ -1994,6 +2094,23 @@ public interface IConfigProp {
                 res.setMessage("Invalid URL");
             }
             return res;
+        }
+    }
+
+    /**
+     *
+     * @author Rijk Ravestein
+     *
+     */
+    static class UriValidator extends UrlValidator {
+
+        public UriValidator(final boolean optional) {
+            super(optional);
+        }
+
+        @Override
+        protected void customCheck(final String value) throws Exception {
+            new URI(value);
         }
     }
 
@@ -2216,6 +2333,11 @@ public interface IConfigProp {
      * URL is not required (may be empty).
      */
     UrlValidator URL_VALIDATOR_OPT = new UrlValidator(true);
+
+    /**
+     * URI is not required (may be empty).
+     */
+    UriValidator URI_VALIDATOR_OPT = new UriValidator(true);
 
     /**
      * .

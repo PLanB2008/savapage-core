@@ -29,6 +29,17 @@ package org.savapage.core.services;
 public interface ServiceFactory {
 
     /**
+     * Starts all {@link StatefulService} instances.
+     */
+    void start();
+
+    /**
+     * Shuts down all {@link StatefulService} instances and blocks till they are
+     * all terminated.
+     */
+    void shutdown();
+
+    /**
      * Gets the {@link AccountingService} singleton.
      *
      * @return The singleton.
@@ -62,6 +73,13 @@ public interface ServiceFactory {
      * @return The singleton.
      */
     DocLogService getDocLogService();
+
+    /**
+     * Gets the {@link EcoPrintPdfTaskService} singleton.
+     *
+     * @return The singleton.
+     */
+    EcoPrintPdfTaskService getEcoPrintPdfTaskService();
 
     /**
      * Gets the {@link EmailService} singleton.

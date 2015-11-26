@@ -21,7 +21,6 @@
  */
 package org.savapage.core.config;
 
-import static java.nio.file.FileVisitResult.CONTINUE;
 import static java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE;
 import static java.nio.file.attribute.PosixFilePermission.OWNER_READ;
 import static java.nio.file.attribute.PosixFilePermission.OWNER_WRITE;
@@ -32,18 +31,12 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.math.BigDecimal;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.net.UnknownHostException;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -55,7 +48,6 @@ import java.security.cert.CertificateException;
 import java.util.Currency;
 import java.util.Date;
 import java.util.EnumSet;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -96,6 +88,7 @@ import org.savapage.core.crypto.CryptoUser;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.impl.DaoContextImpl;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
+import org.savapage.core.ipp.client.IppClient;
 import org.savapage.core.jmx.CoreConfig;
 import org.savapage.core.job.SpJobScheduler;
 import org.savapage.core.jpa.ConfigProperty;
@@ -106,7 +99,6 @@ import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.tools.DatabaseTypeEnum;
 import org.savapage.core.jpa.tools.DbUpgManager;
 import org.savapage.core.jpa.tools.DbVersionInfo;
-import org.savapage.core.print.proxy.IppClient;
 import org.savapage.core.print.proxy.ProxyPrintJobStatusMonitor;
 import org.savapage.core.services.PrinterService;
 import org.savapage.core.services.ProxyPrintService;
@@ -120,6 +112,8 @@ import org.savapage.core.users.NoUserSource;
 import org.savapage.core.users.UnixUserSource;
 import org.savapage.core.users.UserAliasList;
 import org.savapage.core.util.CurrencyUtil;
+import org.savapage.core.util.FileSystemHelper;
+import org.savapage.core.util.InetUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -143,20 +137,6 @@ public final class ConfigManager {
      *
      */
     private RunMode runMode = null;
-
-    /**
-     * Prefix of local-loop IP addresses.
-     * <p>
-     * Note: Debian based distros have 127.0.0.1 (localhost) and 127.0.1.1
-     * (linuxlnx) defined in {@code /etc/hosts}
-     * </p>
-     */
-    private static final String IP_LOOP_BACK_ADDR_PREFIX = "127.0.";
-
-    /**
-     *
-     */
-    private static final String IP_LOOP_BACK_ADDR = "127.0.0.1";
 
     /**
      *
@@ -276,6 +256,9 @@ public final class ConfigManager {
             "server.print.port.raw";
     public static final String PRINTER_RAW_PORT_DEFAULT = "9100";
 
+    private static final String SERVER_PROP_IPP_PRINTER_UUID =
+            "ipp.printer-uuid";
+
     // ========================================================================
     // Undocumented ad-hoc properties for testing purposes.
     // ========================================================================
@@ -283,11 +266,17 @@ public final class ConfigManager {
     // ========================================================================
 
     /**
-     *
+     * .
      */
     public static final String SYS_PROP_SERVER_HOME = "server.home";
 
-    private static final String APP_OWNER = "Datraverse B.V.";
+    /**
+     * .
+     */
+    public static final String SYS_PROP_CLIENT_HOME = "client.home";
+
+    private static final String APP_OWNER = CommunityDictEnum.DATRAVERSE_BV
+            .getWord();
 
     private final CryptoApp myCipher = new CryptoApp();
 
@@ -297,7 +286,7 @@ public final class ConfigManager {
 
     /**
      * For convenience we use ConfigPropImp instead of ConfigProp (because of
-     * easy Eclipse hyperlinking.
+     * easy Eclipse hyperlinking).
      */
     private final ConfigPropImpl myConfigProp = new ConfigPropImpl();
 
@@ -601,86 +590,6 @@ public final class ConfigManager {
     }
 
     /**
-     * Gets the {@code hostname} of the host system this application is running
-     * on.
-     *
-     * @return The hostname.
-     */
-    public static String getServerHostName() {
-        try {
-            return InetAddress.getLocalHost().getHostName();
-        } catch (UnknownHostException e) {
-            throw new SpException(e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Gets the assigned (static or dynamic) IPv4 address (no loop back address)
-     * of the host system this application is running on, or the loop back
-     * address when no assigned address is found.
-     *
-     * @return The local host IPv4 address.
-     * @throws UnknownHostException
-     *             When non-loop IPv4 address could not be found or I/O errors
-     *             are encountered when. getting the network interfaces.
-     */
-    public static String getServerHostAddress() throws UnknownHostException {
-
-        final String ipAddress = InetAddress.getLocalHost().getHostAddress();
-
-        if (!ipAddress.startsWith(IP_LOOP_BACK_ADDR_PREFIX)) {
-            return ipAddress;
-        }
-
-        /*
-         * Traverse all network interfaces on this machine.
-         */
-        final Enumeration<NetworkInterface> networkEnum;
-
-        try {
-            networkEnum = NetworkInterface.getNetworkInterfaces();
-        } catch (SocketException e) {
-            throw new UnknownHostException(e.getMessage());
-        }
-
-        while (networkEnum != null && networkEnum.hasMoreElements()) {
-
-            final NetworkInterface inter = networkEnum.nextElement();
-
-            /*
-             * Traverse all addresses for this interface.
-             */
-            final Enumeration<InetAddress> enumAddr = inter.getInetAddresses();
-
-            while (enumAddr.hasMoreElements()) {
-
-                final InetAddress addr = enumAddr.nextElement();
-
-                /*
-                 * IPv4 addresses only.
-                 */
-                if (addr instanceof Inet4Address) {
-
-                    if (!addr.getHostAddress().startsWith(
-                            IP_LOOP_BACK_ADDR_PREFIX)) {
-                        /*
-                         * Bingo, this is a non-loop back address.
-                         */
-                        return addr.getHostAddress();
-                    }
-
-                }
-
-            }
-        }
-
-        /*
-         * No non-loop back IP v4 addresses found: return loop back address.
-         */
-        return IP_LOOP_BACK_ADDR;
-    }
-
-    /**
      * Dynamically gets the {@code server.home} system property as passed to the
      * JVM or set internally.
      * <p>
@@ -692,6 +601,19 @@ public final class ConfigManager {
      */
     public static String getServerHome() {
         return System.getProperty(SYS_PROP_SERVER_HOME);
+    }
+
+    /**
+     * @return The {@code client.home} system property as passed to the JVM or
+     *         set internally. If the property is not found the "../client" path
+     *         relative to {@link #getServerHome()} is returned.
+     */
+    public static String getClientHome() {
+        String clientHome = System.getProperty(SYS_PROP_CLIENT_HOME);
+        if (clientHome == null) {
+            clientHome = String.format("%s/../client", getServerHome());
+        }
+        return clientHome;
     }
 
     /**
@@ -733,6 +655,14 @@ public final class ConfigManager {
         }
         return theServerProps.getProperty(SERVER_PROP_CUPS_SERVER_PORT,
                 DEFAULT_CUPS_PORT);
+    }
+
+    /**
+     *
+     * @return
+     */
+    public static String getIppPrinterUuid() {
+        return theServerProps.getProperty(SERVER_PROP_IPP_PRINTER_UUID, "");
     }
 
     /**
@@ -811,14 +741,14 @@ public final class ConfigManager {
      * @return
      */
     public static String getServerBinHome() {
-
-        String home = getServerHome() + "/bin/linux-";
+        final StringBuilder home = new StringBuilder();
+        home.append(getServerHome()).append("/bin/linux-");
         if (isOsArch64Bit()) {
-            home += "x64";
+            home.append("x64");
         } else {
-            home += "i686";
+            home.append("i686");
         }
-        return home;
+        return home.toString();
     }
 
     /**
@@ -975,6 +905,40 @@ public final class ConfigManager {
      */
     public static void setServerProps(final Properties props) {
         theServerProps = props;
+    }
+
+    /**
+     * The SSL URL of the Admin WebApp.
+     */
+    private static URL theWebAppAdminSslUrl;
+
+    /**
+     * Sets the path of the Admin WebApp.
+     * <p>
+     * This method must be called after {@link #setServerProps(Properties)} .
+     * </p>
+     *
+     * @param path
+     *            The path of the Admin WebApp.
+     */
+    public static void setWebAppAdminPath(final String path) {
+        try {
+            theWebAppAdminSslUrl =
+                    new URL("https", InetUtils.getServerHostAddress(), Integer
+                            .valueOf(getServerSslPort()).intValue(), path);
+        } catch (NumberFormatException | MalformedURLException
+                | UnknownHostException e) {
+            throw new SpException(e.getMessage(), e);
+        }
+    }
+
+    /**
+     *
+     * @param url
+     *            The The SSL {@link URL} of the Admin WebApp.
+     */
+    public static URL getWebAppAdminSslUrl() {
+        return theWebAppAdminSslUrl;
     }
 
     /**
@@ -1144,14 +1108,14 @@ public final class ConfigManager {
         /*
          * Get the MBean server.
          */
-        MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
+        final MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
 
         /*
          * Register the MBean(s)
          */
-        CoreConfig mBean = new CoreConfig();
+        final CoreConfig mBean = new CoreConfig();
 
-        ObjectName name = new ObjectName("org.savapage:type=Core");
+        final ObjectName name = new ObjectName("org.savapage:type=Core");
 
         mbs.registerMBean(mBean, name);
     }
@@ -1269,6 +1233,7 @@ public final class ConfigManager {
         }
 
         //
+        ServiceContext.getServiceFactory().start();
         ProxyPrintJobStatusMonitor.init();
     }
 
@@ -1783,6 +1748,22 @@ public final class ConfigManager {
     }
 
     /**
+     *
+     * @param key
+     *            The key.
+     * @param dfault
+     *            The default value when property is not found.
+     * @return The value.
+     */
+    public long getConfigLong(final IConfigProp.Key key, final long dfault) {
+        final String value = getConfigValue(key);
+        if (StringUtils.isBlank(value)) {
+            return dfault;
+        }
+        return Long.parseLong(value);
+    }
+
+    /**
      * If the key is not present an empty {@link Set} is returned.
      *
      * @param key
@@ -1847,7 +1828,8 @@ public final class ConfigManager {
     /**
      *
      * @param key
-     * @return <code>null</code> when property is not found.
+     *            The key.
+     * @return the boolean value..
      */
     public boolean isConfigValue(final IConfigProp.Key key) {
         return myConfigProp.getBoolean(key);
@@ -1896,6 +1878,14 @@ public final class ConfigManager {
     public static boolean isSmartSchoolPrintActiveAndEnabled() {
         return isSmartSchoolPrintModuleActivated()
                 && isSmartSchoolPrintEnabled();
+    }
+
+    /**
+     *
+     * @return {@code true} is Eco Print is enabled
+     */
+    public static boolean isEcoPrintEnabled() {
+        return instance().isConfigValue(Key.ECO_PRINT_ENABLE);
     }
 
     /**
@@ -1968,6 +1958,8 @@ public final class ConfigManager {
 
         if (isServerRunMode) {
 
+            ServiceContext.getServiceFactory().shutdown();
+
             /*
              * Wait for current database access to finish.
              */
@@ -2022,40 +2014,8 @@ public final class ConfigManager {
         final Path path =
                 FileSystems.getDefault().getPath(getUserHomeDir(user));
         if (path.toFile().exists()) {
-            removeDir(path);
+            FileSystemHelper.removeDir(path);
         }
-    }
-
-    /**
-     * Removes a directory by recursively deleting files and sub directories.
-     *
-     * @param path
-     * @throws IOException
-     */
-    private static void removeDir(final Path path) throws IOException {
-
-        Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
-
-            @Override
-            public FileVisitResult visitFile(Path file,
-                    BasicFileAttributes attrs) throws IOException {
-                Files.delete(file);
-                return CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult
-                    postVisitDirectory(Path dir, IOException exc)
-                            throws IOException {
-
-                if (exc == null) {
-                    Files.delete(dir);
-                    return CONTINUE;
-                } else {
-                    throw exc;
-                }
-            }
-        });
     }
 
     /**
@@ -2071,36 +2031,11 @@ public final class ConfigManager {
         final MutableLong size = new MutableLong();
         File file = new File(getUserHomeDir(user));
         if (file.exists()) {
-            calcDirSize(FileSystems.getDefault()
-                    .getPath(file.getAbsolutePath()), size);
+            FileSystemHelper.calcDirSize(
+                    FileSystems.getDefault().getPath(file.getAbsolutePath()),
+                    size);
         }
         return size.longValue();
-    }
-
-    /**
-     *
-     * @param path
-     *            The directory path.
-     * @param size
-     *            The size in bytes.
-     * @throws IOException
-     *             When IO error occurs.
-     */
-    public static void calcDirSize(final Path path, final MutableLong size)
-            throws IOException {
-        Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
-            @Override
-            public FileVisitResult visitFile(Path file,
-                    BasicFileAttributes attrs) throws IOException {
-
-                if (attrs.isDirectory()) {
-                    calcDirSize(file, size); // recurse
-                } else {
-                    size.add(attrs.size());
-                }
-                return CONTINUE;
-            }
-        });
     }
 
     /**
@@ -2115,9 +2050,7 @@ public final class ConfigManager {
         final File dir = new File(dirName);
 
         if (dir.exists()) {
-
             removeAppTmpDir();
-
         }
 
         final FileSystem fs = FileSystems.getDefault();
@@ -2145,7 +2078,7 @@ public final class ConfigManager {
             FileSystem fs = FileSystems.getDefault();
             Path p = fs.getPath(dirName);
             try {
-                removeDir(p);
+                FileSystemHelper.removeDir(p);
             } catch (IOException e) {
                 throw new SpException(e.getMessage(), e);
             }
@@ -2246,7 +2179,7 @@ public final class ConfigManager {
     }
 
     /**
-     * Sets the Hibernate adn system properties for Derby.
+     * Sets the Hibernate and system properties for Derby.
      *
      * @param properties
      *            The properties.

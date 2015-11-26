@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -39,7 +39,8 @@ import org.savapage.core.services.helpers.ExternalSupplierInfo;
  * @author Datraverse B.V.
  *
  */
-public abstract class AbstractProxyPrintReq {
+public abstract class AbstractProxyPrintReq implements
+        ProxyPrintSheetsCalcParms {
 
     /**
      * Proxy Print Request Status.
@@ -92,7 +93,15 @@ public abstract class AbstractProxyPrintReq {
     private int numberOfCopies;
     private int numberOfPages;
     private boolean removeGraphics;
+
     private boolean ecoPrint;
+
+    private boolean ecoPrintShadow;
+
+    /**
+     * Collate pages.
+     */
+    private boolean collate;
 
     private Locale locale = Locale.getDefault();
 
@@ -171,14 +180,49 @@ public abstract class AbstractProxyPrintReq {
         this.removeGraphics = removeGraphics;
     }
 
+    /**
+     *
+     * @return {@code true} if Eco PDF is to be created.
+     */
     public boolean isEcoPrint() {
         return ecoPrint;
     }
 
+    /**
+     *
+     * @param ecoPrint
+     *            {@code true} if Eco PDF is to be created.
+     */
     public void setEcoPrint(boolean ecoPrint) {
         this.ecoPrint = ecoPrint;
     }
 
+    /**
+     *
+     * @return {@code true} if Eco PDF shadow is to be used.
+     */
+    public boolean isEcoPrintShadow() {
+        return ecoPrintShadow;
+    }
+
+    /**
+     *
+     * @param ecoPrintShadow
+     *            {@code true} if Eco PDF shadow is to be used.
+     */
+    public void setEcoPrintShadow(boolean ecoPrintShadow) {
+        this.ecoPrintShadow = ecoPrintShadow;
+    }
+
+    public boolean isCollate() {
+        return collate;
+    }
+
+    public void setCollate(boolean collate) {
+        this.collate = collate;
+    }
+
+    @Override
     public int getNumberOfCopies() {
         return numberOfCopies;
     }
@@ -187,6 +231,7 @@ public abstract class AbstractProxyPrintReq {
         this.numberOfCopies = numberOfCopies;
     }
 
+    @Override
     public int getNumberOfPages() {
         return numberOfPages;
     }
@@ -306,14 +351,19 @@ public abstract class AbstractProxyPrintReq {
         return isGrayscale(getOptionValues());
     }
 
+    /**
+     * @return {@code true} if <u>printer</u> is capable of duplex printing.
+     */
     public boolean hasDuplex() {
         return hasDuplex(getOptionValues());
     }
 
+    @Override
     public boolean isDuplex() {
         return isDuplex(getOptionValues());
     }
 
+    @Override
     public int getNup() {
         return getNup(getOptionValues());
     }
@@ -357,37 +407,24 @@ public abstract class AbstractProxyPrintReq {
                 mediaSource);
     }
 
-    /**
-     * Not supported yet: always returns false.
-     *
-     * @return {@code false}.
-     */
+    @Override
     public boolean isOddOrEvenSheets() {
         return isOddOrEvenSheets(getOptionValues());
     }
 
-    /**
-     * Not supported yet: always returns false.
-     *
-     * @return {@code false}.
-     */
+    @Override
     public boolean isCoverPageBefore() {
         return isCoverPageBefore(getOptionValues());
     }
 
-    /**
-     * Not supported yet: always returns false.
-     *
-     * @return {@code false}.
-     */
+    @Override
     public boolean isCoverPageAfter() {
         return isCoverPageAfter(getOptionValues());
     }
 
     /**
-     *
      * @param optionValues
-     * @return
+     * @return {@code true} if <u>printer</u> is capable of duplex printing.
      */
     public static boolean hasDuplex(Map<String, String> optionValues) {
         return optionValues.get(IppDictJobTemplateAttr.ATTR_SIDES) != null;
@@ -412,6 +449,14 @@ public abstract class AbstractProxyPrintReq {
     }
 
     /**
+     * Set to one-sided printing.
+     */
+    public void setSinglex() {
+        this.getOptionValues().put(IppDictJobTemplateAttr.ATTR_SIDES,
+                IppKeyword.SIDES_ONE_SIDED);
+    }
+
+    /**
     *
     */
     public void setDuplexLongEdge() {
@@ -428,7 +473,7 @@ public abstract class AbstractProxyPrintReq {
     /**
      *
      * @param optionValues
-     * @return
+     * @return {@code true} if <u>this job</u> is printed in duplex.
      */
     public static boolean isDuplex(Map<String, String> optionValues) {
         boolean duplex = false;
@@ -453,6 +498,11 @@ public abstract class AbstractProxyPrintReq {
     public void setGrayscale() {
         getOptionValues().put(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE,
                 IppKeyword.PRINT_COLOR_MODE_MONOCHROME);
+    }
+
+    public void setColor() {
+        getOptionValues().put(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE,
+                IppKeyword.PRINT_COLOR_MODE_COLOR);
     }
 
     public Boolean getFitToPage() {

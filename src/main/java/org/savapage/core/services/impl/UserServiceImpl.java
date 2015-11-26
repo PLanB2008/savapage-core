@@ -43,6 +43,7 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.UUID;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
@@ -140,6 +141,7 @@ public final class UserServiceImpl extends AbstractService implements
          *
          */
         final String pin = dto.getPin();
+        final String uuid = dto.getUuid();
         final String password = dto.getPassword();
         final String primaryEmail = dto.getEmail();
         final String cardNumber = dto.getCard();
@@ -356,7 +358,7 @@ public final class UserServiceImpl extends AbstractService implements
 
             if (dto.getKeepPin()) {
                 doUpdate =
-                        (this.findUserAttrValue(jpaUser, UserAttrEnum.PIN) == null);
+                        this.findUserAttrValue(jpaUser, UserAttrEnum.PIN) == null;
             } else {
                 doUpdate = true;
             }
@@ -371,7 +373,44 @@ public final class UserServiceImpl extends AbstractService implements
                      */
                     return error;
                 }
-                storeUserPin(jpaUser, pin);
+                this.encryptStoreUserAttr(jpaUser, UserAttrEnum.PIN, pin);
+                isUpdated = true;
+            }
+        }
+
+        /*
+         * UUID (keep/remove)
+         */
+        if (StringUtils.isBlank(uuid)) {
+
+            if (dto.getRemoveUuid()) {
+                if (this.removeUserAttr(jpaUser, UserAttrEnum.UUID) != null) {
+                    isUpdated = true;
+                }
+            }
+
+        } else {
+
+            boolean doUpdate;
+
+            if (dto.getKeepUuid()) {
+                doUpdate =
+                        this.findUserAttrValue(jpaUser, UserAttrEnum.UUID) == null;
+            } else {
+                doUpdate = true;
+            }
+
+            if (doUpdate) {
+
+                JsonRpcMethodError error = validateUserUuid(dto.getUuid());
+
+                if (error != null) {
+                    /*
+                     * INVARIANT: UUID format MUST be valid.
+                     */
+                    return error;
+                }
+                this.encryptStoreUserAttr(jpaUser, UserAttrEnum.UUID, uuid);
                 isUpdated = true;
             }
         }
@@ -491,10 +530,25 @@ public final class UserServiceImpl extends AbstractService implements
 
         String pin = "";
         if (encryptedPin != null) {
-            pin = CryptoUser.decryptUserPin(user.getId(), encryptedPin);
+            pin = CryptoUser.decryptUserAttr(user.getId(), encryptedPin);
         }
 
         dto.setPin(pin);
+
+        /*
+         * UUID.
+         */
+        final String encryptedIppInternetUuid =
+                this.findUserAttrValue(user, UserAttrEnum.UUID);
+
+        String ippInternetUuid = "";
+        if (encryptedIppInternetUuid != null) {
+            ippInternetUuid =
+                    CryptoUser.decryptUserAttr(user.getId(),
+                            encryptedIppInternetUuid);
+        }
+
+        dto.setUuid(ippInternetUuid);
 
         /*
          * As indication for all.
@@ -541,6 +595,19 @@ public final class UserServiceImpl extends AbstractService implements
 
         if (hasPIN) {
             JsonRpcMethodError error = validateUserPin(pin);
+            if (error != null) {
+                return error;
+            }
+        }
+
+        /*
+         * UUID
+         */
+        String uuid = userDto.getUuid();
+        final boolean hasUuid = StringUtils.isNotBlank(uuid);
+
+        if (hasUuid) {
+            JsonRpcMethodError error = validateUserUuid(uuid);
             if (error != null) {
                 return error;
             }
@@ -672,14 +739,24 @@ public final class UserServiceImpl extends AbstractService implements
 
         if (StringUtils.isNotBlank(cardNumber)) {
 
-            RfidNumberFormat.Format format =
-                    RfidNumberFormat.toFormat(userDto.getCardFormat());
+            final RfidNumberFormat rfidNumberFormat;
 
-            RfidNumberFormat.FirstByte firstByte =
-                    RfidNumberFormat.toFirstByte(userDto.getCardFirstByte());
+            if (StringUtils.isBlank(userDto.getCardFormat())
+                    || StringUtils.isBlank(userDto.getCardFirstByte())) {
 
-            RfidNumberFormat rfidNumberFormat =
-                    new RfidNumberFormat(format, firstByte);
+                rfidNumberFormat = new RfidNumberFormat();
+
+            } else {
+
+                final RfidNumberFormat.Format format =
+                        RfidNumberFormat.toFormat(userDto.getCardFormat());
+
+                final RfidNumberFormat.FirstByte firstByte =
+                        RfidNumberFormat
+                                .toFirstByte(userDto.getCardFirstByte());
+
+                rfidNumberFormat = new RfidNumberFormat(format, firstByte);
+            }
 
             if (!rfidNumberFormat.isNumberValid(cardNumber)) {
                 return createError("msg-card-number-invalid", cardNumber);
@@ -729,12 +806,18 @@ public final class UserServiceImpl extends AbstractService implements
 
             userDAO().create(jpaUser);
 
-            if (hasPIN) {
+            if (hasPIN || hasUuid) {
                 /*
                  * For a new User a create (persist()) is needed first, cause we
-                 * need the generated primary key to encrypt the PIN.
+                 * need the generated primary key to encrypt the PIN / UUID.
                  */
-                storeUserPin(jpaUser, pin);
+                if (hasPIN) {
+                    this.encryptStoreUserAttr(jpaUser, UserAttrEnum.PIN, pin);
+                }
+                if (hasUuid) {
+                    this.encryptStoreUserAttr(jpaUser, UserAttrEnum.UUID, uuid);
+                }
+
                 userDAO().update(jpaUser);
             }
 
@@ -744,6 +827,10 @@ public final class UserServiceImpl extends AbstractService implements
                 this.removeUserAttr(jpaUser, UserAttrEnum.PIN);
             }
 
+            if (!hasUuid) {
+                this.removeUserAttr(jpaUser, UserAttrEnum.UUID);
+            }
+
             userDAO().update(jpaUser);
 
             if (!jpaUser.getPerson()) {
@@ -751,9 +838,12 @@ public final class UserServiceImpl extends AbstractService implements
             }
 
             if (hasPIN) {
-                storeUserPin(jpaUser, pin);
+                this.encryptStoreUserAttr(jpaUser, UserAttrEnum.PIN, pin);
             }
 
+            if (hasUuid) {
+                this.encryptStoreUserAttr(jpaUser, UserAttrEnum.UUID, uuid);
+            }
         }
 
         /*
@@ -850,9 +940,27 @@ public final class UserServiceImpl extends AbstractService implements
     }
 
     /**
+     * Checks if User UUID is valid.
+     *
+     * @param uuid
+     *            The UUID.
+     * @return {@code null} if valid.
+     */
+    private JsonRpcMethodError validateUserUuid(final String uuid) {
+
+        try {
+            UUID.fromString(uuid);
+        } catch (Exception e) {
+            return createError("msg-user-uuid-invalid");
+        }
+        return null;
+    }
+
+    /**
      * Checks if User PIN is valid.
      *
      * @param pin
+     *            The PIN.
      * @return {@code null} if valid.
      */
     private JsonRpcMethodError validateUserPin(final String pin) {
@@ -921,8 +1029,9 @@ public final class UserServiceImpl extends AbstractService implements
             dto.setFullName(user.getFullName());
             dto.setAdmin(user.getAdmin());
             dto.setPerson(user.getPerson());
-            // dto.setCard(card);
-            // dto.setEmail(email);
+            dto.setCard(getPrimaryIdNumber(user));
+            dto.setEmail(getPrimaryEmailAddress(user));
+            dto.setId(getPrimaryIdNumber(user));
 
             items.add(dto);
         }
@@ -957,17 +1066,19 @@ public final class UserServiceImpl extends AbstractService implements
     }
 
     /**
-     * Encrypts and writes the User PIN to the database.
+     * Encrypts and writes the {@link UserAttr} value to the database.
      *
      * @param jpaUser
-     *            The User.
-     * @param plainPin
-     *            PIN in plain text.
+     *            The {@link User}.
+     * @param attrEnum
+     *            The {@link UserAttrEnum}.
+     * @param plainValue
+     *            The plain (unencrypted) value.
      */
-    private void storeUserPin(final User jpaUser, final String plainPin) {
-
-        this.setUserAttrValue(jpaUser, UserAttrEnum.PIN,
-                CryptoUser.encryptUserPin(jpaUser.getId(), plainPin));
+    private void encryptStoreUserAttr(final User jpaUser,
+            final UserAttrEnum attrEnum, final String plainValue) {
+        this.setUserAttrValue(jpaUser, attrEnum,
+                CryptoUser.encryptUserAttr(jpaUser.getId(), plainValue));
     }
 
     /**
@@ -1357,6 +1468,68 @@ public final class UserServiceImpl extends AbstractService implements
             }
         }
         return user;
+    }
+
+    /**
+     * Gets the {@link UserAttr} from {@link User#getAttributes()} list.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param attrEnum
+     *            The {@link UserAttrEnum} to search for.
+     * @return The {@link UserAttr} or {@code null} when not found.
+     */
+    private UserAttr getUserAttr(final User user, final UserAttrEnum attrEnum) {
+
+        if (user.getAttributes() != null) {
+            for (final UserAttr attr : user.getAttributes()) {
+                if (attr.getName().equals(attrEnum.getName())) {
+                    return attr;
+                }
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public String
+            getUserAttrValue(final User user, final UserAttrEnum attrEnum) {
+
+        if (user.getAttributes() != null) {
+            for (final UserAttr attr : user.getAttributes()) {
+                if (attr.getName().equals(attrEnum.getName())) {
+                    if (attrEnum == UserAttrEnum.UUID) {
+                        return CryptoUser.decryptUserAttr(user.getId(),
+                                attr.getValue());
+                    }
+                    return attr.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public User findUserByNumberUuid(final String number, final UUID uuid) {
+
+        final User user = this.findUserByNumber(number);
+
+        if (user != null && user.getAttributes() != null) {
+
+            final UserAttr attr = this.getUserAttr(user, UserAttrEnum.UUID);
+
+            if (attr != null) {
+
+                final String encryptedUuid =
+                        CryptoUser.encryptUserAttr(user.getId(),
+                                uuid.toString());
+
+                if (attr.getValue().equals(encryptedUuid)) {
+                    return user;
+                }
+            }
+        }
+        return null;
     }
 
     @Override
@@ -1883,6 +2056,34 @@ public final class UserServiceImpl extends AbstractService implements
         attr.setValue(value);
 
         list.add(attr);
+    }
+
+    @Override
+    public UUID lazyAddUserAttrUuid(final User user) {
+
+        final List<UserAttr> list = user.getAttributes();
+
+        if (list != null) {
+
+            final UserAttr attr = this.getUserAttr(user, UserAttrEnum.UUID);
+
+            if (attr != null) {
+                final String decryptedUuid =
+                        CryptoUser.decryptUserAttr(user.getId(),
+                                attr.getValue());
+                return UUID.fromString(decryptedUuid);
+            }
+        }
+
+        final UUID uuid = UUID.randomUUID();
+
+        final String encryptedUuid =
+                CryptoUser.encryptUserAttr(user.getId(), uuid.toString());
+
+        this.addUserAttr(user, UserAttrEnum.UUID, encryptedUuid);
+        this.setUserAttrValue(user, UserAttrEnum.UUID, encryptedUuid);
+
+        return uuid;
     }
 
     @Override

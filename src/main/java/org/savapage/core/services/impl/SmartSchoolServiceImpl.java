@@ -65,13 +65,14 @@ import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.helpers.ReservedIppQueueEnum;
 import org.savapage.core.jpa.Account;
+import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.IppQueue;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
-import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.print.smartschool.SmartSchoolException;
 import org.savapage.core.print.smartschool.SmartSchoolLogger;
 import org.savapage.core.print.smartschool.SmartSchoolPrintStatusEnum;
+import org.savapage.core.print.smartschool.SmartSchoolTooManyRequestsException;
 import org.savapage.core.print.smartschool.xml.Document;
 import org.savapage.core.print.smartschool.xml.Jobticket;
 import org.savapage.core.services.ServiceContext;
@@ -101,9 +102,15 @@ public final class SmartSchoolServiceImpl extends AbstractService implements
             .getLogger(SmartSchoolServiceImpl.class);
 
     /**
+     * The user has sent too many requests in a given amount of time. Intended
+     * for use with rate limiting schemes (RFC 6585).
+     */
+    private final static String HTTP_STATUS_TOO_MANY_REQUESTS = "429";
+
+    /**
      * The name of the parent {@link Account} for all child "klas" accounts.
      */
-    private static final String SHARED_PARENT_ACCOUNT_NAME = "SmartSchool";
+    private static final String SHARED_PARENT_ACCOUNT_NAME = "Smartschool";
 
     /**
      * The name of the child {@link Account} for all SmartScholl Jobs.
@@ -136,7 +143,11 @@ public final class SmartSchoolServiceImpl extends AbstractService implements
                             cm.getConfigValue(
                                     Key.SMARTSCHOOL_1_SOAP_PRINT_ENDPOINT_PASSWORD)
                                     .toCharArray(),
-                            cm.getConfigValue(Key.SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER));
+                            cm.getConfigValue(Key.SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER),
+                            cm.getConfigValue(Key.SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_DUPLEX),
+                            cm.getConfigValue(Key.SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE),
+                            cm.getConfigValue(Key.SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE_DUPLEX),
+                            cm.isConfigValue(Key.SMARTSCHOOL_1_SOAP_PRINT_CHARGE_TO_STUDENTS));
 
             connectionMap.put(connection.getAccountName(), connection);
         }
@@ -149,7 +160,11 @@ public final class SmartSchoolServiceImpl extends AbstractService implements
                             cm.getConfigValue(
                                     Key.SMARTSCHOOL_2_SOAP_PRINT_ENDPOINT_PASSWORD)
                                     .toCharArray(),
-                            cm.getConfigValue(Key.SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER));
+                            cm.getConfigValue(Key.SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER),
+                            cm.getConfigValue(Key.SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_DUPLEX),
+                            cm.getConfigValue(Key.SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE),
+                            cm.getConfigValue(Key.SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE_DUPLEX),
+                            cm.isConfigValue(Key.SMARTSCHOOL_2_SOAP_PRINT_CHARGE_TO_STUDENTS));
             connectionMap.put(connection.getAccountName(), connection);
         }
 
@@ -158,11 +173,27 @@ public final class SmartSchoolServiceImpl extends AbstractService implements
 
     @Override
     public Jobticket getJobticket(final SmartSchoolConnection connection)
-            throws SmartSchoolException, SOAPException {
+            throws SmartSchoolException, SmartSchoolTooManyRequestsException,
+            SOAPException {
 
-        final SOAPElement returnElement =
-                sendMessage(connection,
-                        createPrintJobsRequest(connection.getPassword()));
+        final SOAPElement returnElement;
+
+        try {
+            returnElement =
+                    sendMessage(connection,
+                            createPrintJobsRequest(connection.getPassword()));
+        } catch (SOAPException e) {
+            /*
+             * This is a weak solution, but there is no other way to find out
+             * the HTTP status. Is this a flaw in the
+             * javax.xml.soap.SOAPConnection class or the Smartschool SOAP
+             * interface design?
+             */
+            if (e.getMessage().contains(HTTP_STATUS_TOO_MANY_REQUESTS)) {
+                throw new SmartSchoolTooManyRequestsException(e);
+            }
+            throw e;
+        }
 
         final Jobticket jobTicket;
 
@@ -593,9 +624,19 @@ public final class SmartSchoolServiceImpl extends AbstractService implements
             final SOAPMessage message) throws SmartSchoolException,
             SOAPException {
 
-        final SOAPMessage response =
-                connection.getConnection().call(message,
-                        connection.getEndpointUrl());
+        final SOAPMessage response;
+
+        try {
+            response =
+                    connection.getConnection().call(message,
+                            connection.getEndpointUrl());
+
+        } catch (SOAPException e) {
+            if (SmartSchoolLogger.isEnabled()) {
+                SmartSchoolLogger.logError(message, e.getMessage());
+            }
+            throw e;
+        }
 
         final SOAPBody responseBody = response.getSOAPBody();
 
@@ -734,24 +775,28 @@ public final class SmartSchoolServiceImpl extends AbstractService implements
      *            The {@link Account}.
      * @param copies
      *            The number of copies to print.
+     * @param extDetails
+     *            Free format details from external source.
      * @return The {@link AccountTrxInfo}.
      */
     private static AccountTrxInfo createAccountTrxInfo(final Account account,
-            final Integer copies) {
+            final Integer copies, final String extDetails) {
 
         final AccountTrxInfo accountTrxInfo = new AccountTrxInfo();
 
         accountTrxInfo.setWeight(copies);
         accountTrxInfo.setAccount(account);
+        accountTrxInfo.setExtDetails(extDetails);
 
         return accountTrxInfo;
     }
 
     @Override
     public AccountTrxInfoSet createPrintInAccountTrxInfoSet(
-            SmartSchoolConnection connection, final Account parent,
+            final SmartSchoolConnection connection, final Account parent,
             final Map<String, Integer> klasCopies,
-            final Map<String, Integer> userCopies) {
+            final Map<String, Integer> userCopies,
+            final Map<String, String> userKlas) {
 
         final AccountTrxInfoSet infoSet = new AccountTrxInfoSet();
 
@@ -772,7 +817,7 @@ public final class SmartSchoolServiceImpl extends AbstractService implements
                             accountTemplate);
 
             accountTrxInfoList.add(createAccountTrxInfo(account,
-                    entry.getValue()));
+                    entry.getValue(), null));
         }
 
         /*
@@ -780,14 +825,16 @@ public final class SmartSchoolServiceImpl extends AbstractService implements
          */
         for (final Entry<String, Integer> entry : userCopies.entrySet()) {
 
-            final User user = userDAO().findActiveUserByUserId(entry.getKey());
+            final String userId = entry.getKey();
+            final User user = userDAO().findActiveUserByUserId(userId);
 
             final UserAccount userAccount =
                     accountingService().lazyGetUserAccount(user,
                             AccountTypeEnum.USER);
 
             accountTrxInfoList.add(createAccountTrxInfo(
-                    userAccount.getAccount(), entry.getValue()));
+                    userAccount.getAccount(), entry.getValue(),
+                    userKlas.get(userId)));
         }
 
         return infoSet;

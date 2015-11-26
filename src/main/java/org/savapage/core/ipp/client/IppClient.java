@@ -19,7 +19,7 @@
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
-package org.savapage.core.print.proxy;
+package org.savapage.core.ipp.client;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -62,6 +62,7 @@ import org.savapage.core.circuitbreaker.CircuitTrippingException;
 import org.savapage.core.config.CircuitBreakerEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.ipp.IppResponseHeader;
 import org.savapage.core.ipp.IppSyntaxException;
 import org.savapage.core.ipp.attribute.IppAttrGroup;
 import org.savapage.core.ipp.encoding.IppContentParser;
@@ -255,7 +256,8 @@ public final class IppClient {
      *
      * @return The {@link RequestConfig}.
      */
-    private static RequestConfig buildRequestConfig(boolean isLocalIppServer) {
+    private static RequestConfig buildRequestConfig(
+            final boolean isLocalIppServer) {
 
         final ConfigManager cm = ConfigManager.instance();
 
@@ -296,16 +298,23 @@ public final class IppClient {
      * </p>
      *
      * @param urlServer
+     *            The URL of the server.
      * @param isLocalUrlServer
      *            {@code true} when urlServer is <i>local</i> CUPS,
      *            {@code false} when urlServer is <i>remote</i> CUPS.
      * @param operationId
+     *            The {@link IppOperationId}.
      * @param request
+     *            The IPP request.
      * @param file
+     *            The {@link File} to send (can be {@code null}.
      * @param response
+     *            The IPP response.
      * @return The {@link IppStatusCode}.
      * @throws InterruptedException
+     *             When interrupted.
      * @throws CircuitBreakerException
+     *             When IPP connection circuit breaks.
      */
     private IppStatusCode send(final URL urlServer,
             final boolean isLocalUrlServer, final IppOperationId operationId,
@@ -562,31 +571,41 @@ public final class IppClient {
     /**
      * Sends an IPP request to <i>local</i> CUPS.
      *
-     * @param url
+     * @param urlServer
+     *            The URL of the server.
      * @param operationId
+     *            The {@link IppOperationId}.
      * @param request
-     * @return
+     *            The IPP request.
+     * @return The IPP response.
      * @throws IppConnectException
+     *             When connection errors.
      */
-    public List<IppAttrGroup> send(URL urlServer, IppOperationId operationId,
-            List<IppAttrGroup> request) throws IppConnectException {
+    public List<IppAttrGroup> send(final URL urlServer,
+            final IppOperationId operationId, final List<IppAttrGroup> request)
+            throws IppConnectException {
         return this.send(urlServer, true, operationId, request);
     }
 
     /**
+     * Sends an IPP request to CUPS.
      *
-     * @param url
+     * @param urlServer
+     *            The URL of the server.
      * @param isLocalUrlServer
      *            {@code true} when urlServer is <i>local</i> CUPS,
      *            {@code false} when urlServer is <i>remote</i> CUPS.
      * @param operationId
+     *            The {@link IppOperationId}.
      * @param request
-     * @return
+     *            The IPP request.
+     * @return The IPP response.
      * @throws IppConnectException
+     *             When connection errors.
      */
-    public List<IppAttrGroup> send(URL urlServer, boolean isLocalUrlServer,
-            IppOperationId operationId, List<IppAttrGroup> request)
-            throws IppConnectException {
+    public List<IppAttrGroup> send(final URL urlServer,
+            final boolean isLocalUrlServer, final IppOperationId operationId,
+            final List<IppAttrGroup> request) throws IppConnectException {
         final File file = null;
         return send(urlServer, isLocalUrlServer, operationId, request, file);
     }
@@ -595,31 +614,44 @@ public final class IppClient {
      * Sends an IPP request with file to <i>local</i> CUPS.
      *
      * @param urlServer
+     *            The URL of the server.
      * @param operationId
+     *            The {@link IppOperationId}.
      * @param request
+     *            The IPP request.
      * @param file
-     * @return
+     *            The {@link File} to send.
+     * @return The IPP response.
      * @throws IppConnectException
+     *             When connection errors.
      */
-    public List<IppAttrGroup> send(URL urlServer, IppOperationId operationId,
-            List<IppAttrGroup> request, File file) throws IppConnectException {
+    public List<IppAttrGroup> send(final URL urlServer,
+            final IppOperationId operationId, final List<IppAttrGroup> request,
+            final File file) throws IppConnectException {
         return this.send(urlServer, true, operationId, request, file);
     }
 
     /**
+     * Sends an IPP request with file to CUPS.
      *
      * @param urlServer
+     *            The URL of the server.
      * @param isLocalUrlServer
      *            {@code true} when urlServer is <i>local</i> CUPS,
      *            {@code false} when urlServer is <i>remote</i> CUPS.
      * @param operationId
+     *            The {@link IppOperationId}.
      * @param request
+     *            The IPP request.
      * @param file
-     * @return
+     *            The {@link File} to send.
+     * @return The IPP response.
      * @throws IppConnectException
+     *             When connection errors.
      */
-    public List<IppAttrGroup> send(URL urlServer, boolean isLocalUrlServer,
-            IppOperationId operationId, List<IppAttrGroup> request, File file)
+    private List<IppAttrGroup> send(final URL urlServer,
+            final boolean isLocalUrlServer, final IppOperationId operationId,
+            final List<IppAttrGroup> request, final File file)
             throws IppConnectException {
 
         final List<IppAttrGroup> response = new ArrayList<>();
@@ -654,9 +686,9 @@ public final class IppClient {
      * @return
      * @throws IppConnectException
      */
-    public IppStatusCode send(URL urlServer, IppOperationId operationId,
-            List<IppAttrGroup> request, List<IppAttrGroup> response)
-            throws IppConnectException {
+    public IppStatusCode send(final URL urlServer,
+            final IppOperationId operationId, final List<IppAttrGroup> request,
+            final List<IppAttrGroup> response) throws IppConnectException {
         return send(urlServer, true, operationId, request, response);
     }
 
@@ -672,9 +704,9 @@ public final class IppClient {
      * @return
      * @throws IppConnectException
      */
-    public IppStatusCode send(URL urlServer, boolean isLocalUrlServer,
-            IppOperationId operationId, List<IppAttrGroup> request,
-            List<IppAttrGroup> response) throws IppConnectException {
+    private IppStatusCode send(final URL urlServer, boolean isLocalUrlServer,
+            final IppOperationId operationId, final List<IppAttrGroup> request,
+            final List<IppAttrGroup> response) throws IppConnectException {
 
         try {
             return send(urlServer, isLocalUrlServer, operationId, request,
@@ -685,12 +717,16 @@ public final class IppClient {
     }
 
     /**
+     * Writes IPP data on {@link OutputStream}.
      *
      * @param ostr
+     *            The {@link OutputStream}.
      * @throws IOException
+     *             When IO erors occur.
      */
-    private void write(final OutputStream ostr, IppOperationId operationId,
-            List<IppAttrGroup> attrGroups) throws IOException {
+    private void write(final OutputStream ostr,
+            final IppOperationId operationId,
+            final List<IppAttrGroup> attrGroups) throws IOException {
 
         // -----------------------------------------------
         // | version-number (2 bytes - required)

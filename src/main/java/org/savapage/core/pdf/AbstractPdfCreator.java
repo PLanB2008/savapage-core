@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -33,6 +33,8 @@ import org.savapage.core.PostScriptDrmException;
 import org.savapage.core.SpException;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.doc.DocContent;
+import org.savapage.core.imaging.EcoPrintPdfTask;
+import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.inbox.InboxInfoDto.InboxJob;
 import org.savapage.core.inbox.InboxInfoDto.InboxJobRange;
@@ -43,6 +45,7 @@ import org.savapage.core.jpa.DocOut;
 import org.savapage.core.jpa.PdfOut;
 import org.savapage.core.jpa.User;
 import org.savapage.core.json.PdfProperties;
+import org.savapage.core.print.proxy.ProxyPrintSheetsCalcParms;
 import org.savapage.core.services.InboxService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.UserService;
@@ -57,19 +60,19 @@ import org.savapage.core.services.impl.InboxServiceImpl;
 public abstract class AbstractPdfCreator {
 
     /**
-    *
-    */
+     * .
+     */
     private static final InboxService INBOX_SERVICE = ServiceContext
             .getServiceFactory().getInboxService();
     /**
-    *
-    */
+     * .
+     */
     private static final UserService USER_SERVICE = ServiceContext
             .getServiceFactory().getUserService();
 
     /**
-    *
-    */
+     * .
+     */
     protected String user;
     protected String userhome;
     protected String tmpdir;
@@ -77,9 +80,36 @@ public abstract class AbstractPdfCreator {
 
     private boolean isForPrinting = false;
 
-    private boolean isEcoPdf = false;
+    /**
+     * For future use, for now: do NOT encrypt since
+     * {@link PdfPrintCollector#collect(ProxyPrintSheetsCalcParms, boolean, File, File)}
+     * will fail.
+     */
+    private final boolean encryptForPrinting = false;
 
+    /**
+     * {@code true} when PDF is converted on the fly to EcoImages.
+     */
+    private boolean convertToEcoPdf = false;
+
+    /**
+     * {@code true} when graphics are removed from PDF.
+     */
+    private boolean removeGraphics = false;
+
+    /**
+     * {@code true} when PDF EcoPrint shadow files are used.
+     */
+    private boolean useEcoPdfShadow = false;
+
+    /**
+     *
+     */
     protected String myPdfFileLetterhead = null;
+
+    /**
+     *
+     */
     protected LetterheadInfo.LetterheadJob myLetterheadJob = null;
 
     /**
@@ -92,10 +122,19 @@ public abstract class AbstractPdfCreator {
 
     /**
      *
-     * @return {@code true} when PDF is created with EcoImages.
+     * @param convert
+     *            {@code true} when PDF is converted on the fly to EcoImages.
      */
-    protected boolean isEcoPdf() {
-        return this.isEcoPdf;
+    protected final void setConvertToEcoPdf(final boolean convert) {
+        this.convertToEcoPdf = convert;
+    }
+
+    /**
+     *
+     * @return {@code true} when PDF is converted on the fly to EcoImages.
+     */
+    protected final boolean isConvertToEcoPdf() {
+        return this.convertToEcoPdf;
     }
 
     /**
@@ -111,11 +150,11 @@ public abstract class AbstractPdfCreator {
     }
 
     public static SpPdfPageProps pageProps(final String filePathPdf)
-            throws PdfSecurityException {
+            throws PdfSecurityException, PdfValidityException {
         return create().getPageProps(filePathPdf);
     }
 
-    public abstract int getNumberOfPagesInPdfFile(final String filePathPdf);
+    protected abstract int getNumberOfPagesInPdfFile(final String filePathPdf);
 
     /**
      * Creates the {@link SpPdfPageProps} of an PDF document.
@@ -125,9 +164,11 @@ public abstract class AbstractPdfCreator {
      * @return The {@link SpPdfPageProps}.
      * @throws PdfSecurityException
      *             When encrypted or password protected PDF document.
+     * @throws PdfValidityException
+     *             When the document isn't a valid PDF document.
      */
-    public abstract SpPdfPageProps getPageProps(final String filePathPdf)
-            throws PdfSecurityException;
+    protected abstract SpPdfPageProps getPageProps(final String filePathPdf)
+            throws PdfSecurityException, PdfValidityException;
 
     /**
      * Creates an ordinal list of {@link SpPdfPageProps} of an PDF document.
@@ -147,6 +188,11 @@ public abstract class AbstractPdfCreator {
      */
     protected abstract void onInit();
 
+    /**
+     * .
+     *
+     * @throws Exception
+     */
     protected abstract void onExit() throws Exception;
 
     /**
@@ -217,6 +263,14 @@ public abstract class AbstractPdfCreator {
 
     /**
      *
+     * @param pdfFile
+     *            The generated PDF file.
+     * @throws Exception
+     */
+    protected abstract void onPdfGenerated(File pdfFile) throws Exception;
+
+    /**
+     *
      * @param now
      * @param propPdf
      */
@@ -265,27 +319,14 @@ public abstract class AbstractPdfCreator {
      * @throws PostScriptDrmException
      *             When the generated PDF is for export (i.e. not for printing)
      *             and one of the SafePages is DRM-restricted.
+     * @throws EcoPrintPdfTaskPendingException
+     *             When {@link EcoPrintPdfTask} objects needed for this PDF are
+     *             pending.
      */
     public File generate(final PdfCreateRequest createReq,
             final Map<String, Integer> uuidPageCount, final DocLog docLog)
-            throws LetterheadNotFoundException, PostScriptDrmException {
-
-        // Prepare document logging.
-        final DocOut docOut;
-
-        if (docLog == null) {
-            docOut = null;
-        } else {
-            docOut = new DocOut();
-            docLog.setDocOut(docOut);
-            docOut.setDocLog(docLog);
-        }
-
-        //
-        this.pdfFile = createReq.getPdfFile();
-        this.isForPrinting = createReq.isForPrinting();
-        this.isEcoPdf = createReq.isEcoPdf();
-
+            throws LetterheadNotFoundException, PostScriptDrmException,
+            EcoPrintPdfTaskPendingException {
         //
         this.user = createReq.getUserObj().getUserId();
         this.userhome = ConfigManager.getUserHomeDir(this.user);
@@ -294,8 +335,19 @@ public abstract class AbstractPdfCreator {
         //
         final InboxInfoDto inboxInfo = createReq.getInboxInfo();
 
+        this.useEcoPdfShadow = createReq.isEcoPdfShadow();
+
+        this.convertToEcoPdf =
+                !createReq.isEcoPdfShadow() && createReq.isEcoPdf();
+
+        this.pdfFile = createReq.getPdfFile();
+        this.isForPrinting = createReq.isForPrinting();
+
+        this.removeGraphics = createReq.isRemoveGraphics();
+
         /*
-         * If PDF is meant for export, check if DRM-restricted.
+         * INVARIANT: if PDF is meant for export, DRM-restricted content is not
+         * allowed.
          */
         if (!createReq.isForPrinting()) {
 
@@ -309,7 +361,7 @@ public abstract class AbstractPdfCreator {
         }
 
         /*
-         *
+         * INVARIANT: if letterhead is selected the PDF must be present.
          */
         this.myPdfFileLetterhead = null;
 
@@ -340,6 +392,19 @@ public abstract class AbstractPdfCreator {
                     throw LetterheadNotFoundException.create(lh.isPublic(),
                             lh.getId());
                 }
+            }
+        }
+
+        /*
+         * INVARIANT: if Eco Print shadow PDFs are used they must be present.
+         */
+        if (this.useEcoPdfShadow) {
+            final int nTasksWaiting =
+                    INBOX_SERVICE.lazyStartEcoPrintPdfTasks(this.userhome,
+                            inboxInfo);
+            if (nTasksWaiting > 0) {
+                throw new EcoPrintPdfTaskPendingException(String.format(
+                        "%d EcoPrint conversion(s) waiting", nTasksWaiting));
             }
         }
 
@@ -412,6 +477,11 @@ public abstract class AbstractPdfCreator {
                     throw new SpException("unknown input job type");
                 }
 
+                if (this.useEcoPdfShadow) {
+                    jobPfdName =
+                            INBOX_SERVICE.createEcoPdfShadowPath(jobPfdName);
+                }
+
                 onInitJob(jobPfdName, job.getRotate());
 
                 final List<RangeAtom> ranges =
@@ -431,8 +501,7 @@ public abstract class AbstractPdfCreator {
 
                     int nPageTo = rangeAtom.pageEnd;
 
-                    onProcessJobPages(nPageFrom, nPageTo,
-                            createReq.isRemoveGraphics());
+                    onProcessJobPages(nPageFrom, nPageTo, this.removeGraphics);
 
                     if (uuidPageCount != null) {
                         totUuidPages += nPageTo - nPageFrom + 1;
@@ -450,6 +519,23 @@ public abstract class AbstractPdfCreator {
             onExitJobs();
 
             onInitStamp();
+
+            // --------------------------------------------------------
+            // Prepare document logging.
+            // --------------------------------------------------------
+            final DocOut docOut;
+
+            if (docLog == null) {
+                docOut = null;
+            } else {
+                docOut = new DocOut();
+                docLog.setDocOut(docOut);
+                docOut.setDocLog(docLog);
+
+                docOut.setEcoPrint(Boolean.valueOf(this.useEcoPdfShadow
+                        || this.convertToEcoPdf));
+                docOut.setRemoveGraphics(Boolean.valueOf(this.removeGraphics));
+            }
 
             // --------------------------------------------------------
             // Document Information
@@ -550,7 +636,7 @@ public abstract class AbstractPdfCreator {
                     }
                 }
 
-            } else if (createReq.isForPrinting()) {
+            } else if (createReq.isForPrinting() && encryptForPrinting) {
 
                 onStampEncryptionForPrinting();
 
@@ -607,6 +693,14 @@ public abstract class AbstractPdfCreator {
             onProcessFinally();
         }
 
-        return new File(pdfFile);
+        final File generatedPdf = new File(pdfFile);
+
+        try {
+            onPdfGenerated(generatedPdf);
+        } catch (Exception e) {
+            throw new SpException(e.getMessage(), e);
+        }
+
+        return generatedPdf;
     }
 }

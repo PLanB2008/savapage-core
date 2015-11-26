@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -31,6 +31,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -61,19 +62,23 @@ import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.PrinterDao;
 import org.savapage.core.dao.helpers.DeviceTypeEnum;
-import org.savapage.core.dao.helpers.DocLogProtocolEnum;
 import org.savapage.core.dao.helpers.PrintModeEnum;
 import org.savapage.core.dao.helpers.ProxyPrinterName;
 import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.dto.IppMediaSourceMappingDto;
 import org.savapage.core.dto.PrinterSnmpDto;
+import org.savapage.core.imaging.EcoPrintPdfTask;
+import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.inbox.InboxInfoDto.InboxJob;
 import org.savapage.core.inbox.InboxInfoDto.InboxJobRange;
 import org.savapage.core.inbox.OutputProducer;
+import org.savapage.core.ipp.IppJobStateEnum;
 import org.savapage.core.ipp.IppSyntaxException;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
+import org.savapage.core.ipp.client.IppConnectException;
+import org.savapage.core.ipp.client.IppNotificationRecipient;
 import org.savapage.core.job.SpJobScheduler;
 import org.savapage.core.job.SpJobType;
 import org.savapage.core.jpa.Account;
@@ -100,8 +105,6 @@ import org.savapage.core.json.rpc.impl.ResultPrinterSnmp;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJob;
 import org.savapage.core.pdf.PdfCreateRequest;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq;
-import org.savapage.core.print.proxy.IppConnectException;
-import org.savapage.core.print.proxy.IppNotificationRecipient;
 import org.savapage.core.print.proxy.JsonProxyPrintJob;
 import org.savapage.core.print.proxy.JsonProxyPrinter;
 import org.savapage.core.print.proxy.JsonProxyPrinterOpt;
@@ -111,6 +114,7 @@ import org.savapage.core.print.proxy.ProxyPrintDocReq;
 import org.savapage.core.print.proxy.ProxyPrintException;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
+import org.savapage.core.services.PrinterService;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
@@ -119,6 +123,7 @@ import org.savapage.core.services.helpers.PrinterAttrLookup;
 import org.savapage.core.services.helpers.PrinterSnmpReader;
 import org.savapage.core.services.helpers.ProxyPrintCostParms;
 import org.savapage.core.services.helpers.ProxyPrintInboxReqChunker;
+import org.savapage.core.services.helpers.SyncPrintJobsResult;
 import org.savapage.core.snmp.SnmpClientSession;
 import org.savapage.core.snmp.SnmpConnectException;
 import org.savapage.core.util.MediaUtils;
@@ -139,6 +144,12 @@ public abstract class AbstractProxyPrintService extends AbstractService
      */
     private static final Logger LOGGER = LoggerFactory
             .getLogger(AbstractProxyPrintService.class);
+
+    /**
+     * .
+     */
+    private static final PrinterService PRINTER_SERVICE = ServiceContext
+            .getServiceFactory().getPrinterService();
 
     /**
      *
@@ -928,32 +939,37 @@ public abstract class AbstractProxyPrintService extends AbstractService
     }
 
     @Override
-    public final int[] syncPrintJobs() throws IppConnectException {
-
-        final int[] stats = new int[3];
-
-        for (int i = 0; i < stats.length; i++) {
-            stats[i] = 0;
-        }
+    public final SyncPrintJobsResult syncPrintJobs() throws IppConnectException {
 
         /*
-         * constants
+         * Constants
          */
         final int nChunkMax = 50;
 
         /*
          * Init batch.
          */
-        final List<PrintOut> list = printOutDAO().findActiveCupsJobs();
+        final List<PrintOut> printOutList = printOutDAO().findActiveCupsJobs();
 
+        //
         final Map<Integer, PrintOut> lookupPrintOut = new HashMap<>();
-
-        for (final PrintOut printOut : list) {
+        for (final PrintOut printOut : printOutList) {
             lookupPrintOut.put(printOut.getCupsJobId(), printOut);
         }
 
-        stats[0] = list.size();
+        // The number of active PrintOut jobs.
+        final int jobsActive = printOutList.size();
 
+        // The number of PrintOut jobs that were updated with a new CUPS state.
+        int jobsUpdated = 0;
+
+        // The number of jobs that were not found in CUPS.
+        int jobsNotFound = 0;
+
+        //
+        final Set<Integer> cupsJobsFound = new HashSet<>();
+
+        //
         int i = 0;
         int iChunk = 0;
         PrintOut printOut = null;
@@ -962,15 +978,15 @@ public abstract class AbstractProxyPrintService extends AbstractService
         List<Integer> jobIds = null;
 
         /*
-         * initial read
+         * Initial read.
          */
-        if (i < list.size()) {
-            printOut = list.get(i);
+        if (i < printOutList.size()) {
+            printOut = printOutList.get(i);
             printer = printOut.getPrinter().getPrinterName();
         }
 
         /*
-         * processing loop
+         * Processing loop.
          */
         while (printOut != null) {
 
@@ -983,14 +999,14 @@ public abstract class AbstractProxyPrintService extends AbstractService
             jobIds.add(printOut.getCupsJobId());
 
             /*
-             * read next
+             * Read next.
              */
             printOut = null;
             i++;
             iChunk++;
 
-            if (i < list.size()) {
-                printOut = list.get(i);
+            if (i < printOutList.size()) {
+                printOut = printOutList.get(i);
                 printer = printOut.getPrinter().getPrinterName();
             }
 
@@ -1003,19 +1019,19 @@ public abstract class AbstractProxyPrintService extends AbstractService
                 final List<JsonProxyPrintJob> cupsJobs =
                         retrievePrintJobs(printerPrv, jobIds);
 
-                stats[2] += (iChunk - cupsJobs.size());
+                jobsNotFound += (iChunk - cupsJobs.size());
 
-                /**
-                 *
-                 */
                 for (final JsonProxyPrintJob cupsJob : cupsJobs) {
+
+                    final Integer cupsJobId = cupsJob.getJobId();
+
+                    cupsJobsFound.add(cupsJobId);
 
                     /*
                      * Since the list of retrieved jobs does NOT contain jobs
                      * that were NOT found, we use the lookup map.
                      */
-                    final PrintOut printOutWlk =
-                            lookupPrintOut.get(cupsJob.getJobId());
+                    final PrintOut printOutWlk = lookupPrintOut.get(cupsJobId);
 
                     /*
                      * It turns out that when using IPP (HTTP) there might be a
@@ -1029,8 +1045,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
                         if (LOGGER.isTraceEnabled()) {
                             LOGGER.trace("MISMATCH printer [" + printerPrv
-                                    + "] job [" + cupsJob.getJobId()
-                                    + "] state [" + cupsJob.getJobState()
+                                    + "] job [" + cupsJobId + "] state ["
+                                    + cupsJob.getJobState()
                                     + "] created in CUPS ["
                                     + cupsJob.getCreationTime() + "] in log ["
                                     + printOutWlk.getCupsCreationTime() + "]");
@@ -1050,26 +1066,50 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
                         if (LOGGER.isTraceEnabled()) {
                             LOGGER.trace("printer [" + printerPrv + "] job ["
-                                    + cupsJob.getJobId() + "] state ["
+                                    + cupsJobId + "] state ["
                                     + cupsJob.getJobState() + "] completed ["
                                     + cupsJob.getCompletedTime() + "]");
                         }
-                        stats[1]++;
+                        jobsUpdated++;
                     }
 
                 }
 
                 iChunk = 0;
-
             }
         }
 
-        if (LOGGER.isDebugEnabled()) {
-            LOGGER.debug("Syncing [" + stats[0] + "] active PrintOut jobs "
-                    + "with CUPS : updated [" + stats[1] + "], not found ["
-                    + stats[2] + "]");
+        /*
+         * Handle the jobs not found.
+         */
+        if (jobsNotFound > 0) {
+
+            final Iterator<PrintOut> iter = printOutList.iterator();
+
+            while (iter.hasNext()) {
+
+                final PrintOut printOutWlk = iter.next();
+
+                if (cupsJobsFound.contains(printOutWlk.getCupsJobId())) {
+                    continue;
+                }
+                // Set completed time to null, so we know we interpreted the
+                // status as completed.
+                printOutWlk.setCupsCompletedTime(null);
+                printOutWlk.setCupsJobState(Integer
+                        .valueOf(IppJobStateEnum.IPP_JOB_COMPLETED.asInt()));
+                printOutDAO().update(printOutWlk);
+            }
         }
-        return stats;
+
+        //
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("Syncing [" + jobsActive + "] active PrintOut jobs "
+                    + "with CUPS : updated [" + jobsUpdated + "], not found ["
+                    + jobsNotFound + "]");
+        }
+
+        return new SyncPrintJobsResult(jobsActive, jobsUpdated, jobsNotFound);
     }
 
     /**
@@ -1596,7 +1636,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
             printReq.setNumberOfCopies(job.getCopies());
             printReq.setPrinterName(job.getPrinterName());
             printReq.setRemoveGraphics(job.isRemoveGraphics());
-            printReq.setEcoPrint(job.isEcoPrint());
+            printReq.setEcoPrintShadow(job.isEcoPrint());
+            printReq.setCollate(job.isCollate());
             printReq.setLocale(ServiceContext.getLocale());
             printReq.setIdUser(lockedUser.getId());
             printReq.putOptionValues(job.getOptionValues());
@@ -1822,6 +1863,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
              */
             costParms.setDuplex(printReq.isDuplex());
             costParms.setGrayscale(printReq.isGrayscale());
+            costParms.setEcoPrint(printReq.isEcoPrintShadow()
+                    || printReq.isEcoPrint());
             costParms.setNumberOfCopies(printReq.getNumberOfCopies());
             costParms.setPagesPerSide(printReq.getNup());
 
@@ -1949,10 +1992,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
         /*
          * Print the PDF file.
          */
-        if (print(userid, request.getPrintMode(), request.getPrinterName(),
-                pdfFileToPrint, request.getJobName(),
-                request.getNumberOfCopies(), request.getFitToPage(),
-                request.getOptionValues(), docLog)) {
+        if (print(request, userid, pdfFileToPrint, docLog)) {
 
             if (request.isClearPages()) {
                 request.setClearedPages(inboxService().deleteAllPages(userid));
@@ -2060,6 +2100,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
          */
         costParms.setDuplex(request.isDuplex());
         costParms.setGrayscale(request.isGrayscale());
+        costParms.setEcoPrint(request.isEcoPrintShadow()
+                || request.isEcoPrint());
         costParms.setNumberOfCopies(request.getNumberOfCopies());
         costParms.setPagesPerSide(request.getNup());
 
@@ -2121,7 +2163,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
     @Override
     public final void proxyPrintInbox(final User lockedUser,
-            final ProxyPrintInboxReq request) throws IppConnectException {
+            final ProxyPrintInboxReq request) throws IppConnectException,
+            EcoPrintPdfTaskPendingException {
 
         /*
          * When printing the chunks, the container request parameters are
@@ -2173,7 +2216,13 @@ public abstract class AbstractProxyPrintService extends AbstractService
                     request.setMediaOption(chunk.getAssignedMedia()
                             .getIppKeyword());
 
-                    if (chunk.getAssignedMediaSource() != null) {
+                    /*
+                     * Take the media-source from the print request, unless it
+                     * is assigned in the chunk.
+                     */
+                    if (chunk.getAssignedMediaSource() == null) {
+                        request.setMediaSourceOption(orgMediaSourceOption);
+                    } else {
                         request.setMediaSourceOption(chunk
                                 .getAssignedMediaSource().getSource());
                     }
@@ -2229,11 +2278,14 @@ public abstract class AbstractProxyPrintService extends AbstractService
      *            The chunk ordinal (used to compose a unique PDF filename).
      * @throws IppConnectException
      *             When CUPS connection is broken.
-     *
+     * @throws EcoPrintPdfTaskPendingException
+     *             When {@link EcoPrintPdfTask} objects needed for this PDF are
+     *             pending.
      */
     private void proxyPrintInboxChunk(final User lockedUser,
             final ProxyPrintInboxReq request, final InboxInfoDto inboxInfo,
-            final int nChunk) throws IppConnectException {
+            final int nChunk) throws IppConnectException,
+            EcoPrintPdfTaskPendingException {
 
         final DocLog docLog = this.createProxyPrintDocLog(request);
 
@@ -2257,7 +2309,10 @@ public abstract class AbstractProxyPrintService extends AbstractService
             pdfRequest.setPdfFile(pdfFileName);
             pdfRequest.setInboxInfo(inboxInfo);
             pdfRequest.setRemoveGraphics(request.isRemoveGraphics());
+
             pdfRequest.setEcoPdf(request.isEcoPrint());
+            pdfRequest.setEcoPdfShadow(request.isEcoPrintShadow());
+
             pdfRequest.setApplyPdfProps(false);
             pdfRequest.setApplyLetterhead(true);
             pdfRequest.setForPrinting(true);
@@ -2304,35 +2359,26 @@ public abstract class AbstractProxyPrintService extends AbstractService
      * PDF document.
      * </p>
      *
+     * @param request
+     *            The {@link AbstractProxyPrintReq}.
      * @param user
      *            The user (owner of the print job).
-     * @param printMode
-     *            The {@link PrintModeEnum}.
-     * @param printerName
-     *            Name of the printer, used as key in the printer cache.
      * @param filePdf
      *            The PDF file to print.
-     * @param jobName
-     *            Name of the job.
-     * @param copies
-     *            Number of copies.
-     * @param optionValues
-     *            Options with values.
      * @param docLog
      *            The object to collect print data on.
      * @return {@code true} when printer was found, {@code false} when printer
      *         is no longer valid (because not found in cache, or when it is
      *         logically deleted or disabled).
      * @throws IppConnectException
+     *             When IPP connect error.
      */
-    protected boolean print(final String user, final PrintModeEnum printMode,
-            final String printerName, final File filePdf, final String jobName,
-            final int copies, final Boolean fitToPage,
-            final Map<String, String> optionValues, final DocLog docLog)
+    private boolean print(final AbstractProxyPrintReq request,
+            final String user, final File filePdf, final DocLog docLog)
             throws IppConnectException {
 
         final JsonProxyPrinter printer =
-                this.getJsonProxyPrinterCopy(printerName);
+                this.getJsonProxyPrinterCopy(request.getPrinterName());
 
         if (printer == null) {
             return false;
@@ -2343,8 +2389,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
             return false;
         }
 
-        printPdf(printMode, printer, user, filePdf, jobName, copies, fitToPage,
-                optionValues, docLog);
+        printPdf(request, printer, user, filePdf, docLog);
 
         return true;
     }
@@ -2352,176 +2397,22 @@ public abstract class AbstractProxyPrintService extends AbstractService
     /**
      * Prints a file and logs the event.
      *
-     * @param printMode
+     * @param request
+     *            The {@link AbstractProxyPrintReq}.
      * @param printer
      *            The printer object.
      * @param user
      *            The requesting user.
      * @param filePdf
      *            The file to print.
-     * @param jobName
-     *            The name of the job.
-     * @param copies
-     *            Number of copies.
-     * @param optionValues
-     *            The printer options.
      * @param docLog
      *            The documentation object to log the event.
+     * @throws IppConnectException
+     *             When IPP connection error.
      */
-    abstract protected void printPdf(final PrintModeEnum printMode,
+    protected abstract void printPdf(final AbstractProxyPrintReq request,
             final JsonProxyPrinter printer, final String user,
-            final File filePdf, final String jobName, final int copies,
-            final Boolean fitToPage, final Map<String, String> optionValues,
-            final DocLog docLog) throws IppConnectException;
-
-    /**
-     * Collects data of the print event in the {@link DocLog} object.
-     *
-     * @param docLog
-     *            The documentation object to log the event.
-     * @param protocol
-     *            {@link DocLog.DocLogProtocolEnum#LPR} or
-     *            {@link DocLog.DocLogProtocolEnum#IPP}
-     * @param printMode
-     * @param printer
-     *            The printer object.
-     * @param printJob
-     *            The job object.
-     * @param jobName
-     *            The name of the job.
-     * @param copies
-     *            Number of copies.
-     * @param duplex
-     *            ({@code true} if duplex.
-     * @param grayscale
-     *            ({@code true} if grayscale (not color).
-     * @param nUp
-     * @param cupsPageSet
-     * @param oddOrEvenSheets
-     * @param cupsJobSheets
-     * @param coverPageBefore
-     * @param coverPageAfter
-     * @param ippMediaSize
-     *            The media size of the print output.
-     */
-    protected void collectPrintOutData(final DocLog docLog,
-            final DocLogProtocolEnum protocol, final PrintModeEnum printMode,
-            final JsonProxyPrinter printer, final JsonProxyPrintJob printJob,
-            final String jobName, int copies, final boolean duplex,
-            final boolean grayscale, final int nUp, String cupsPageSet,
-            final boolean oddOrEvenSheets, final String cupsJobSheets,
-            final boolean coverPageBefore, final boolean coverPageAfter,
-            final MediaSizeName ippMediaSize) {
-
-        int numberOfSheets =
-                calcNumberOfPrintedSheets(docLog.getNumberOfPages(), copies,
-                        duplex, nUp, oddOrEvenSheets, coverPageBefore,
-                        coverPageAfter);
-
-        final DocOut docOut = docLog.getDocOut();
-
-        docLog.setDeliveryProtocol(protocol.getDbName());
-        docOut.setDestination(printer.getName());
-        docLog.setTitle(jobName);
-
-        final PrintOut printOut = new PrintOut();
-        printOut.setDocOut(docOut);
-
-        printOut.setPrintMode(printMode.toString());
-        printOut.setCupsJobId(printJob.getJobId());
-        printOut.setCupsJobState(printJob.getJobState());
-        printOut.setCupsCreationTime(printJob.getCreationTime());
-
-        printOut.setDuplex(duplex);
-
-        printOut.setGrayscale(grayscale);
-
-        printOut.setCupsJobSheets(cupsJobSheets);
-        printOut.setCupsNumberUp(String.valueOf(nUp));
-        printOut.setCupsPageSet(cupsPageSet);
-
-        printOut.setNumberOfCopies(copies);
-        printOut.setNumberOfSheets(numberOfSheets);
-
-        printOut.setPaperSize(ippMediaSize.toString());
-
-        int[] size = MediaUtils.getMediaWidthHeight(ippMediaSize);
-        printOut.setPaperWidth(size[0]);
-        printOut.setPaperHeight(size[1]);
-
-        printOut.setNumberOfEsu(calcNumberOfEsu(numberOfSheets,
-                printOut.getPaperWidth(), printOut.getPaperHeight()));
-
-        printOut.setPrinter(printer.getDbPrinter());
-
-        docOut.setPrintOut(printOut);
-
-    }
-
-    /**
-     * Calculates the number of printed sheets.
-     *
-     * @param numberOfPages
-     * @param copies
-     * @param duplex
-     * @param nUp
-     * @param oddOrEvenSheets
-     * @param coverPageBefore
-     * @param coverPageAfter
-     * @return
-     */
-    public static int calcNumberOfPrintedSheets(int numberOfPages, int copies,
-            boolean duplex, int nUp, boolean oddOrEvenSheets,
-            boolean coverPageBefore, boolean coverPageAfter) {
-
-        int nPages = numberOfPages;
-
-        // NOTE: the order of handling the print options is important.
-
-        if (nPages <= nUp) {
-            nPages = 1;
-        } else if (nUp != 1) {
-            nPages = (nPages / nUp) + (nPages % nUp);
-        }
-
-        /*
-         * (2) Odd or even pages?
-         */
-        if (oddOrEvenSheets) {
-            nPages /= 2;
-        }
-
-        /*
-         * Sheets
-         */
-        int nSheets = nPages;
-
-        /*
-         * (3) Duplex
-         */
-        if (duplex) {
-            nSheets = (nSheets / 2) + (nSheets % 2);
-        }
-
-        /*
-         * (4) Copies
-         */
-        nSheets *= copies;
-
-        /*
-         * (5) Jobs Sheets
-         */
-        if (coverPageBefore) {
-            // cover page (before)
-            nSheets++;
-        }
-        if (coverPageAfter) {
-            // cover page (after)
-            nSheets++;
-        }
-
-        return nSheets;
-    }
+            final File filePdf, final DocLog docLog) throws IppConnectException;
 
     /**
      * Return a localized string.
@@ -2733,7 +2624,6 @@ public abstract class AbstractProxyPrintService extends AbstractService
                                 .equalsIgnoreCase("ipp"))) {
                     host = printerUri.getHost();
                 }
-
             }
 
         } else {
@@ -2766,10 +2656,29 @@ public abstract class AbstractProxyPrintService extends AbstractService
             community = params.getCommunity();
         }
 
-        final ResultPrinterSnmp data = new ResultPrinterSnmp();
-        PrinterSnmpDto dto = PrinterSnmpReader.read(host, port, community);
-        data.setAttributes(dto.asAttributes());
+        //
+        final PrinterSnmpDto dto =
+                PrinterSnmpReader.read(host, port, community,
+                        params.getVersion());
 
+        final ResultPrinterSnmp data = new ResultPrinterSnmp();
+
+        // data.setAttributes(dto.asAttributes());
+        data.setAttributes(new ArrayList<ResultAttribute>());
+
+        try {
+            data.getAttributes().add(0,
+                    new ResultAttribute("json", dto.stringifyPrettyPrinted()));
+        } catch (IOException e) {
+            throw new SpException(e.getMessage());
+        }
+
+        if (params.getVersion() != null) {
+            data.getAttributes().add(
+                    0,
+                    new ResultAttribute("SNMP Version", params.getVersion()
+                            .getCmdLineOption()));
+        }
         data.getAttributes()
                 .add(0, new ResultAttribute("Community", community));
         data.getAttributes().add(0,

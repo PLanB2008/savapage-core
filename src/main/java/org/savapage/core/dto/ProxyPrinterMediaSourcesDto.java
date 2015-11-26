@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,6 +24,7 @@ package org.savapage.core.dto;
 import java.util.List;
 import java.util.Locale;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -34,10 +35,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  *
  */
 @JsonInclude(Include.NON_NULL)
-public class ProxyPrinterMediaSourcesDto extends AbstractDto {
+@JsonIgnoreProperties(ignoreUnknown = true)
+public final class ProxyPrinterMediaSourcesDto extends AbstractDto {
 
     /**
-     * primary key
+     * Primary key.
      */
     @JsonProperty("id")
     private Long id;
@@ -56,6 +58,9 @@ public class ProxyPrinterMediaSourcesDto extends AbstractDto {
     @JsonProperty("country")
     private String country;
 
+    /**
+     * .
+     */
     @JsonProperty("sources")
     private List<IppMediaSourceCostDto> sources;
 
