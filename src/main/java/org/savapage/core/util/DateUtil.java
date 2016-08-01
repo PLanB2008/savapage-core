@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,7 +26,8 @@ import java.util.Date;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
+ *
  */
 public final class DateUtil {
 
@@ -60,6 +61,10 @@ public final class DateUtil {
      */
     public static final int SECONDS_IN_MINUTE = 60;
 
+    /**
+     * The number of minutes in a hour.
+     */
+    public static final int MINUTES_IN_HOUR = 60;
 
     /**
      *
@@ -99,6 +104,34 @@ public final class DateUtil {
             return "";
         }
         return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss").format(date);
+    }
+
+    /**
+     * Formats elapsed milliseconds into readable string.
+     *
+     * @param duration
+     *            milliseconds
+     * @return formatted string
+     */
+    public static String formatDuration(final long duration) {
+
+        long durationSeconds = duration / 1000;
+
+        long days = durationSeconds / 86400;
+        long hours = (durationSeconds % 86400) / 3600;
+        long minutes = ((durationSeconds % 86400) % 3600) / 60;
+
+        if (days == 0) {
+            if (hours == 0) {
+                if (minutes == 0) {
+                    long seconds = ((durationSeconds % 86400) % 3600) % 60;
+                    return String.format("%ds", seconds);
+                }
+                return String.format("%dm", minutes);
+            }
+            return String.format("%dh %dm", hours, minutes);
+        }
+        return String.format("%dd %dh %dm", days, hours, minutes);
     }
 
 }

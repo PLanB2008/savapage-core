@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,22 +22,30 @@
 package org.savapage.core.services;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import org.savapage.core.dao.enums.ExternalSupplierEnum;
+import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.imaging.EcoPrintPdfTask;
 import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
+import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.User;
 import org.savapage.core.outbox.OutboxInfoDto;
-import org.savapage.core.outbox.OutboxInfoDto.OutboxJob;
+import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
+import org.savapage.core.print.proxy.AbstractProxyPrintReq;
+import org.savapage.core.print.proxy.ProxyPrintDocReq;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
+import org.savapage.core.services.helpers.AccountTrxInfoSet;
+import org.savapage.core.services.helpers.DocContentPrintInInfo;
 
 /**
  *
- * @since 0.9.6
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface OutboxService {
@@ -56,16 +64,50 @@ public interface OutboxService {
             String currencySymbol);
 
     /**
-     * Clears the user's outbox.
+     * Checks if the print status of the {@link OutboxJobDto} must be monitored
+     * in PaperCut.
+     * <p>
+     * Monitor PaperCut Print Status when request is a Delegated Print and
+     * Printer is managed by PaperCut.
+     * </p>
+     *
+     * @param job
+     *            The {@link OutboxJobDto} to print.
+     * @return {@code true} when print status of the {@link OutboxJobDto} must
+     *         be monitored in PaperCut.
+     */
+    boolean isMonitorPaperCutPrintStatus(OutboxJobDto job);
+
+    /**
+     * Creates an {@link OutboxJobDto} from input parameters.
+     *
+     * @param request
+     *            The {@link AbstractProxyPrintReq}.
+     * @param submitDate
+     *            The date the proxy print was submitted.
+     * @param expiryDate
+     *            The date the proxy print expires.
+     * @param pdfOutboxFile
+     *            The PDF file in the outbox.
+     * @param uuidPageCount
+     *            Object with the number of selected pages per input file UUID.
+     * @return The {@link OutboxJobDto}.
+     */
+    OutboxJobDto createOutboxJob(AbstractProxyPrintReq request, Date submitDate,
+            Date expiryDate, File pdfOutboxFile,
+            LinkedHashMap<String, Integer> uuidPageCount);
+
+    /**
+     * Cancels all jobs in the user's outbox.
      *
      * @param userId
      *            The unique user id.
-     * @return The number of jobs in the cleared outbox.
+     * @return The number of jobs canceled.
      */
-    int clearOutbox(String userId);
+    int cancelOutboxJobs(String userId);
 
     /**
-     * Removes a job in the user's outbox.
+     * Cancels a job in the user's outbox.
      *
      * @param userId
      *            The unique user id.
@@ -73,7 +115,35 @@ public interface OutboxService {
      *            The unique file name of the job to remove.
      * @return {@code false} if the job was not found.
      */
-    boolean removeOutboxJob(String userId, String fileName);
+    boolean cancelOutboxJob(String userId, String fileName);
+
+    /**
+     * Notifies an outbox job is canceled.
+     * <p>
+     * NOTE: When the outbox job was created from an
+     * {@link ExternalSupplierEnum} other than
+     * {@link ExternalSupplierEnum#SAVAPAGE} the print-in {@link DocLog} is
+     * updated with {@link ExternalSupplierStatusEnum#PENDING_CANCEL}.
+     * </p>
+     *
+     * @param job
+     *            The canceled {@link OutboxJobDto}.
+     */
+    void onOutboxJobCanceled(final OutboxJobDto job);
+
+    /**
+     * Notifies an outbox job is completed.
+     * <p>
+     * NOTE: When the outbox job was created from an
+     * {@link ExternalSupplierEnum} other than
+     * {@link ExternalSupplierEnum#SAVAPAGE} the print-in {@link DocLog} is
+     * updated with {@link ExternalSupplierStatusEnum#PENDING_COMPLETE}.
+     * </p>
+     *
+     * @param job
+     *            The completed {@link OutboxJobDto}.
+     */
+    void onOutboxJobCompleted(final OutboxJobDto job);
 
     /**
      * Extends the job expiration time of jobs in the user's outbox, so that
@@ -104,7 +174,7 @@ public interface OutboxService {
     OutboxInfoDto pruneOutboxInfo(String userId, Date expiryRef);
 
     /**
-     * Gets the The full path {@link File} from an outbox file name.
+     * Gets the full path {@link File} from an outbox file name.
      *
      * @param userId
      *            The unique user id.
@@ -151,10 +221,41 @@ public interface OutboxService {
             throws EcoPrintPdfTaskPendingException;
 
     /**
-     * Gets the {@link OutboxJob} candidate objects for proxy printing.
+     * Proxy prints a PDF file to the user's outbox.
      * <p>
-     * Note: prunes the {@link OutboxJob} instances in {@link OutboxInfoDto} for
-     * jobs which are expired for Proxy Printing.
+     * NOTE: The PDF file location is arbitrary and NOT part in the user's
+     * inbox.
+     * </p>
+     *
+     * @param lockedUser
+     *            The requesting {@link User}, which should be locked.
+     * @param request
+     *            The {@link ProxyPrintDocReq}.
+     * @param pdfFile
+     *            The arbitrary (non-inbox) PDF file to print.
+     * @param printInfo
+     *            The {@link DocContentPrintInInfo}.
+     * @throws IOException
+     *             When file IO error occurs.
+     */
+    void proxyPrintPdf(User lockedUser, ProxyPrintDocReq request, File pdfFile,
+            DocContentPrintInInfo printInfo) throws IOException;
+
+    /**
+     *
+     * @since 0.9.11
+     *
+     * @param userId
+     *            The unique user id.
+     * @return The number of outbox jobs.
+     */
+    int getOutboxJobCount(String userId);
+
+    /**
+     * Gets the {@link OutboxJobDto} candidate objects for proxy printing.
+     * <p>
+     * Note: prunes the {@link OutboxJobDto} instances in {@link OutboxInfoDto}
+     * for jobs which are expired for Proxy Printing.
      * </p>
      *
      * @since 0.9.6
@@ -165,10 +266,40 @@ public interface OutboxService {
      *            The unique printer names to get the jobs for.
      * @param expiryRef
      *            The reference date for calculating the expiration.
-     * @return A list with {@link OutboxJob} candidate objects for proxy
+     * @return A list with {@link OutboxJobDto} candidate objects for proxy
      *         printing.
      */
-    List<OutboxJob> getOutboxJobs(String userId, Set<String> printerNames,
+    List<OutboxJobDto> getOutboxJobs(String userId, Set<String> printerNames,
             Date expiryRef);
+
+    /**
+     * Creates the {@link AccountTrxInfoSet} from the {@link OutboxJobDto}
+     * source.
+     *
+     * @since 0.9.11
+     *
+     * @param source
+     *            The {@link OutboxJobDto}.
+     * @return The {@link AccountTrxInfoSet}.
+     */
+    AccountTrxInfoSet createAccountTrxInfoSet(OutboxJobDto source);
+
+    /**
+     * Gets the {@link OutboxInfoDto} from the user's outbox merged with the
+     * user's Job Tickets.
+     *
+     * <p>
+     * NOTE: The {@link OutboxInfoDto} JSON file from the user's outbox is read
+     * and pruned, or void created when it does not exist. Job tickets of all
+     * users are collected in one central place.
+     * </p>
+     *
+     * @param user
+     *            The {@link User}.
+     * @param expiryRef
+     *            The reference date for calculating the expiration.
+     * @return The {@link OutboxInfoDto} object.
+     */
+    OutboxInfoDto getOutboxJobTicketInfo(User user, Date expiryRef);
 
 }

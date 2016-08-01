@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -33,11 +33,14 @@ import java.util.TreeSet;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.savapage.core.SpException;
+import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.PrinterDao;
-import org.savapage.core.dao.helpers.AccessControlScopeEnum;
-import org.savapage.core.dao.helpers.DeviceTypeEnum;
+import org.savapage.core.dao.enums.AccessControlScopeEnum;
+import org.savapage.core.dao.enums.DeviceTypeEnum;
+import org.savapage.core.dao.enums.PrinterAttrEnum;
+import org.savapage.core.dao.enums.ProxyPrintAuthModeEnum;
 import org.savapage.core.dao.helpers.JsonUserGroupAccess;
-import org.savapage.core.dao.helpers.PrinterAttrEnum;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.jpa.Device;
 import org.savapage.core.jpa.Printer;
@@ -56,14 +59,15 @@ import org.savapage.core.json.rpc.JsonRpcMethodError;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
 import org.savapage.core.services.PrinterService;
 import org.savapage.core.services.ServiceContext;
+import org.savapage.core.util.JsonHelper;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public class PrinterServiceImpl extends AbstractService implements
-        PrinterService {
+public final class PrinterServiceImpl extends AbstractService
+        implements PrinterService {
 
     /**
      *
@@ -76,12 +80,20 @@ public class PrinterServiceImpl extends AbstractService implements
     private static final boolean ACCESS_DENIED = !ACCESS_ALLOWED;
 
     @Override
-    public final boolean canPrinterBeUsed(final Printer printer) {
+    public boolean isInternalPrinter(final Printer printer) {
+
+        final PrinterAttr attr = printerAttrDAO().findByName(printer.getId(),
+                PrinterAttrEnum.ACCESS_INTERNAL);
+        return printerAttrDAO().getBooleanValue(attr);
+    }
+
+    @Override
+    public boolean canPrinterBeUsed(final Printer printer) {
         return !(printer.getDeleted() || printer.getDisabled());
     }
 
     @Override
-    public final boolean checkPrinterSecurity(final Printer printer,
+    public boolean checkPrinterSecurity(final Printer printer,
             final MutableBoolean terminalSecured,
             final MutableBoolean readerSecured) {
 
@@ -90,7 +102,7 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final boolean checkPrinterSecurity(final Printer printer,
+    public boolean checkPrinterSecurity(final Printer printer,
             final MutableBoolean terminalSecured,
             final MutableBoolean readerSecured,
             final Map<String, Device> terminalDevices,
@@ -180,7 +192,7 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final boolean checkDeviceSecurity(final Printer printer,
+    public boolean checkDeviceSecurity(final Printer printer,
             final DeviceTypeEnum deviceType, final Device device) {
 
         /*
@@ -196,8 +208,8 @@ public class PrinterServiceImpl extends AbstractService implements
             exception = !deviceDAO().isTerminal(device);
             break;
         default:
-            throw new SpException("Device Type [" + deviceType
-                    + "] not supported.");
+            throw new SpException(
+                    "Device Type [" + deviceType + "] not supported.");
         }
 
         if (exception) {
@@ -232,7 +244,7 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final void setLogicalDeleted(final Printer printer) {
+    public void setLogicalDeleted(final Printer printer) {
 
         final Date deletedDate = ServiceContext.getTransactionDate();
 
@@ -245,24 +257,28 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final void undoLogicalDeleted(final Printer printer) {
+    public void undoLogicalDeleted(final Printer printer) {
 
         printer.setDeleted(false);
         printer.setDeletedDate(null);
     }
 
     @Override
-    public final String getAttributeValue(final Printer printer,
+    public PrinterAttr removeAttribute(final Printer printer,
             final PrinterAttrEnum name) {
-
-        final String dbName = name.getDbName();
 
         final List<PrinterAttr> attributes = printer.getAttributes();
 
         if (attributes != null) {
-            for (final PrinterAttr attr : attributes) {
+
+            final String dbName = name.getDbName();
+
+            final Iterator<PrinterAttr> iter = attributes.iterator();
+            while (iter.hasNext()) {
+                final PrinterAttr attr = iter.next();
                 if (attr.getName().equals(dbName)) {
-                    return attr.getValue();
+                    iter.remove();
+                    return attr;
                 }
             }
         }
@@ -270,15 +286,45 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final String getPrintColorModeDefault(final Printer printer) {
+    public PrinterAttr getAttribute(final Printer printer,
+            final PrinterAttrEnum name) {
 
         final List<PrinterAttr> attributes = printer.getAttributes();
 
         if (attributes != null) {
 
-            final String attrPrintColorModeDefault =
-                    PrinterDao.IppKeywordAttr
-                            .getKey(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE_DFLT);
+            final String dbName = name.getDbName();
+
+            for (final PrinterAttr attr : attributes) {
+                if (attr.getName().equals(dbName)) {
+                    return attr;
+                }
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public String getAttributeValue(final Printer printer,
+            final PrinterAttrEnum name) {
+
+        final PrinterAttr attr = this.getAttribute(printer, name);
+
+        if (attr != null) {
+            return attr.getValue();
+        }
+        return null;
+    }
+
+    @Override
+    public String getPrintColorModeDefault(final Printer printer) {
+
+        final List<PrinterAttr> attributes = printer.getAttributes();
+
+        if (attributes != null) {
+
+            final String attrPrintColorModeDefault = PrinterDao.IppKeywordAttr
+                    .getKey(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE_DFLT);
 
             for (final PrinterAttr printerAttr : attributes) {
 
@@ -291,7 +337,28 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final void addJobTotals(final Printer printer, final Date jobDate,
+    public boolean isClientSideMonochrome(final Printer printer) {
+
+        final List<PrinterAttr> attributes = printer.getAttributes();
+
+        if (attributes != null) {
+
+            final String targetName =
+                    PrinterAttrEnum.CLIENT_SIDE_MONOCHROME.getDbName();
+
+            for (final PrinterAttr printerAttr : attributes) {
+
+                if (printerAttr.getName().equals(targetName)) {
+                    return printerAttr.getValue()
+                            .equals(Boolean.TRUE.toString());
+                }
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public void addJobTotals(final Printer printer, final Date jobDate,
             final int jobPages, final int jobSheets, final long jobEsu,
             final long jobBytes) {
 
@@ -307,7 +374,7 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final boolean isPrinterGroupMember(final PrinterGroup group,
+    public boolean isPrinterGroupMember(final PrinterGroup group,
             final Printer printer) {
 
         for (final PrinterGroupMember member : group.getMembers()) {
@@ -340,9 +407,8 @@ public class PrinterServiceImpl extends AbstractService implements
         if (name == PrinterAttrEnum.PRINT_OUT_ROLLING_DAY_PAGES
                 || name == PrinterAttrEnum.PRINT_OUT_ROLLING_DAY_ESU
                 || name == PrinterAttrEnum.PRINT_OUT_ROLLING_DAY_SHEETS) {
-            statsPages =
-                    new JsonRollingTimeSeries<>(TimeSeriesInterval.DAY,
-                            MAX_TIME_SERIES_INTERVALS_DAYS, 0);
+            statsPages = new JsonRollingTimeSeries<>(TimeSeriesInterval.DAY,
+                    MAX_TIME_SERIES_INTERVALS_DAYS, 0);
         } else {
             throw new SpException("time series for attribute [" + name
                     + "] is not supported");
@@ -406,8 +472,9 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final void logPrintOut(final Printer printer, final Date jobTime,
-            final Integer jobPages, final Integer jobSheets, final Long jobEsu) {
+    public void logPrintOut(final Printer printer, final Date jobTime,
+            final Integer jobPages, final Integer jobSheets,
+            final Long jobEsu) {
 
         addTimeSeriesDataPoint(printer,
                 PrinterAttrEnum.PRINT_OUT_ROLLING_DAY_PAGES, jobTime, jobPages);
@@ -419,7 +486,7 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final AbstractJsonRpcMethodResponse addAccessControl(
+    public AbstractJsonRpcMethodResponse addAccessControl(
             final AccessControlScopeEnum scope, final String printerName,
             final String groupName) throws IOException {
 
@@ -446,9 +513,8 @@ public class PrinterServiceImpl extends AbstractService implements
         /*
          * Get the attribute to update.
          */
-        PrinterAttr printerAttr =
-                printerAttrDAO().findByName(printer.getId(),
-                        PrinterAttrEnum.ACCESS_USER_GROUPS);
+        PrinterAttr printerAttr = printerAttrDAO().findByName(printer.getId(),
+                PrinterAttrEnum.ACCESS_USER_GROUPS);
 
         final boolean isNewAttr = printerAttr == null;
 
@@ -465,14 +531,12 @@ public class PrinterServiceImpl extends AbstractService implements
 
         } else {
 
-            final String json =
-                    this.getAttributeValue(printer,
-                            PrinterAttrEnum.ACCESS_USER_GROUPS);
+            final String json = this.getAttributeValue(printer,
+                    PrinterAttrEnum.ACCESS_USER_GROUPS);
 
             if (json != null) {
-                groupAccess =
-                        JsonUserGroupAccess.createOrNull(
-                                JsonUserGroupAccess.class, json);
+                groupAccess = JsonHelper.createOrNull(JsonUserGroupAccess.class,
+                        json);
             }
         }
 
@@ -496,9 +560,11 @@ public class PrinterServiceImpl extends AbstractService implements
                 for (final String group : groupAccess.getGroups()) {
                     if (group.equals(groupName)) {
                         return JsonRpcMethodError.createBasicError(
-                                Code.INVALID_REQUEST, "Group [" + groupName
-                                        + "] is already part of " + "printer ["
-                                        + printerName + "] access list.", null);
+                                Code.INVALID_REQUEST,
+                                "Group [" + groupName + "] is already part of "
+                                        + "printer [" + printerName
+                                        + "] access list.",
+                                null);
                     }
                 }
                 groupAccess.getGroups().add(groupName);
@@ -529,9 +595,8 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final AbstractJsonRpcMessage removeAccessControl(
-            final String printerName, final String groupName)
-            throws IOException {
+    public AbstractJsonRpcMessage removeAccessControl(final String printerName,
+            final String groupName) throws IOException {
 
         final Printer printer = printerDAO().findByName(printerName);
 
@@ -546,9 +611,8 @@ public class PrinterServiceImpl extends AbstractService implements
         /*
          * Get the attribute to update.
          */
-        final PrinterAttr printerAttr =
-                printerAttrDAO().findByName(printer.getId(),
-                        PrinterAttrEnum.ACCESS_USER_GROUPS);
+        final PrinterAttr printerAttr = printerAttrDAO().findByName(
+                printer.getId(), PrinterAttrEnum.ACCESS_USER_GROUPS);
 
         /*
          * INVARIANT: User group MUST not already be present on the list.
@@ -557,9 +621,8 @@ public class PrinterServiceImpl extends AbstractService implements
 
         if (printerAttr != null) {
 
-            final JsonUserGroupAccess groupAccess =
-                    JsonUserGroupAccess.createOrNull(JsonUserGroupAccess.class,
-                            printerAttr.getValue());
+            final JsonUserGroupAccess groupAccess = JsonHelper.createOrNull(
+                    JsonUserGroupAccess.class, printerAttr.getValue());
 
             if (groupAccess == null) {
 
@@ -600,15 +663,16 @@ public class PrinterServiceImpl extends AbstractService implements
         if (!isGroupRemoved) {
             return JsonRpcMethodError.createBasicError(Code.INVALID_REQUEST,
                     "Group [" + groupName + "] is not part of " + "printer ["
-                            + printerName + "] access list.", null);
+                            + printerName + "] access list.",
+                    null);
         }
 
         return JsonRpcMethodResult.createOkResult();
     }
 
     @Override
-    public final AbstractJsonRpcMessage removeAccessControl(
-            final String printerName) {
+    public AbstractJsonRpcMessage
+            removeAccessControl(final String printerName) {
 
         final Printer printer = printerDAO().findByName(printerName);
 
@@ -623,14 +687,14 @@ public class PrinterServiceImpl extends AbstractService implements
         /*
          * INVARIANT: printer attribute MUST exist.
          */
-        final PrinterAttr printerAttr =
-                printerAttrDAO().findByName(printer.getId(),
-                        PrinterAttrEnum.ACCESS_USER_GROUPS);
+        final PrinterAttr printerAttr = printerAttrDAO().findByName(
+                printer.getId(), PrinterAttrEnum.ACCESS_USER_GROUPS);
 
         if (printerAttr == null) {
             return JsonRpcMethodError.createBasicError(Code.INVALID_REQUEST,
                     "Access control not found for printer [" + printerName
-                            + "].", null);
+                            + "].",
+                    null);
         }
 
         printerAttrDAO().delete(printerAttr);
@@ -639,7 +703,7 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final JsonUserGroupAccess getAccessControl(final String printerName) {
+    public JsonUserGroupAccess getAccessControl(final String printerName) {
 
         final Printer printer = printerDAO().findByName(printerName);
 
@@ -654,18 +718,16 @@ public class PrinterServiceImpl extends AbstractService implements
     }
 
     @Override
-    public final JsonUserGroupAccess getAccessControl(final Printer printer) {
+    public JsonUserGroupAccess getAccessControl(final Printer printer) {
 
-        final PrinterAttr printerAttr =
-                printerAttrDAO().findByName(printer.getId(),
-                        PrinterAttrEnum.ACCESS_USER_GROUPS);
+        final PrinterAttr printerAttr = printerAttrDAO().findByName(
+                printer.getId(), PrinterAttrEnum.ACCESS_USER_GROUPS);
 
         JsonUserGroupAccess groupAccess = null;
 
         if (printerAttr != null) {
-            groupAccess =
-                    JsonUserGroupAccess.createOrNull(JsonUserGroupAccess.class,
-                            printerAttr.getValue());
+            groupAccess = JsonHelper.createOrNull(JsonUserGroupAccess.class,
+                    printerAttr.getValue());
         }
 
         if (groupAccess == null) {
@@ -681,8 +743,80 @@ public class PrinterServiceImpl extends AbstractService implements
         return groupAccess;
     }
 
+    /**
+     * Checks if {@link Device} objects from the list supports hold/release
+     * printing.
+     *
+     * @param devices
+     *            The {@link Device} objects.
+     * @return {@code true} when HOLD is supported.
+     */
+    private static boolean
+            isHoldReleasePrintSupported(final List<Device> devices) {
+
+        if (devices != null && !devices.isEmpty()) {
+
+            for (final Device device : devices) {
+
+                if (device.getDisabled() || !deviceDAO().isCardReader(device)) {
+                    continue;
+                }
+
+                final ProxyPrintAuthModeEnum authMode =
+                        deviceService().getProxyPrintAuthMode(device.getId());
+
+                if (authMode != null && authMode.isHoldRelease()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     @Override
-    public final boolean isPrinterAccessGranted(final Printer printer,
+    public boolean isHoldReleasePrinter(final Printer printer) {
+
+        /*
+         * Check associated Card Reader devices which act as Print
+         * Authenticator.
+         *
+         * (1) Try via Devices.
+         */
+        if (isHoldReleasePrintSupported(printer.getDevices())) {
+            return true;
+        }
+
+        /*
+         * (2) Try via PrinterGroupMembers.
+         */
+        if (printer.getPrinterGroupMembers() != null) {
+
+            for (final PrinterGroupMember member : printer
+                    .getPrinterGroupMembers()) {
+
+                if (isHoldReleasePrintSupported(
+                        member.getGroup().getDevices())) {
+                    return true;
+                }
+
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public boolean isJobTicketPrinter(final String printerName) {
+        return getJobTicketPrinterName().equals(printerName);
+    }
+
+    @Override
+    public String getJobTicketPrinterName() {
+        return StringUtils.defaultString(ConfigManager.instance()
+                .getConfigValue(Key.JOBTICKET_PROXY_PRINTER));
+    }
+
+    @Override
+    public boolean isPrinterAccessGranted(final Printer printer,
             final User user) {
 
         final JsonUserGroupAccess access = this.getAccessControl(printer);

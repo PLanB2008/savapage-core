@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,9 +21,13 @@
  */
 package org.savapage.core.services;
 
+import org.savapage.ext.papercut.services.PaperCutService;
+import org.savapage.ext.smartschool.services.SmartschoolProxyService;
+import org.savapage.ext.smartschool.services.SmartschoolService;
+
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface ServiceFactory {
@@ -38,6 +42,13 @@ public interface ServiceFactory {
      * all terminated.
      */
     void shutdown();
+
+    /**
+     * Gets the {@link AccessControlService} singleton.
+     *
+     * @return The singleton.
+     */
+    AccessControlService getAccessControlService();
 
     /**
      * Gets the {@link AccountingService} singleton.
@@ -96,6 +107,13 @@ public interface ServiceFactory {
     InboxService getInboxService();
 
     /**
+     * Gets the {@link JobTicketService} singleton.
+     *
+     * @return The singleton.
+     */
+    JobTicketService getJobTicketService();
+
+    /**
      * Gets the {@link OutboxService} singleton.
      *
      * @return The singleton.
@@ -108,6 +126,13 @@ public interface ServiceFactory {
      * @return The singleton.
      */
     PaperCutService getPaperCutService();
+
+    /**
+     * Gets the {@link PrintDelegationService} singleton.
+     *
+     * @return The singleton.
+     */
+    PrintDelegationService getPrintDelegationService();
 
     /**
      * Gets the {@link PrinterGroupService} singleton.
@@ -145,11 +170,18 @@ public interface ServiceFactory {
     RfIdReaderService getRfIdReaderService();
 
     /**
-     * Gets the {@link SmartSchoolService} singleton.
+     * Gets the {@link SmartschoolService} singleton.
      *
      * @return The singleton.
      */
-    SmartSchoolService getSmartSchoolService();
+    SmartschoolService getSmartSchoolService();
+
+    /**
+     * Gets the {@link SmartschoolProxyService} singleton.
+     *
+     * @return The singleton.
+     */
+    SmartschoolProxyService getSmartSchoolProxyService();
 
     /**
      * Gets the {@link UserGroupService} singleton.

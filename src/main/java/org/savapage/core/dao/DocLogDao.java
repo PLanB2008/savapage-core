@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,16 +24,17 @@ package org.savapage.core.dao;
 import java.util.Date;
 import java.util.List;
 
-import org.savapage.core.dao.helpers.DocLogProtocolEnum;
+import org.savapage.core.dao.enums.DocLogProtocolEnum;
+import org.savapage.core.dao.enums.ExternalSupplierEnum;
+import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.jpa.AccountTrx;
 import org.savapage.core.jpa.DocIn;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.DocOut;
-import org.savapage.core.services.helpers.ExternalSupplierEnum;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface DocLogDao extends GenericDao<DocLog> {
@@ -73,7 +74,8 @@ public interface DocLogDao extends GenericDao<DocLog> {
 
         private DocLogProtocolEnum protocol;
         private ExternalSupplierEnum externalSupplier;
-        private String externalStatus;
+        private String externalId;
+        private ExternalSupplierStatusEnum externalStatus;
 
         public DocLogProtocolEnum getProtocol() {
             return protocol;
@@ -91,14 +93,22 @@ public interface DocLogDao extends GenericDao<DocLog> {
             this.externalSupplier = externalSupplier;
         }
 
-        public String getExternalStatus() {
+        public String getExternalId() {
+            return externalId;
+        }
+
+        public void setExternalId(String externalId) {
+            this.externalId = externalId;
+        }
+
+        public ExternalSupplierStatusEnum getExternalStatus() {
             return externalStatus;
         }
 
-        public void setExternalStatus(String externalStatus) {
+        public void
+                setExternalStatus(ExternalSupplierStatusEnum externalStatus) {
             this.externalStatus = externalStatus;
         }
-
     }
 
     /**

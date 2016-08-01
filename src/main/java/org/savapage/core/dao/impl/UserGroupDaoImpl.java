@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -32,16 +32,26 @@ import javax.persistence.criteria.CriteriaQuery;
 import javax.persistence.criteria.Root;
 
 import org.savapage.core.dao.UserGroupDao;
-import org.savapage.core.dao.helpers.ReservedUserGroupEnum;
+import org.savapage.core.dao.enums.ReservedUserGroupEnum;
+import org.savapage.core.dao.enums.UserGroupAttrEnum;
 import org.savapage.core.jpa.UserGroup;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup> implements
-        UserGroupDao {
+public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup>
+        implements UserGroupDao {
+
+    @Override
+    public ReservedUserGroupEnum findReservedGroup(final Long userGroupId) {
+        final UserGroup userGroup = findById(userGroupId);
+        if (userGroup == null) {
+            return null;
+        }
+        return ReservedUserGroupEnum.fromDbName(userGroup.getGroupName());
+    }
 
     @Override
     public UserGroup find(final ReservedUserGroupEnum reservedGroup) {
@@ -54,8 +64,13 @@ public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup> implements
         final StringBuilder jpql =
                 new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
 
-        jpql.append("SELECT COUNT(C.id) FROM UserGroup C");
+        jpql.append("SELECT COUNT(C.id) FROM ");
 
+        if (filter.getAclRole() == null) {
+            jpql.append("UserGroup C");
+        } else {
+            jpql.append("UserGroupAttr A JOIN A.userGroup C");
+        }
         applyListFilter(jpql, filter);
 
         final Query query = createListQuery(jpql, filter);
@@ -63,6 +78,7 @@ public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup> implements
         return countResult.longValue();
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public List<UserGroup> getListChunk(final ListFilter filter,
             final Integer startPosition, final Integer maxResults,
@@ -71,7 +87,13 @@ public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup> implements
         final StringBuilder jpql =
                 new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
 
-        jpql.append("SELECT C FROM UserGroup C");
+        jpql.append("SELECT C FROM ");
+
+        if (filter.getAclRole() == null) {
+            jpql.append("UserGroup C");
+        } else {
+            jpql.append("UserGroupAttr A JOIN A.userGroup C");
+        }
 
         applyListFilter(jpql, filter);
 
@@ -116,6 +138,14 @@ public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup> implements
 
         int nWhere = 0;
 
+        if (filter.getAclRole() != null) {
+            if (nWhere > 0) {
+                where.append(" AND");
+            }
+            nWhere++;
+            where.append(" A.name = :roleName AND A.value like :jsonRoleValue");
+        }
+
         if (filter.getContainingText() != null) {
             if (nWhere > 0) {
                 where.append(" AND");
@@ -144,9 +174,25 @@ public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup> implements
 
         final Query query = getEntityManager().createQuery(jpql.toString());
 
+        if (filter.getAclRole() != null) {
+
+            query.setParameter("roleName",
+                    UserGroupAttrEnum.ACL_ROLES.getName());
+
+            final StringBuilder like = new StringBuilder();
+
+            /*
+             * INVARIANT: JSON string does NOT contain whitespace.
+             */
+            like.append("%\"").append(filter.getAclRole().toString())
+                    .append("\":").append(Boolean.TRUE.toString()).append("%");
+
+            query.setParameter("jsonRoleValue", like.toString());
+        }
+
         if (filter.getContainingText() != null) {
-            query.setParameter("containingText", "%"
-                    + filter.getContainingText().toLowerCase() + "%");
+            query.setParameter("containingText",
+                    "%" + filter.getContainingText().toLowerCase() + "%");
         }
 
         return query;

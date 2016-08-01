@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,10 +26,10 @@ import java.util.Date;
 import java.util.Map;
 
 import org.apache.commons.lang3.mutable.MutableBoolean;
-import org.savapage.core.dao.helpers.AccessControlScopeEnum;
-import org.savapage.core.dao.helpers.DeviceTypeEnum;
+import org.savapage.core.dao.enums.AccessControlScopeEnum;
+import org.savapage.core.dao.enums.DeviceTypeEnum;
+import org.savapage.core.dao.enums.PrinterAttrEnum;
 import org.savapage.core.dao.helpers.JsonUserGroupAccess;
-import org.savapage.core.dao.helpers.PrinterAttrEnum;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.jpa.Device;
 import org.savapage.core.jpa.Printer;
@@ -44,7 +44,7 @@ import org.savapage.core.json.rpc.JsonRpcMethodResult;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface PrinterService {
@@ -53,6 +53,15 @@ public interface PrinterService {
     *
     */
     int MAX_TIME_SERIES_INTERVALS_DAYS = 40;
+
+    /**
+     * Reads the database to check if printer is internal use only.
+     *
+     * @param printer
+     *            The {@link Printer}.
+     * @return {@code true} when internal printer.
+     */
+    boolean isInternalPrinter(Printer printer);
 
     /**
      * Checks if the {@link Printer} can be used for proxy printing, i.e. it is
@@ -146,14 +155,41 @@ public interface PrinterService {
 
     /**
      * Traverses the internal {@link PrinterAttr} list of a {@link Printer} to
+     * remove a {@link PrinterAttr}.
+     *
+     * @param printer
+     *            The {@link Printer}.
+     * @param name
+     *            The {@link PrinterAttrEnum}.
+     *
+     * @return The {@link PrinterAttr} that was removed, or {@code null} when
+     *         not found.
+     */
+    PrinterAttr removeAttribute(Printer printer, PrinterAttrEnum name);
+
+    /**
+     * Traverses the internal {@link PrinterAttr} list of a {@link Printer} to
+     * get the {@link PrinterAttr}.
+     *
+     * @param printer
+     *            The {@link Printer}.
+     * @param name
+     *            The {@link PrinterAttrEnum}.
+     *
+     * @return {@code null} when not found.
+     */
+    PrinterAttr getAttribute(Printer printer, PrinterAttrEnum name);
+
+    /**
+     * Traverses the internal {@link PrinterAttr} list of a {@link Printer} to
      * get the value of an attribute.
      *
      * @param printer
      *            The {@link Printer}.
      * @param name
-     *            The attribute name.
+     *            The {@link PrinterAttrEnum}.
      *
-     * @return {@code null} when is not found.
+     * @return {@code null} when not found.
      */
     String getAttributeValue(Printer printer, PrinterAttrEnum name);
 
@@ -169,6 +205,19 @@ public interface PrinterService {
      * @return {@code null} when no default override is found.
      */
     String getPrintColorModeDefault(final Printer printer);
+
+    /**
+     * Checks if monochrome conversion is performed client-side (locally).
+     * <p>
+     * Traverses the internal {@link PrinterAttr} list of a {@link Printer} to
+     * find the value of {@link PrinterAttrEnum#CLIENT_SIDE_MONOCHROME}.
+     * </p>
+     *
+     * @param printer
+     *            The {@link Printer}.
+     * @return {@code true} if monochrome conversion is performed client-side.
+     */
+    boolean isClientSideMonochrome(Printer printer);
 
     /**
      * Sets printer instance as logically deleted (database is NOT updated).
@@ -248,9 +297,8 @@ public interface PrinterService {
      * @throws IOException
      *             When JSON errors.
      */
-    AbstractJsonRpcMethodResponse addAccessControl(
-            AccessControlScopeEnum scope, String printerName, String groupName)
-            throws IOException;
+    AbstractJsonRpcMethodResponse addAccessControl(AccessControlScopeEnum scope,
+            String printerName, String groupName) throws IOException;
 
     /**
      * Removes {@link UserGroup} access control from a {@link Printer}.
@@ -305,5 +353,29 @@ public interface PrinterService {
      * @return {@code true} when access is granted.
      */
     boolean isPrinterAccessGranted(Printer printer, User user);
+
+    /**
+     * Checks if printer supports hold/release printing.
+     *
+     * @param printer
+     *            The {@link Printer}.
+     * @return {@code true} if printer supports hold/release printing.
+     */
+    boolean isHoldReleasePrinter(final Printer printer);
+
+    /**
+     *
+     * @param printerName
+     *            The CUPS printer name.
+     * @return {@code true} When printer name represents job ticket printer.
+     */
+    boolean isJobTicketPrinter(String printerName);
+
+    /**
+     * Gets the CUPS printer name of the Job Ticket Printer.
+     *
+     * @return Empty string when not configured.
+     */
+    String getJobTicketPrinterName();
 
 }

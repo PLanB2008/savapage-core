@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,6 +21,7 @@
  */
 package org.savapage.core.services.impl;
 
+import org.savapage.core.services.AccessControlService;
 import org.savapage.core.services.AccountVoucherService;
 import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.AppLogService;
@@ -29,39 +30,48 @@ import org.savapage.core.services.DocLogService;
 import org.savapage.core.services.EcoPrintPdfTaskService;
 import org.savapage.core.services.EmailService;
 import org.savapage.core.services.InboxService;
+import org.savapage.core.services.JobTicketService;
 import org.savapage.core.services.OutboxService;
-import org.savapage.core.services.PaperCutService;
+import org.savapage.core.services.PrintDelegationService;
 import org.savapage.core.services.PrinterGroupService;
 import org.savapage.core.services.PrinterService;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.QueueService;
 import org.savapage.core.services.RfIdReaderService;
 import org.savapage.core.services.ServiceFactory;
-import org.savapage.core.services.SmartSchoolService;
 import org.savapage.core.services.StatefulService;
 import org.savapage.core.services.UserGroupService;
 import org.savapage.core.services.UserService;
+import org.savapage.ext.papercut.services.PaperCutService;
+import org.savapage.ext.papercut.services.impl.PaperCutServiceImpl;
+import org.savapage.ext.smartschool.services.SmartschoolProxyService;
+import org.savapage.ext.smartschool.services.SmartschoolService;
+import org.savapage.ext.smartschool.services.impl.SmartschoolProxyServiceImpl;
+import org.savapage.ext.smartschool.services.impl.SmartschoolServiceImpl;
 
 /**
  * Service factory with one (1) SingletonHolder per Service.
  * <p>
  * A SingletonHolder is loaded on first access to one of its public static
  * members, not before. See <a href=
- * "http://en.wikipedia.org/wiki/Singleton_pattern#The_solution_of_Bill_Pugh"
- * >The Singleton solution of Bill Pugh</a>.
+ * "http://en.wikipedia.org/wiki/Singleton_pattern#The_solution_of_Bill_Pugh" >
+ * The Singleton solution of Bill Pugh</a>.
  * </p>
  * <p>
  * IMPORTANT: This granularity is needed because Services have instance
  * variables pointing to other Services.
  * </p>
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class ServiceFactoryImpl implements ServiceFactory {
 
-    /**
-     */
+    private static class AccessControlServiceHolder {
+        public static final AccessControlService SERVICE =
+                new AccessControlServiceImpl();
+    }
+
     private static class AccountingServiceHolder {
         public static final AccountingService SERVICE =
                 new AccountingServiceImpl();
@@ -94,11 +104,16 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     }
 
     private static class InboxServiceHolder {
-        public static final InboxService INSTANCE = new InboxServiceImpl();
+        public static final InboxService SERVICE = new InboxServiceImpl();
+    }
+
+    private static class JobTicketServiceHolder {
+        public static final JobTicketService SERVICE =
+                new JobTicketServiceImpl();
     }
 
     private static class OutboxServiceHolder {
-        public static final OutboxService INSTANCE = new OutboxServiceImpl();
+        public static final OutboxService SERVICE = new OutboxServiceImpl();
     }
 
     private static class PaperCutServiceHolder {
@@ -117,6 +132,11 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     private static class RfIdReaderServiceHolder {
         public static final RfIdReaderService SERVICE =
                 new RfIdReaderServiceImpl();
+    }
+
+    private static class PrintDelegationServiceHolder {
+        public static final PrintDelegationService SERVICE =
+                new PrintDelegationServiceImpl();
     }
 
     private static class PrinterGroupServiceHolder {
@@ -139,12 +159,23 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     }
 
     private static class SmartSchoolServiceHolder {
-        public static final SmartSchoolService SERVICE =
-                new SmartSchoolServiceImpl();
+        public static final SmartschoolService SERVICE =
+                new SmartschoolServiceImpl();
+    }
+
+    private static class SmartSchoolProxyServiceHolder {
+        public static final SmartschoolProxyService SERVICE =
+                new SmartschoolProxyServiceImpl();
     }
 
     private final static StatefulService statefullServices[] =
-            new StatefulService[] { EcoPrintPdfTaskServiceHolder.SERVICE };
+            new StatefulService[] { EcoPrintPdfTaskServiceHolder.SERVICE,
+                    JobTicketServiceHolder.SERVICE };
+
+    @Override
+    public AccessControlService getAccessControlService() {
+        return AccessControlServiceHolder.SERVICE;
+    }
 
     @Override
     public AccountingService getAccountingService() {
@@ -183,12 +214,17 @@ public final class ServiceFactoryImpl implements ServiceFactory {
 
     @Override
     public InboxService getInboxService() {
-        return InboxServiceHolder.INSTANCE;
+        return InboxServiceHolder.SERVICE;
+    }
+
+    @Override
+    public JobTicketService getJobTicketService() {
+        return JobTicketServiceHolder.SERVICE;
     }
 
     @Override
     public OutboxService getOutboxService() {
-        return OutboxServiceHolder.INSTANCE;
+        return OutboxServiceHolder.SERVICE;
     }
 
     @Override
@@ -217,6 +253,11 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     }
 
     @Override
+    public PrintDelegationService getPrintDelegationService() {
+        return PrintDelegationServiceHolder.SERVICE;
+    }
+
+    @Override
     public PrinterService getPrinterService() {
         return PrinterServiceHolder.SERVICE;
     }
@@ -232,8 +273,13 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     }
 
     @Override
-    public SmartSchoolService getSmartSchoolService() {
+    public SmartschoolService getSmartSchoolService() {
         return SmartSchoolServiceHolder.SERVICE;
+    }
+
+    @Override
+    public SmartschoolProxyService getSmartSchoolProxyService() {
+        return SmartSchoolProxyServiceHolder.SERVICE;
     }
 
     @Override

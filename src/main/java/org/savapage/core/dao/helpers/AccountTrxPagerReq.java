@@ -28,6 +28,7 @@ import java.util.Date;
 import org.apache.commons.lang3.time.DateUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.dao.AccountTrxDao;
+import org.savapage.core.dao.enums.AccountTrxTypeEnum;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -87,6 +88,9 @@ public class AccountTrxPagerReq extends AbstractPagerReq {
         @JsonProperty("user_id")
         private Long userId = null;
 
+        @JsonProperty("account_id")
+        private Long accountId = null;
+
         @JsonProperty("text")
         private String containingText = null;
 
@@ -106,6 +110,14 @@ public class AccountTrxPagerReq extends AbstractPagerReq {
 
         public void setUserId(Long userId) {
             this.userId = userId;
+        }
+
+        public Long getAccountId() {
+            return accountId;
+        }
+
+        public void setAccountId(Long accountId) {
+            this.accountId = accountId;
         }
 
         public AccountTrxTypeEnum getTrxType() {

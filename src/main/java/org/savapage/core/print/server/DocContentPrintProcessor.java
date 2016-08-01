@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -45,7 +45,7 @@ import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.UserDao;
-import org.savapage.core.dao.helpers.DocLogProtocolEnum;
+import org.savapage.core.dao.enums.DocLogProtocolEnum;
 import org.savapage.core.doc.DocContent;
 import org.savapage.core.doc.DocContentTypeEnum;
 import org.savapage.core.doc.DocInputStream;
@@ -62,7 +62,7 @@ import org.savapage.core.services.InboxService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.UserService;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
-import org.savapage.core.users.UserAliasList;
+import org.savapage.core.users.conf.UserAliasList;
 import org.savapage.core.util.FileSystemHelper;
 import org.savapage.core.util.Messages;
 import org.slf4j.Logger;
@@ -72,7 +72,7 @@ import org.slf4j.LoggerFactory;
  * Processes a document print request. The document can be PDF, PostScripts,
  * {@link CupsCommandFile#FIRST_LINE_SIGNATURE}, or any other supported format.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public class DocContentPrintProcessor {
@@ -80,25 +80,25 @@ public class DocContentPrintProcessor {
     /**
      * The logger.
      */
-    private static final Logger LOGGER = LoggerFactory
-            .getLogger(DocContentPrintProcessor.class);
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(DocContentPrintProcessor.class);
 
     /**
      *
      */
-    private static final DocLogService DOC_LOG_SERVICE = ServiceContext
-            .getServiceFactory().getDocLogService();
+    private static final DocLogService DOC_LOG_SERVICE =
+            ServiceContext.getServiceFactory().getDocLogService();
 
     /**
     *
     */
-    private static final InboxService INBOX_SERVICE = ServiceContext
-            .getServiceFactory().getInboxService();
+    private static final InboxService INBOX_SERVICE =
+            ServiceContext.getServiceFactory().getInboxService();
     /**
      *
      */
-    private static final UserService USER_SERVICE = ServiceContext
-            .getServiceFactory().getUserService();
+    private static final UserService USER_SERVICE =
+            ServiceContext.getServiceFactory().getUserService();
 
     /**
      *
@@ -254,7 +254,7 @@ public class DocContentPrintProcessor {
      * @return
      */
     public boolean isTrustedQueue() {
-        return queue != null && queue.getTrusted();
+        return this.queue != null && this.queue.getTrusted();
     }
 
     /**
@@ -264,7 +264,34 @@ public class DocContentPrintProcessor {
      * @return
      */
     public boolean isAuthorized() {
-        return isTrustedUser() && (isTrustedQueue() || isAuthWebAppUser());
+
+        final boolean authorized =
+                isTrustedUser() && (isTrustedQueue() || isAuthWebAppUser());
+
+        if (!authorized && LOGGER.isWarnEnabled()) {
+
+            final StringBuilder msg = new StringBuilder();
+
+            msg.append("Authorized [").append(authorized).append("] :");
+
+            msg.append(" Requesting User [").append(this.requestingUserId)
+                    .append("]");
+
+            msg.append(" Trusted User [").append(this.uidTrusted).append("]");
+
+            //
+            msg.append(" Trusted Queue [").append(this.isTrustedQueue())
+                    .append("]");
+            if (this.queue == null) {
+                msg.append(" Reason [queue is null]");
+            }
+
+            msg.append(" Authenticatied Web App User [")
+                    .append(this.authWebAppUser).append("]");
+
+            LOGGER.warn(msg.toString());
+        }
+        return authorized;
     }
 
     /**
@@ -274,7 +301,7 @@ public class DocContentPrintProcessor {
      * @return {@code null} if no user is authenticated.
      */
     public String getAuthWebAppUser() {
-        return authWebAppUser;
+        return this.authWebAppUser;
     }
 
     /**
@@ -283,7 +310,7 @@ public class DocContentPrintProcessor {
      * @return
      */
     public boolean isAuthWebAppUser() {
-        return StringUtils.isNotBlank(authWebAppUser);
+        return StringUtils.isNotBlank(this.authWebAppUser);
     }
 
     /**
@@ -292,7 +319,7 @@ public class DocContentPrintProcessor {
      * User. The user (alias) must be a Person.
      * <p>
      * <b>Note</b>: On a trusted Queue (and lazy print enabled) a user is lazy
-     * inserted.
+     * inserted. <i>This method has its own database transaction scope.</i>
      * </p>
      *
      * @param requestingUserId
@@ -310,6 +337,12 @@ public class DocContentPrintProcessor {
 
         if (requestingUserId == null) {
 
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug(
+                        String.format("Requesting user id [%s] is unknown.",
+                                requestingUserId));
+            }
+
             this.userDb = null;
             this.uidTrusted = null;
 
@@ -326,7 +359,8 @@ public class DocContentPrintProcessor {
                 }
             }
 
-            ConfigManager cm = ConfigManager.instance();
+            final ConfigManager cm = ConfigManager.instance();
+
             /*
              * Read (alias) user from database.
              */
@@ -342,9 +376,16 @@ public class DocContentPrintProcessor {
                 final String group =
                         cm.getConfigValue(Key.USER_SOURCE_GROUP).trim();
 
-                this.userDb =
-                        USER_SERVICE.lazyInsertExternalUser(cm.getUserSource(),
-                                uid, group);
+                ServiceContext.getDaoContext().beginTransaction();
+
+                this.userDb = USER_SERVICE
+                        .lazyInsertExternalUser(cm.getUserSource(), uid, group);
+
+                if (this.userDb == null) {
+                    ServiceContext.getDaoContext().rollback();
+                } else {
+                    ServiceContext.getDaoContext().commit();
+                }
             }
         }
 
@@ -374,7 +415,7 @@ public class DocContentPrintProcessor {
          * Check authorization.
          */
         boolean isAuthorized = false;
-        String reason = null;
+        final String reason;
 
         if (this.userDb == null) {
 
@@ -393,6 +434,7 @@ public class DocContentPrintProcessor {
                     reason = "is DISABLED for printing";
                 } else {
                     isAuthorized = true;
+                    reason = null;
                 }
 
             } else {
@@ -423,16 +465,16 @@ public class DocContentPrintProcessor {
 
                 if (this.uidTrusted != null && !this.uidTrusted.equals(uid)) {
 
-                    if (LOGGER.isInfoEnabled()) {
-                        LOGGER.info("Requesting user [" + uid
+                    if (LOGGER.isWarnEnabled()) {
+                        LOGGER.warn("Requesting user [" + uid
                                 + "] is unknown -> WebApp user ["
                                 + this.uidTrusted + "] " + reason
                                 + ": print denied");
                     }
 
                 } else {
-                    if (LOGGER.isInfoEnabled()) {
-                        LOGGER.info("Requesting user [" + uid + "] " + reason
+                    if (LOGGER.isWarnEnabled()) {
+                        LOGGER.warn("Requesting user [" + uid + "] " + reason
                                 + ": print denied");
                     }
                 }
@@ -493,13 +535,11 @@ public class DocContentPrintProcessor {
      *             this case the {@code ps2pdf} program fails and reports that
      *             <i>Redistilling encrypted PDF is not permitted</i>.
      */
-    private void
-            savePostScript(final InputStream istr, final OutputStream ostr)
-                    throws IOException, PostScriptDrmException {
+    private void savePostScript(final InputStream istr, final OutputStream ostr)
+            throws IOException, PostScriptDrmException {
 
-        final boolean respectDRM =
-                !ConfigManager.instance().isConfigValue(
-                        IConfigProp.Key.PRINT_IN_ALLOW_ENCRYPTED_PDF);
+        final boolean respectDRM = !ConfigManager.instance()
+                .isConfigValue(IConfigProp.Key.PRINT_IN_ALLOW_ENCRYPTED_PDF);
 
         BufferedReader reader = new BufferedReader(new InputStreamReader(istr));
         BufferedWriter writer =
@@ -509,8 +549,8 @@ public class DocContentPrintProcessor {
         case DRM_NEGLECTED:
             setDrmRestricted(true);
             if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug("DRM protected PostScript from user ["
-                        + uidTrusted + "] accepted");
+                LOGGER.debug("DRM protected PostScript from user [" + uidTrusted
+                        + "] accepted");
             }
             break;
         case DRM_NO:
@@ -562,6 +602,9 @@ public class DocContentPrintProcessor {
 
             if (this.signatureString.startsWith(DocContent.HEADER_PDF)) {
                 contentType = DocContentTypeEnum.PDF;
+            } else if (this.signatureString
+                    .startsWith(DocContent.HEADER_PDF_BANNER)) {
+                contentType = DocContentTypeEnum.CUPS_PDF_BANNER;
             } else if (this.signatureString.startsWith(DocContent.HEADER_PS)) {
                 contentType = DocContentTypeEnum.PS;
             } else if (this.signatureString
@@ -610,25 +653,21 @@ public class DocContentPrintProcessor {
      */
     private void evaluateJobContent(DocLogProtocolEnum delivery,
             final DocContentTypeEnum assignedContentType,
-            final InputStream content) throws IOException,
-            UnsupportedPrintJobContent {
+            final InputStream content)
+            throws IOException, UnsupportedPrintJobContent {
 
         UnsupportedPrintJobContent formatException = null;
         FileOutputStream fostr = null;
         try {
             if (assignedContentType == DocContentTypeEnum.UNKNOWN) {
 
-                formatException =
-                        new UnsupportedPrintJobContent(
-                                "header ["
-                                        + StringUtils
-                                                .defaultString(this.signatureString)
-                                        + "] unknown");
+                formatException = new UnsupportedPrintJobContent("header ["
+                        + StringUtils.defaultString(this.signatureString)
+                        + "] unknown");
 
                 if (SAVE_UNSUPPORTED_CONTENT) {
-                    fostr =
-                            new FileOutputStream(ConfigManager.getAppTmpDir()
-                                    + "/" + delivery + "_"
+                    fostr = new FileOutputStream(
+                            ConfigManager.getAppTmpDir() + "/" + delivery + "_"
                                     + System.currentTimeMillis() + ".unknown");
                     fostr.write(readAheadInputBytes);
                     saveBinary(content, fostr);
@@ -708,7 +747,7 @@ public class DocContentPrintProcessor {
          *
          */
         final String homeDir = ConfigManager.getUserHomeDir(this.uidTrusted);
-        final String tempDir = ConfigManager.getUserTempDir(this.uidTrusted);
+        final String tempDirApp = ConfigManager.getAppTmpDir();
 
         /*
          * Lazy create user home directory.
@@ -734,20 +773,21 @@ public class DocContentPrintProcessor {
             /*
              * The basename of the resulting file WITHOUT extension.
              */
-            final String jobFileBase = this.uuidJob.toString() + ".";
+            final String jobFileBase =
+                    String.format("%s%c", this.uuidJob.toString(), '.');
 
             /*
              * The basename of the resulting PDF file.
              */
-            final String jobFileBasePdf =
-                    jobFileBase + DocContent.FILENAME_EXT_PDF;
+            final String jobFileBasePdf = String.format("%s%s", jobFileBase,
+                    DocContent.FILENAME_EXT_PDF);
 
             /*
              * File to receive the input stream content.
              */
-            final File contentFile =
-                    new File(tempDir + "/" + jobFileBase
-                            + DocContent.getFileExtension(inputType));
+            final File contentFile = new File(String.format("%s%c%s%s",
+                    tempDirApp, File.separatorChar, jobFileBase,
+                    DocContent.getFileExtension(inputType)));
 
             /*
              * Create the file.
@@ -803,11 +843,15 @@ public class DocContentPrintProcessor {
                  */
                 fileConverter = DocContent.createPdfFileConverter(inputType);
 
+            } else if (inputType == DocContentTypeEnum.CUPS_PDF_BANNER) {
+
+                streamConverter = DocContent.createPdfStreamConverter(inputType,
+                        preferredOutputFont);
+
             } else {
 
-                streamConverter =
-                        DocContent.createPdfStreamConverter(inputType,
-                                preferredOutputFont);
+                streamConverter = DocContent.createPdfStreamConverter(inputType,
+                        preferredOutputFont);
 
                 if (streamConverter == null) {
 
@@ -834,9 +878,8 @@ public class DocContentPrintProcessor {
                  * INVARIANT: no read-ahead on the input content stream.
                  */
                 final DocInputStream istrDoc = new DocInputStream(istrContent);
-                this.inputByteCount =
-                        streamConverter.convert(inputType, istrDoc,
-                                fostrContent);
+                this.inputByteCount = streamConverter.convert(inputType,
+                        istrDoc, fostrContent);
             }
 
             /*
@@ -881,11 +924,10 @@ public class DocContentPrintProcessor {
              */
             if (ConfigManager.isEcoPrintEnabled()
                     && this.getPageProps().getNumberOfPages() <= ConfigManager
-                            .instance()
-                            .getConfigInt(
+                            .instance().getConfigInt(
                                     Key.ECO_PRINT_AUTO_THRESHOLD_SHADOW_PAGE_COUNT)) {
-                INBOX_SERVICE.startEcoPrintPdfTask(homeDir,
-                        pathTarget.toFile(), this.uuidJob);
+                INBOX_SERVICE.startEcoPrintPdfTask(homeDir, pathTarget.toFile(),
+                        this.uuidJob);
             }
 
         } catch (Exception e) {
@@ -1182,9 +1224,7 @@ public class DocContentPrintProcessor {
             deniedUserId = this.requestingUserId;
         }
 
-        AdminPublisher.instance().publish(
-                PubTopicEnum.USER,
-                pubLevel,
+        AdminPublisher.instance().publish(PubTopicEnum.USER, pubLevel,
                 localize("pub-user-print-in-denied", deniedUserId, urlQueue,
                         originatorIp, pubMessage));
     }

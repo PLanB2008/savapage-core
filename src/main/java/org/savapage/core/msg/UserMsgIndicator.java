@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -58,7 +58,7 @@ import org.slf4j.LoggerFactory;
  * message.
  * </p>
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class UserMsgIndicator {
@@ -66,8 +66,8 @@ public final class UserMsgIndicator {
     /**
     *
     */
-    private static final Logger LOGGER = LoggerFactory
-            .getLogger(UserMsgIndicator.class);
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(UserMsgIndicator.class);
 
     /**
      * Message to be delivered to User Web App.
@@ -80,9 +80,20 @@ public final class UserMsgIndicator {
         ACCOUNT_INFO,
 
         /**
-         * A printed in was denied.
+         * .
+         */
+        JOBTICKET_DENIED,
+
+        /**
+         * A print-in was denied.
          */
         PRINT_IN_DENIED,
+
+        /**
+         * A print-in expired.
+         */
+        PRINT_IN_EXPIRED,
+
         /**
          * A document was successfully proxy printed.
          */
@@ -94,7 +105,12 @@ public final class UserMsgIndicator {
         PRINT_OUT_AUTH_REQ,
 
         /**
-         * Request to stop the long poll
+         * Proxy Print job is held.
+         */
+        PRINT_OUT_HOLD,
+
+        /**
+         * Request to stop the long poll.
          */
         STOP_POLL_REQ
     };
@@ -245,8 +261,8 @@ public final class UserMsgIndicator {
      *            The file to check.
      * @return {@code true} if the offered file is the indicator file
      */
-    public static boolean
-            isMsgIndicatorFile(final String user, final File file) {
+    public static boolean isMsgIndicatorFile(final String user,
+            final File file) {
         return file.equals(indicatorFile(user));
     }
 
@@ -258,8 +274,9 @@ public final class UserMsgIndicator {
      * @return The full path of the file store.
      */
     private static File indicatorFile(final String userId) {
-        return new File(String.format("%s%s%s",
-                ConfigManager.getUserHomeDir(userId), "/", FILE_BASENAME));
+        return new File(
+                String.format("%s%c%s", ConfigManager.getUserHomeDir(userId),
+                        File.separatorChar, FILE_BASENAME));
     }
 
     /**
@@ -270,9 +287,9 @@ public final class UserMsgIndicator {
      * @return The full path of the file store.
      */
     private static File indicatorFileTemp(final String userId) {
-        return new File(String.format("%s%s%s.%s", ConfigManager
-                .getUserTempDir(userId), "/", FILE_BASENAME, UUID.randomUUID()
-                .toString()));
+        return new File(String.format("%s%c%s_%s.%s",
+                ConfigManager.getAppTmpDir(), File.separatorChar, userId,
+                FILE_BASENAME, UUID.randomUUID().toString()));
     }
 
     /**
@@ -297,7 +314,8 @@ public final class UserMsgIndicator {
      * @param userId
      * @return The {@link UserMsgIndicator}.
      */
-    public static UserMsgIndicator read(final String userId) throws IOException {
+    public static UserMsgIndicator read(final String userId)
+            throws IOException {
         return new UserMsgIndicator(userId);
     }
 
@@ -384,9 +402,9 @@ public final class UserMsgIndicator {
             fos = null;
 
             java.nio.file.Files.move(
-                    FileSystems.getDefault().getPath(
-                            fileTemp.getCanonicalPath()), FileSystems
-                            .getDefault()
+                    FileSystems.getDefault()
+                            .getPath(fileTemp.getCanonicalPath()),
+                    FileSystems.getDefault()
                             .getPath(fileTarget.getCanonicalPath()),
                     StandardCopyOption.ATOMIC_MOVE,
                     StandardCopyOption.REPLACE_EXISTING);
@@ -438,9 +456,9 @@ public final class UserMsgIndicator {
 
         if (singleTime) {
 
-            jpql.append(" AND ("
-                    + " (D.createdDate = :lastDate AND PI.printed = false)"
-                    + " OR (PO.cupsCompletedTime = :lastSeconds))");
+            jpql.append(
+                    " AND (" + " (D.createdDate = :lastDate AND PI.printed = false)"
+                            + " OR (PO.cupsCompletedTime = :lastSeconds))");
         } else {
             jpql.append(" AND ( (D.createdDate > :prevDate"
                     + " AND D.createdDate <= :lastDate AND PI.printed = false)"
@@ -515,7 +533,7 @@ public final class UserMsgIndicator {
 
         JsonUserMsg msg = new JsonUserMsg();
 
-        msg.setLevel(1); // TODO
+        msg.setLevel(JsonUserMsg.LEVEL_WARN);
 
         msg.setText(localizeMsg(msg.getClass(), locale, "msg-print-in-denied",
                 "/" + printIn.getQueue().getUrlPath(),
@@ -536,7 +554,7 @@ public final class UserMsgIndicator {
         final PrintOutDao printOutDao =
                 ServiceContext.getDaoContext().getPrintOutDao();
 
-        int level = 1;
+        int level = JsonUserMsg.LEVEL_WARN;
         String key = null;
 
         switch (printOutDao.getIppJobState(printOut)) {
@@ -550,7 +568,7 @@ public final class UserMsgIndicator {
             key = "msg-print-out-aborted";
             break;
         case IPP_JOB_COMPLETED:
-            level = 0;
+            level = JsonUserMsg.LEVEL_INFO;
             key = "msg-print-out-completed";
             break;
         default:
@@ -564,8 +582,8 @@ public final class UserMsgIndicator {
             msg = new JsonUserMsg();
             msg.setLevel(level);
             msg.setText(localizeMsg(msg.getClass(), locale, key,
-                    "#" + String.valueOf(printOut.getCupsJobId()), printOut
-                            .getPrinter().getDisplayName()));
+                    "#" + String.valueOf(printOut.getCupsJobId()),
+                    printOut.getPrinter().getDisplayName()));
         }
         return msg;
     }

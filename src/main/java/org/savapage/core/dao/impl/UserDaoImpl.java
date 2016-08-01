@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,13 +27,15 @@ import java.util.List;
 import javax.persistence.NoResultException;
 import javax.persistence.Query;
 
+import org.savapage.core.SpException;
 import org.savapage.core.dao.UserDao;
+import org.savapage.core.dao.enums.ReservedUserGroupEnum;
 import org.savapage.core.jpa.User;
 import org.savapage.core.services.ServiceContext;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
@@ -47,9 +49,8 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
     @Override
     public User findByAccount(final Long accountId) {
 
-        final String jpql =
-                "SELECT UA.user FROM UserAccount UA "
-                        + "JOIN UA.account A WHERE A.id = :accountId";
+        final String jpql = "SELECT UA.user FROM UserAccount UA "
+                + "JOIN UA.account A WHERE A.id = :accountId";
 
         final Query query = getEntityManager().createQuery(jpql.toString());
 
@@ -80,7 +81,13 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
         final StringBuilder jpql =
                 new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
 
-        jpql.append("SELECT COUNT(U.id) FROM User U");
+        jpql.append("SELECT COUNT(U.id) FROM ");
+
+        if (filter.getUserGroupId() == null) {
+            jpql.append("User U");
+        } else {
+            jpql.append("UserGroupMember M JOIN M.user U JOIN M.group G");
+        }
 
         if (filter.getContainingEmailText() != null) {
             jpql.append(" JOIN U.emails E");
@@ -94,6 +101,7 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
         return countResult.longValue();
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public List<User> getListChunk(final ListFilter filter,
             final Integer startPosition, final Integer maxResults,
@@ -106,7 +114,13 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
          * NOTE: We need a DISTINCT to prevent a User/UserEmail cartesian
          * product.
          */
-        jpql.append("SELECT DISTINCT U FROM User U");
+        jpql.append("SELECT DISTINCT U FROM ");
+
+        if (filter.getUserGroupId() == null) {
+            jpql.append("User U");
+        } else {
+            jpql.append("UserGroupMember M JOIN M.user U JOIN M.group G");
+        }
 
         if (filter.getContainingEmailText() == null) {
             /*
@@ -169,6 +183,11 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
         StringBuilder where = new StringBuilder();
 
         int nWhere = 0;
+
+        if (filter.getUserGroupId() != null) {
+            nWhere++;
+            where.append(" G.id = :userGroupId");
+        }
 
         if (filter.getContainingIdText() != null) {
             if (nWhere > 0) {
@@ -252,17 +271,21 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
 
         final Query query = getEntityManager().createQuery(jpql.toString());
 
+        if (filter.getUserGroupId() != null) {
+            query.setParameter("userGroupId", filter.getUserGroupId());
+        }
+
         if (filter.getContainingIdText() != null) {
-            query.setParameter("containingIdText", "%"
-                    + filter.getContainingIdText().toLowerCase() + "%");
+            query.setParameter("containingIdText",
+                    "%" + filter.getContainingIdText().toLowerCase() + "%");
         }
         if (filter.getContainingNameText() != null) {
-            query.setParameter("containingNameText", "%"
-                    + filter.getContainingNameText().toLowerCase() + "%");
+            query.setParameter("containingNameText",
+                    "%" + filter.getContainingNameText().toLowerCase() + "%");
         }
         if (filter.getContainingEmailText() != null) {
-            query.setParameter("containingEmailText", "%"
-                    + filter.getContainingEmailText().toLowerCase() + "%");
+            query.setParameter("containingEmailText",
+                    "%" + filter.getContainingEmailText().toLowerCase() + "%");
         }
         if (filter.getInternal() != null) {
             query.setParameter("selInternal", filter.getInternal());
@@ -286,19 +309,15 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
     @Override
     public void resetTotals(final Date resetDate, final String resetBy) {
 
-        final String jpql =
-                "UPDATE User U SET " + "U.numberOfPrintInJobs = 0, "
-                        + "U.numberOfPrintInPages = 0, "
-                        + "U.numberOfPrintInBytes = 0, "
-                        + "U.numberOfPdfOutJobs = 0, "
-                        + "U.numberOfPdfOutPages = 0, "
-                        + "U.numberOfPdfOutBytes = 0,"
-                        + "U.numberOfPrintOutJobs = 0, "
-                        + "U.numberOfPrintOutPages = 0, "
-                        + "U.numberOfPrintOutSheets = 0, "
-                        + "U.numberOfPrintOutEsu = 0, "
-                        + "U.numberOfPrintOutBytes = 0,"
-                        + "U.resetDate = :resetDate, U.resetBy = :resetBy";
+        final String jpql = "UPDATE User U SET " + "U.numberOfPrintInJobs = 0, "
+                + "U.numberOfPrintInPages = 0, "
+                + "U.numberOfPrintInBytes = 0, " + "U.numberOfPdfOutJobs = 0, "
+                + "U.numberOfPdfOutPages = 0, " + "U.numberOfPdfOutBytes = 0,"
+                + "U.numberOfPrintOutJobs = 0, "
+                + "U.numberOfPrintOutPages = 0, "
+                + "U.numberOfPrintOutSheets = 0, "
+                + "U.numberOfPrintOutEsu = 0, " + "U.numberOfPrintOutBytes = 0,"
+                + "U.resetDate = :resetDate, U.resetBy = :resetBy";
 
         final Query query = getEntityManager().createQuery(jpql);
 
@@ -319,9 +338,8 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
          */
         int nCount = 0;
 
-        final String jpql =
-                "SELECT U FROM User U WHERE U.deleted = true "
-                        + "AND U.docLog IS EMPTY";
+        final String jpql = "SELECT U FROM User U WHERE U.deleted = true "
+                + "AND U.docLog IS EMPTY";
 
         final Query query = getEntityManager().createQuery(jpql);
 
@@ -338,17 +356,56 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
 
     @Override
     public long countActiveUsers() {
-        final Query query =
-                getEntityManager().createQuery(
-                        "SELECT COUNT(U.id) FROM User U"
-                                + " WHERE U.deleted = false");
+        return countActiveUsers(ReservedUserGroupEnum.ALL);
+    }
+
+    @Override
+    public long countActiveUsers(final ReservedUserGroupEnum userGroupEnum) {
+
+        final StringBuilder psql = new StringBuilder();
+
+        psql.append(
+                "SELECT COUNT(U.id) FROM User U" + " WHERE U.deleted = false");
+
+        switch (userGroupEnum) {
+        case ALL:
+            // noop
+            break;
+        case EXTERNAL:
+            psql.append(" AND U.internal = false");
+            break;
+        case INTERNAL:
+            psql.append(" AND U.internal = true");
+            break;
+        default:
+            throw new SpException(String.format("%s.%s not handled",
+                    ReservedUserGroupEnum.class.getSimpleName(),
+                    userGroupEnum.toString()));
+        }
+        final Query query = getEntityManager().createQuery(psql.toString());
         final Number countResult = (Number) query.getSingleResult();
         return countResult.longValue();
     }
 
     @Override
+    public User findActiveUserById(final Long id) {
+        final User user = this.findById(id);
+        if (user.getDeleted()) {
+            return null;
+        }
+        return user;
+    }
+
+    @Override
     public User findActiveUserByUserId(final String userId) {
         return readUser(userId, null, null, null);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public List<User> checkActiveUserByUserId(final String userId) {
+        final Query query = this.createActiveUserQuery(userId);
+        return query.getResultList();
     }
 
     @Override
@@ -373,6 +430,21 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
     }
 
     /**
+     * @param userId
+     *            The unique name of the user.
+     * @return A {@link Query} to find the active user(s) by unique name.
+     */
+    private Query createActiveUserQuery(final String userId) {
+
+        final String jpql = "SELECT U FROM User U WHERE U.userId = :userId "
+                + "AND U.deleted = false";
+
+        final Query query = getEntityManager().createQuery(jpql);
+        query.setParameter("userId", userId);
+        return query;
+    }
+
+    /**
      * Reads the user from database, when not found (or logically deleted) the
      * value of userToInsert determines how to proceed.
      *
@@ -393,15 +465,7 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
 
         final boolean lazyInsertRow = userToInsert != null;
 
-        /*
-         * Find the user by unique name
-         */
-        final String jpql =
-                "SELECT U FROM User U WHERE U.userId = :userId "
-                        + "AND U.deleted = false";
-
-        final Query query = getEntityManager().createQuery(jpql);
-        query.setParameter("userId", userId);
+        final Query query = this.createActiveUserQuery(userId);
 
         User user = null;
 

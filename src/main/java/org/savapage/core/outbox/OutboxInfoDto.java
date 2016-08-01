@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,9 +26,15 @@ import java.io.StringWriter;
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.savapage.core.dto.AbstractDto;
+import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
+import org.savapage.core.ipp.attribute.syntax.IppKeyword;
+import org.savapage.core.services.helpers.AccountTrxInfo;
+import org.savapage.core.services.helpers.AccountTrxInfoSet;
+import org.savapage.core.services.helpers.ExternalSupplierInfo;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -38,7 +44,7 @@ import com.fasterxml.jackson.core.JsonGenerator;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 @JsonInclude(Include.NON_NULL)
@@ -49,7 +55,8 @@ public final class OutboxInfoDto extends AbstractDto {
      * @author Rijk Ravestein
      *
      */
-    public final static class LocaleInfo {
+    @JsonInclude(Include.NON_NULL)
+    public static final class LocaleInfo {
 
         private String cost;
         private String submitTime;
@@ -91,9 +98,120 @@ public final class OutboxInfoDto extends AbstractDto {
     }
 
     /**
+     * A weighted {@link Account} transaction with free format details.
+     * <p>
+     * NOTE: This class has a similar purpose as {@link AccountTrxInfo}, but
+     * contains the primary key of {@link Account} instead of the object itself.
+     * </p>
+     *
+     * @author Rijk Ravestein
      *
      */
-    public final static class OutboxJob {
+    @JsonInclude(Include.NON_NULL)
+    public static final class OutboxAccountTrxInfo {
+
+        /**
+         * Primary key of the {@link Account}.
+         */
+        private long accountId;
+
+        /**
+         * Mathematical weight of the transaction in the context of a
+         * transaction set.
+         */
+        private int weight;
+
+        /**
+         * Free format details from external source.
+         */
+        private String extDetails;
+
+        /**
+         *
+         * @return
+         */
+        public long getAccountId() {
+            return accountId;
+        }
+
+        public void setAccountId(long accountId) {
+            this.accountId = accountId;
+        }
+
+        public int getWeight() {
+            return weight;
+        }
+
+        public void setWeight(int weight) {
+            this.weight = weight;
+        }
+
+        public String getExtDetails() {
+            return extDetails;
+        }
+
+        public void setExtDetails(String extDetails) {
+            this.extDetails = extDetails;
+        }
+    }
+
+    /**
+     * A unit of weighted {@link OutboxAccountTrxInfo} objects.
+     * <p>
+     * NOTE: This class has a similar purpose as {@link AccountTrxInfoSet}, but
+     * contains {@link OutboxAccountTrxInfo} objects that have the primary key
+     * of {@link Account} instead of the {@link Account} object itself.
+     * </p>
+     *
+     * @author Rijk Ravestein
+     *
+     */
+    @JsonInclude(Include.NON_NULL)
+    public static final class OutboxAccountTrxInfoSet {
+
+        /**
+         * The weight total. IMPORTANT: This total need NOT be the same as the
+         * accumulated weight of the individual Account transactions. For
+         * example: parts of the printing costs may be charged to (personal and
+         * shared) multiple accounts.
+         */
+        private int weightTotal;
+
+        /**
+         * .
+         */
+        private List<OutboxAccountTrxInfo> transactions;
+
+        public int getWeightTotal() {
+            return weightTotal;
+        }
+
+        public void setWeightTotal(int weightTotal) {
+            this.weightTotal = weightTotal;
+        }
+
+        public List<OutboxAccountTrxInfo> getTransactions() {
+            return transactions;
+        }
+
+        public void setTransactions(List<OutboxAccountTrxInfo> transactions) {
+            this.transactions = transactions;
+        }
+
+    }
+
+    /**
+     *
+     */
+    @JsonInclude(Include.NON_NULL)
+    public static final class OutboxJobDto {
+
+        /**
+         * Is {@code null} when in User outbox.
+         */
+        private Long userId;
+
+        private ExternalSupplierInfo externalSupplierInfo;
 
         private String file;
         private String printerName;
@@ -102,6 +220,7 @@ public final class OutboxInfoDto extends AbstractDto {
         private int pages;
         private int sheets;
         private boolean removeGraphics;
+        private boolean drm;
         private boolean ecoPrint;
         private boolean collate;
         private BigDecimal cost;
@@ -109,6 +228,7 @@ public final class OutboxInfoDto extends AbstractDto {
         private long expiryTime;
         private Boolean fitToPage;
         private Map<String, String> optionValues;
+        private String comment;
 
         private LocaleInfo localeInfo;
 
@@ -116,6 +236,29 @@ public final class OutboxInfoDto extends AbstractDto {
          * Note: {@link LinkedHashMap} is insertion ordered.
          */
         private LinkedHashMap<String, Integer> uuidPageCount;
+
+        /**
+         *
+         */
+        private OutboxAccountTrxInfoSet accountTransactions;
+
+        //
+        public Long getUserId() {
+            return userId;
+        }
+
+        public void setUserId(Long userId) {
+            this.userId = userId;
+        }
+
+        public ExternalSupplierInfo getExternalSupplierInfo() {
+            return externalSupplierInfo;
+        }
+
+        public void setExternalSupplierInfo(
+                ExternalSupplierInfo externalSupplierInfo) {
+            this.externalSupplierInfo = externalSupplierInfo;
+        }
 
         public String getFile() {
             return file;
@@ -171,6 +314,14 @@ public final class OutboxInfoDto extends AbstractDto {
 
         public void setRemoveGraphics(boolean removeGraphics) {
             this.removeGraphics = removeGraphics;
+        }
+
+        public boolean isDrm() {
+            return drm;
+        }
+
+        public void setDrm(boolean drm) {
+            this.drm = drm;
         }
 
         public boolean isEcoPrint() {
@@ -256,6 +407,14 @@ public final class OutboxInfoDto extends AbstractDto {
             this.optionValues = optionValues;
         }
 
+        public String getComment() {
+            return comment;
+        }
+
+        public void setComment(String comment) {
+            this.comment = comment;
+        }
+
         /**
          * Deep copy of option values.
          *
@@ -278,9 +437,55 @@ public final class OutboxInfoDto extends AbstractDto {
         /**
          * Note: {@link LinkedHashMap} is insertion ordered.
          */
-        public void setUuidPageCount(
-                LinkedHashMap<String, Integer> uuidPageCount) {
+        public void
+                setUuidPageCount(LinkedHashMap<String, Integer> uuidPageCount) {
             this.uuidPageCount = uuidPageCount;
+        }
+
+        public OutboxAccountTrxInfoSet getAccountTransactions() {
+            return accountTransactions;
+        }
+
+        public void setAccountTransactions(
+                OutboxAccountTrxInfoSet accountTransactions) {
+            this.accountTransactions = accountTransactions;
+        }
+
+        /**
+         *
+         * @return {@code true} if this is a color job.
+         */
+        @JsonIgnore
+        public boolean isColorJob() {
+            return isOptionPresent(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE,
+                    IppKeyword.PRINT_COLOR_MODE_COLOR);
+        }
+
+        /**
+         *
+         * @return {@code true} if this is a duplex job.
+         */
+        @JsonIgnore
+        public boolean isDuplexJob() {
+            return isOptionPresent(IppDictJobTemplateAttr.ATTR_SIDES,
+                    IppKeyword.SIDES_TWO_SIDED_LONG_EDGE)
+                    || isOptionPresent(IppDictJobTemplateAttr.ATTR_SIDES,
+                            IppKeyword.SIDES_TWO_SIDED_SHORT_EDGE);
+        }
+
+        /**
+         * Checks if option value is present.
+         *
+         * @param key
+         *            The option key.
+         * @param value
+         *            The option value;
+         * @return {@code true} if option value is present.
+         */
+        @JsonIgnore
+        public boolean isOptionPresent(final String key, final String value) {
+            final String found = this.optionValues.get(key);
+            return found != null && found.equals(value);
         }
 
     }
@@ -293,19 +498,19 @@ public final class OutboxInfoDto extends AbstractDto {
     /**
      * Note: {@link LinkedHashMap} is insertion ordered.
      */
-    private LinkedHashMap<String, OutboxJob> jobs = new LinkedHashMap<>();
+    private LinkedHashMap<String, OutboxJobDto> jobs = new LinkedHashMap<>();
 
     /**
      * Note: {@link LinkedHashMap} is insertion ordered.
      */
-    public LinkedHashMap<String, OutboxJob> getJobs() {
+    public LinkedHashMap<String, OutboxJobDto> getJobs() {
         return jobs;
     }
 
     /**
      * Note: {@link LinkedHashMap} is insertion ordered.
      */
-    public void setJobs(LinkedHashMap<String, OutboxJob> jobs) {
+    public void setJobs(LinkedHashMap<String, OutboxJobDto> jobs) {
         this.jobs = jobs;
     }
 
@@ -328,11 +533,13 @@ public final class OutboxInfoDto extends AbstractDto {
     /**
      * Adds a job.
      *
+     * @param fileName
+     *            The file name.
      * @param job
      *            The job to add.
      */
     @JsonIgnore
-    public void addJob(final String fileName, final OutboxJob job) {
+    public void addJob(final String fileName, final OutboxJobDto job) {
         this.jobs.put(fileName, job);
     }
 

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -42,6 +42,7 @@ import org.savapage.core.ipp.IppMediaSizeEnum;
 import org.savapage.core.job.DocLogClean;
 import org.savapage.core.jpa.DocIn;
 import org.savapage.core.jpa.User;
+import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.print.proxy.ProxyPrintJobChunkRange;
 
 /**
@@ -109,20 +110,6 @@ public interface InboxService {
      * @return The touched {@link InboxInfoDto}.
      */
     InboxInfoDto touchLastPreviewTime(String userId);
-
-    /**
-     * Gets the corresponding PDF file name from the PS file name.
-     *
-     * @param userId
-     *            The unique user id.
-     * @param filePs
-     *            The PS file name.
-     * @param isLetterhead
-     *            {@code true} if the file represents a letterhead.
-     * @return The path of the corresponding PDF file
-     */
-    String getPdfFromPsFileName(String userId, String filePs,
-            boolean isLetterhead);
 
     /**
      * Gets the number of pages in a PDF file.
@@ -329,20 +316,67 @@ public interface InboxService {
     int deleteAllPages(String userId);
 
     /**
-     * Deletes pages from virtual document.
+     * Deletes pages from the virtual document.
      *
      * @param userId
      *            The unique user id.
      * @param ranges
      *            String with lpr style (1-based) page ranges.
      * @return The number of deleted pages.
+     *
      * @throws IllegalArgumentException
      *             When page range syntax error.
      */
     int deletePages(String userId, String ranges);
 
     /**
-     * Deletes a job.
+     * Deletes pages from a <i>vanilla</i> inbox job.
+     *
+     * @param userId
+     *            The unique user id.
+     * @param iVanillaJobIndex
+     *            The zero-based job index within the vanilla inbox.
+     * @param ranges
+     *            String with lpr style (1-based) page ranges of the job
+     *            document.
+     * @return The number of deleted pages.
+     *
+     * @throws IllegalStateException
+     *             When inbox is not vanilla.
+     */
+    int deleteJobPages(String userId, int iVanillaJobIndex, String ranges);
+
+    /**
+     * Deletes jobs from the inbox that are part of the
+     * {@link ProxyPrintJobChunk} list.
+     * <p>
+     * Note: a complete job is deleted when at least one (1) of its pages is
+     * printed.
+     * </p>
+     *
+     * @param userId
+     *            The unique user id.
+     * @param chunks
+     *            The list of {@link ProxyPrintJobChunk} objects.
+     * @return The number of deleted jobs.
+     */
+    int deleteJobs(String userId, List<ProxyPrintJobChunk> chunks);
+
+    /**
+     * Deletes jobs from the inbox that are expired.
+     *
+     * @param userid
+     *            The unique user id.
+     * @param msecReferenceTime
+     *            The reference time in milliseconds.
+     * @param msecExpiry
+     *            The expiration period in milliseconds.
+     * @return The number of deleted jobs.
+     */
+    int deleteJobs(String userid, long msecReferenceTime, long msecExpiry);
+
+    /**
+     * Deletes a job from the inbox.
      *
      * @param userId
      *            The unique user id.
@@ -415,6 +449,9 @@ public interface InboxService {
      *            The sorted {@link RangeAtom} list with page numbers in job
      *            context.
      * @return The range string.
+     *
+     * @throws IllegalStateException
+     *             When inbox is not vanilla.
      */
     String toVanillaJobInboxRange(InboxInfoDto jobInfo, int iVanillaJobIndex,
             List<RangeAtom> sortedRangeArrayJob);
@@ -459,25 +496,23 @@ public interface InboxService {
 
     /**
      * Prunes the print-in {@link InboxJobRange} instances in
-     * {@link InboxInfoDto} for jobs which are expired for Fast Proxy Printing.
+     * {@link InboxInfoDto} for for Fast Proxy Printing. When the user edited
+     * the inbox <i>all</i> jobs are pruned. When inbox is "vanilla" only
+     * <i>expired</i> jobs are pruned.
      * <p>
-     * The {@link InboxJob} instances are not pruned but, by not having
+     * NOTE: Since no user information is supplied, the pruned result is NOT
+     * persisted.
+     * </p>
+     * <ul>
+     * <li>The {@link InboxJob} instances are not pruned but, by not having
      * associated {@link InboxJobRange} instances, can become orphaned and
-     * themselves become candidates for pruning.
-     * </p>
-     * <p>
-     * NOTE: If the user previewed the inbox within the expiration window, the
+     * themselves become candidates for pruning.</li>
+     * <li>If the user previewed the inbox within the expiration window, the
      * complete (edited) job info can be fast proxy printed as it is, i.e.
-     * nothing is pruned. See: {@link InboxInfoDto#getLastPreviewTime()}.
-     * </p>
-     * <p>
-     * IMPORTANT: when nothing is pruned the {@link InboxInfoDto} <b>input</b>
-     * object is returned.
-     * </p>
-     * <p>
-     * NOTE: no user information is supplied, and therefore the pruned result is
-     * NOT persisted.
-     * </p>
+     * nothing is pruned. See: {@link InboxInfoDto#getLastPreviewTime()}.</li>
+     * <li>IMPORTANT: when nothing is pruned the {@link InboxInfoDto}
+     * <b>input</b> object is returned.</li>
+     * </ul>
      *
      * @since 0.9.6
      *
@@ -498,12 +533,9 @@ public interface InboxService {
     /**
      * Prunes the print-in jobs which are expired for Fast Proxy Printing.
      * <p>
-     * If the user previewed the inbox within the expiration window, the
-     * complete (edited) job info can be fast proxy printed as it is, i.e.
-     * nothing is pruned. See: {@link InboxInfoDto#getLastPreviewTime()}.
-     * </p>
-     * <p>
-     * NOTE: a pruned result is persisted.
+     * NOTE: This method is identical to
+     * {@link #pruneForFastProxyPrint(String, Date, int)}, however the pruned
+     * result <b>is persisted</b>.
      * </p>
      *
      * @param userId
@@ -695,4 +727,16 @@ public interface InboxService {
      * @return The file path of the PDF EcoPrint shadow.
      */
     String createEcoPdfShadowPath(String pdfPath);
+
+    /**
+     * Gets the most recent modified time of a user's time print-in file (job).
+     *
+     * @param userId
+     *            The user ID.
+     * @return The time in milliseconds or {@code null} when no jobs are
+     *         present.
+     * @throws IOException
+     *             When file system error.
+     */
+    Long getLastPrintInTime(String userId) throws IOException;
 }

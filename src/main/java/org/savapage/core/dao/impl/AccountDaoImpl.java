@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,6 +22,7 @@
 package org.savapage.core.dao.impl;
 
 import java.math.BigDecimal;
+import java.util.Date;
 import java.util.List;
 
 import javax.persistence.NoResultException;
@@ -34,18 +35,17 @@ import org.savapage.core.jpa.Account.AccountTypeEnum;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
-        AccountDao {
+public final class AccountDaoImpl extends GenericDaoImpl<Account>
+        implements AccountDao {
 
     @Override
     public int pruneAccounts() {
 
-        final String jpql =
-                "SELECT A FROM Account A WHERE A.deleted = true "
-                        + "AND A.transactions IS EMPTY";
+        final String jpql = "SELECT A FROM Account A WHERE A.deleted = true "
+                + "AND A.transactions IS EMPTY";
 
         final Query query = getEntityManager().createQuery(jpql);
 
@@ -63,17 +63,17 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
     }
 
     @Override
-    public Account findActiveSharedAccountByName(final String name) {
+    public Account findActiveAccountByName(final String name,
+            final AccountTypeEnum accountType) {
 
-        final String jpql =
-                "SELECT A FROM Account A WHERE A.name = :name"
-                        + " AND A.accountType = :accountType"
-                        + " AND A.deleted = false";
+        final String jpql = "SELECT A FROM Account A WHERE A.name = :name"
+                + " AND A.accountType = :accountType"
+                + " AND A.deleted = false";
 
         final Query query = getEntityManager().createQuery(jpql);
 
         query.setParameter("name", name);
-        query.setParameter("accountType", AccountTypeEnum.SHARED.toString());
+        query.setParameter("accountType", accountType.toString());
 
         Account account = null;
 
@@ -86,14 +86,18 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
     }
 
     @Override
+    public Account findActiveSharedAccountByName(final String name) {
+        return this.findActiveAccountByName(name, AccountTypeEnum.SHARED);
+    }
+
+    @Override
     public Account findActiveSharedChildAccountByName(final Long parentId,
             final String name) {
 
-        final String jpql =
-                "SELECT A FROM Account A JOIN A.parent P"
-                        + " WHERE A.name = :name" + " AND P.id = :parentId"
-                        + " AND A.accountType = :accountType"
-                        + " AND A.deleted = false";
+        final String jpql = "SELECT A FROM Account A JOIN A.parent P"
+                + " WHERE A.name = :name" + " AND P.id = :parentId"
+                + " AND A.accountType = :accountType"
+                + " AND A.deleted = false";
 
         final Query query = getEntityManager().createQuery(jpql);
 
@@ -147,8 +151,8 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
     }
 
     @Override
-    public AggregateResult<BigDecimal> getBalanceStats(
-            final boolean userAccounts, final boolean debit) {
+    public AggregateResult<BigDecimal>
+            getBalanceStats(final boolean userAccounts, final boolean debit) {
 
         final StringBuilder jpql = new StringBuilder();
 
@@ -197,6 +201,57 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
      */
     private void applyListFilter(final StringBuilder jpql,
             final ListFilter filter) {
+
+        StringBuilder where = new StringBuilder();
+
+        int nWhere = 0;
+
+        if (filter.getAccountType() != null
+                || filter.getAccountTypeExtra() != null) {
+
+            if (nWhere > 0) {
+                where.append(" AND");
+            }
+            nWhere++;
+
+            where.append(" ACC.accountType IN(");
+
+            boolean first = false;
+
+            if (filter.getAccountType() != null) {
+                first = true;
+                where.append(" :accountType");
+            }
+
+            if (filter.getAccountTypeExtra() != null) {
+                if (first) {
+                    where.append(",");
+                }
+                where.append(":accountTypeExtra");
+            }
+
+            where.append(")");
+        }
+
+        if (filter.getContainingNameText() != null) {
+            if (nWhere > 0) {
+                where.append(" AND");
+            }
+            nWhere++;
+            where.append(" ACC.nameLower like :containingNameText");
+        }
+
+        if (filter.getDeleted() != null) {
+            if (nWhere > 0) {
+                where.append(" AND");
+            }
+            nWhere++;
+            where.append(" ACC.deleted = :selDeleted");
+        }
+
+        if (nWhere > 0) {
+            jpql.append(" WHERE ").append(where.toString());
+        }
     }
 
     /**
@@ -212,6 +267,25 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
             final ListFilter filter) {
 
         final Query query = getEntityManager().createQuery(jpql.toString());
+
+        if (filter.getAccountType() != null) {
+            query.setParameter("accountType",
+                    filter.getAccountType().toString());
+        }
+
+        if (filter.getAccountTypeExtra() != null) {
+            query.setParameter("accountTypeExtra",
+                    filter.getAccountTypeExtra().toString());
+        }
+
+        if (filter.getContainingNameText() != null) {
+            query.setParameter("containingNameText",
+                    "%" + filter.getContainingNameText().toLowerCase() + "%");
+        }
+
+        if (filter.getDeleted() != null) {
+            query.setParameter("selDeleted", filter.getDeleted());
+        }
 
         return query;
     }
@@ -232,14 +306,20 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
         return countResult.longValue();
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public List<Account> getListChunk(ListFilter filter, Integer startPosition,
-            Integer maxResults, Field orderBy, boolean sortAscending) {
+    public List<Account> getListChunk(final ListFilter filter,
+            final Integer startPosition, final Integer maxResults,
+            final Field orderBy, final boolean sortAscending) {
 
         final StringBuilder jpql =
                 new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
 
         jpql.append("SELECT ACC FROM Account ACC");
+
+        if (orderBy == Field.NAME) {
+            jpql.append(" LEFT JOIN ACC.parent P ");
+        }
 
         applyListFilter(jpql, filter);
 
@@ -247,7 +327,24 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
         jpql.append(" ORDER BY ");
 
         if (orderBy == Field.ACCOUNT_TYPE) {
+
             jpql.append("ACC.accountType");
+
+        } else if (orderBy == Field.NAME) {
+
+            jpql.append("COALESCE(P.name, ACC.name)");
+            if (!sortAscending) {
+                jpql.append(" DESC");
+            }
+
+            jpql.append(", COALESCE(P.id, ACC.id)");
+            if (!sortAscending) {
+                jpql.append(" DESC");
+            }
+
+            jpql.append(", COALESCE(P.id, 0)");
+            jpql.append(", ACC.name");
+
         } else {
             jpql.append("ACC.accountType");
         }
@@ -255,8 +352,6 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
         if (!sortAscending) {
             jpql.append(" DESC");
         }
-
-        jpql.append(", ACC.id DESC");
 
         //
         final Query query = createListQuery(jpql, filter);
@@ -269,6 +364,68 @@ public final class AccountDaoImpl extends GenericDaoImpl<Account> implements
         }
 
         return query.getResultList();
+    }
+
+    @Override
+    public long countSubAccounts(final Long parentId) {
+
+        final StringBuilder jpql =
+                new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
+
+        jpql.append("SELECT COUNT(ACC.id) FROM Account ACC JOIN ACC.parent P");
+        jpql.append(" WHERE P.id = ").append(parentId);
+
+        final Query query = getEntityManager().createQuery(jpql.toString());
+        final Number countResult = (Number) query.getSingleResult();
+
+        return countResult.longValue();
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public List<Account> getSubAccounts(final Long parentId) {
+
+        final StringBuilder jpql =
+                new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
+
+        jpql.append("SELECT ACC FROM Account ACC JOIN ACC.parent P");
+        jpql.append(" WHERE P.id = ").append(parentId);
+
+        final Query query = getEntityManager().createQuery(jpql.toString());
+        return query.getResultList();
+    }
+
+    @Override
+    public void setLogicalDelete(final Account account, final Date deletedDate,
+            final String deletedBy) {
+
+        account.setDeleted(Boolean.TRUE);
+        account.setDeletedDate(deletedDate);
+        account.setModifiedDate(deletedDate);
+        account.setModifiedBy(deletedBy);
+    }
+
+    @Override
+    public int logicalDeleteSubAccounts(final Long parentId,
+            final Date deletedDate, final String deletedBy) {
+
+        final StringBuilder jpql =
+                new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
+
+        jpql.append("UPDATE Account A SET " + "A.deleted = :deleted, "
+                + "A.deletedDate = :deletedDate, "
+                + "A.modifiedDate = :modifiedDate, "
+                + "A.modifiedBy = :modifiedBy " + "WHERE A.parent.id = :id");
+
+        final Query query = getEntityManager().createQuery(jpql.toString());
+
+        query.setParameter("id", parentId);
+        query.setParameter("deleted", Boolean.TRUE);
+        query.setParameter("deletedDate", deletedDate);
+        query.setParameter("modifiedDate", deletedDate);
+        query.setParameter("modifiedBy", deletedBy);
+
+        return query.executeUpdate();
     }
 
 }

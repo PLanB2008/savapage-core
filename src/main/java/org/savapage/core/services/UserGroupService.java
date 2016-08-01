@@ -23,6 +23,7 @@ package org.savapage.core.services;
 
 import java.io.IOException;
 
+import org.savapage.core.dao.enums.ReservedUserGroupEnum;
 import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dto.UserGroupPropertiesDto;
 import org.savapage.core.jpa.UserGroup;
@@ -44,14 +45,21 @@ public interface UserGroupService {
     void lazyCreateReservedGroups();
 
     /**
-     * Gets the reserved external {@link UserGroup}.
+     * Gets the {@link ReservedUserGroupEnum#ALL}.
+     *
+     * @return The {@link UserGroup} or {@code null} when not found.
+     */
+    UserGroup getAllUserGroup();
+
+    /**
+     * Gets the {@link ReservedUserGroupEnum#EXTERNAL}.
      *
      * @return The {@link UserGroup} or {@code null} when not found.
      */
     UserGroup getExternalUserGroup();
 
     /**
-     * Gets the reserved internal {@link UserGroup}.
+     * Gets the {@link ReservedUserGroupEnum#INTERNAL}.
      *
      * @return The {@link UserGroup} or {@code null} when not found.
      */
@@ -169,7 +177,7 @@ public interface UserGroupService {
             boolean nested) throws IOException;
 
     /**
-     * Adds a user group from the external user source. All synchronized
+     * Adds a user group from the external user source. All (synchronized)
      * external users belonging to this group are added as member.
      *
      * @param batchCommitter
@@ -183,6 +191,21 @@ public interface UserGroupService {
     AbstractJsonRpcMethodResponse addUserGroup(
             DaoBatchCommitter batchCommitter, String groupName)
             throws IOException;
+
+    /**
+     * Adds an internal user group. All internal and (synchronized) external
+     * users belonging to this group are added as member.
+     *
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
+     * @param groupName
+     *            The name of the group to add.
+     * @return The number of group members added.
+     * @throws IOException
+     *             When something goes wrong.
+     */
+    int addInternalUserGroup(DaoBatchCommitter batchCommitter,
+            String groupName) throws IOException;
 
     /**
      * Updates one or more properties for an existing Internal or External User
@@ -214,10 +237,26 @@ public interface UserGroupService {
             throws IOException;
 
     /**
+     * Synchronizes with an internal user group. Internal and (synchronized)
+     * external users are added or removed as member.
+     *
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
+     * @param groupName
+     *            The name of the group to add.
+     * @return The JSON-RPC Return message (either a result or an error);
+     * @throws IOException
+     *             When something goes wrong.
+     */
+    AbstractJsonRpcMethodResponse syncInternalUserGroup(
+            DaoBatchCommitter batchCommitter, String groupName)
+            throws IOException;
+
+    /**
      * Deletes a user group.
      *
      * @param groupName
-     *            The name of the group to add..
+     *            The name of the group to delete.
      *
      * @return The JSON-RPC Return message (either a result or an error);
      *
@@ -225,6 +264,20 @@ public interface UserGroupService {
      *             When something goes wrong.
      */
     AbstractJsonRpcMethodResponse deleteUserGroup(String groupName)
+            throws IOException;
+
+    /**
+     * Deletes a user group.
+     *
+     * @param groupId
+     *            The database key of the group to delete.
+     *
+     * @return The JSON-RPC Return message (either a result or an error);
+     *
+     * @throws IOException
+     *             When something goes wrong.
+     */
+    AbstractJsonRpcMethodResponse deleteUserGroup(Long groupId)
             throws IOException;
 
 }

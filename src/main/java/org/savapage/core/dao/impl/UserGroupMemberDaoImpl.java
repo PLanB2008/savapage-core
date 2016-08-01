@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -32,11 +32,11 @@ import org.savapage.core.jpa.UserGroupMember;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public final class UserGroupMemberDaoImpl extends
-        GenericDaoImpl<UserGroupMember> implements UserGroupMemberDao {
+public final class UserGroupMemberDaoImpl
+        extends GenericDaoImpl<UserGroupMember> implements UserGroupMemberDao {
 
     @Override
     public int deleteGroup(final Long groupId) {
@@ -59,10 +59,12 @@ public final class UserGroupMemberDaoImpl extends
         applyGroupFilter(jpql, filter);
 
         final Query query = createGroupQuery(jpql, filter);
+
         final Number countResult = (Number) query.getSingleResult();
         return countResult.longValue();
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public List<UserGroup> getGroupChunk(final UserFilter filter,
             final Integer startPosition, final Integer maxResults,
@@ -149,6 +151,14 @@ public final class UserGroupMemberDaoImpl extends
     }
 
     @Override
+    public long getUserCount(final Long groupId) {
+        final UserGroupMemberDao.GroupFilter filter =
+                new UserGroupMemberDao.GroupFilter();
+        filter.setGroupId(groupId);
+        return getUserCount(filter);
+    }
+
+    @Override
     public long getUserCount(final GroupFilter filter) {
 
         final StringBuilder jpql =
@@ -164,6 +174,7 @@ public final class UserGroupMemberDaoImpl extends
 
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public List<User> getUserChunk(final GroupFilter filter,
             final Integer startPosition, final Integer maxResults,
@@ -225,9 +236,14 @@ public final class UserGroupMemberDaoImpl extends
         where.append(" U.group.id = :groupId");
 
         if (nWhere > 0) {
+            where.append(" AND");
+        }
+        nWhere++;
+        where.append(" U.user.deleted = :deleted");
+
+        if (nWhere > 0) {
             jpql.append(" WHERE ").append(where.toString());
         }
-
     }
 
     /**
@@ -245,21 +261,23 @@ public final class UserGroupMemberDaoImpl extends
         final Query query = getEntityManager().createQuery(jpql.toString());
 
         query.setParameter("groupId", filter.getGroupId());
+        query.setParameter("deleted", Boolean.FALSE);
 
         return query;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public List<UserGroupMember> getGroupMembers(final Long groupId) {
 
-        final String jpql =
-                "SELECT U FROM UserGroupMember U "
-                        + "WHERE U.group.id = :groupId "
-                        + "ORDER BY U.user.userId";
+        final String jpql = "SELECT U FROM UserGroupMember U "
+                + "WHERE U.group.id = :groupId AND U.user.deleted = :deleted "
+                + "ORDER BY U.user.userId";
 
         final Query query = getEntityManager().createQuery(jpql);
 
         query.setParameter("groupId", groupId);
+        query.setParameter("deleted", Boolean.FALSE);
 
         return query.getResultList();
     }

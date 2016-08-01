@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,18 +22,21 @@
 package org.savapage.core.services;
 
 import java.math.BigDecimal;
+import java.text.ParseException;
 import java.util.Currency;
 import java.util.Locale;
 
 import org.savapage.core.concurrent.ReadWriteLockEnum;
+import org.savapage.core.config.IConfigProp;
 import org.savapage.core.dao.PrinterDao;
-import org.savapage.core.dao.helpers.AccountTrxTypeEnum;
+import org.savapage.core.dao.enums.AccountTrxTypeEnum;
 import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dto.AccountDisplayInfoDto;
 import org.savapage.core.dto.AccountVoucherRedeemDto;
 import org.savapage.core.dto.FinancialDisplayInfoDto;
 import org.savapage.core.dto.PosDepositDto;
 import org.savapage.core.dto.PosDepositReceiptDto;
+import org.savapage.core.dto.SharedAccountDisplayInfoDto;
 import org.savapage.core.dto.UserAccountingDto;
 import org.savapage.core.dto.UserCreditTransferDto;
 import org.savapage.core.dto.UserPaymentGatewayDto;
@@ -44,6 +47,7 @@ import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
+import org.savapage.core.jpa.UserGroup;
 import org.savapage.core.json.rpc.AbstractJsonRpcMethodResponse;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
 import org.savapage.core.json.rpc.JsonRpcResult;
@@ -57,7 +61,7 @@ import org.savapage.core.services.helpers.ProxyPrintCostParms;
 /**
  * Accounting services supporting the pay-per-print solution.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface AccountingService {
@@ -111,6 +115,47 @@ public interface AccountingService {
     UserAccountingDto getUserAccounting(User user);
 
     /**
+     * Create a {@link UserAccountingDto} object.
+     *
+     * @param balance
+     *            The balance amount.
+     * @param restricted
+     *            {@code true} when restricted.
+     * @param useGlobalOverdraft
+     *            {@code true} when using global overdraft default.
+     * @param overdraft
+     *            The overdraft amount.
+     * @return The {@link UserAccountingDto} object.
+     */
+    UserAccountingDto createUserAccounting(BigDecimal balance,
+            Boolean restricted, Boolean useGlobalOverdraft,
+            BigDecimal overdraft);
+
+    /**
+     * Gets the initial accounting parameters for a member from a
+     * {@link UserGroup}.
+     *
+     * @param group
+     *            The {@link UserGroup}.
+     * @return The {@link UserAccountingDto}.
+     */
+    UserAccountingDto getInitialUserAccounting(UserGroup group);
+
+    /**
+     * Sets the initial accounting parameters for a member in a
+     * {@link UserGroup} from the {@link UserAccountingDto}.
+     *
+     * @param group
+     *            The {@link UserGroup}.
+     * @param dto
+     *            The {@link UserAccountingDto}.
+     * @throws ParseException
+     *             A error occurred parsing an amount string to a number.
+     */
+    void setInitialUserAccounting(UserGroup group, UserAccountingDto dto)
+            throws ParseException;
+
+    /**
      * Gets the formatted balance of a {@link User}.
      * <p>
      * Note: {@link UserAccount} is NOT lazy created.
@@ -160,6 +205,36 @@ public interface AccountingService {
             String currencySymbol);
 
     /**
+     * Gets the shared {@link Account} information of an {@link Account} meant
+     * for display.
+     *
+     * @param account
+     *            The shared {@link Account}.
+     * @param locale
+     *            The {@link Locale} used for formatting financial data.
+     * @param currencySymbol
+     *            {@code null} or empty when not applicable.
+     * @return The {@link SharedAccountDisplayInfoDto} object.
+     */
+    SharedAccountDisplayInfoDto getSharedAccountDisplayInfo(Account account,
+            Locale locale, String currencySymbol);
+
+    /**
+     * Updates or creates a shared {@link Account} from user input.
+     * <p>
+     * Note: A difference in account balance in decimal range beyond
+     * {@link IConfigProp.Key#FINANCIAL_USER_BALANCE_DECIMALS} is considered
+     * irrelevant.
+     * </p>
+     *
+     * @param dto
+     *            {@link SharedAccountDisplayInfoDto} object
+     * @return The JSON-RPC Return message (either a result or an error);
+     */
+    AbstractJsonRpcMethodResponse
+            lazyUpdateSharedAccount(SharedAccountDisplayInfoDto dto);
+
+    /**
      * Gets global financial information meant for display.
      *
      * @param locale
@@ -174,13 +249,19 @@ public interface AccountingService {
     /**
      * Sets the accounting parameters for a {@link User}. A {@link UserAccount}
      * is lazy created when needed.
+     * <p>
+     * Note: A difference in user balance in decimal range beyond
+     * {@link IConfigProp.Key#FINANCIAL_USER_BALANCE_DECIMALS} is considered
+     * irrelevant.
+     * </p>
      *
      * @param user
      *            The {@link User}.
      * @param dto
      *            The accounting parameters.
+     * @return The {@link AbstractJsonRpcMethodResponse}.
      */
-    public AbstractJsonRpcMethodResponse setUserAccounting(User user,
+    AbstractJsonRpcMethodResponse setUserAccounting(User user,
             UserAccountingDto dto);
 
     /**
@@ -217,8 +298,8 @@ public interface AccountingService {
      *            The {@link ProxyPrintCostParms}.
      * @return The cost as {@link BigDecimal}.
      */
-    BigDecimal
-            calcProxyPrintCost(Printer printer, ProxyPrintCostParms costParms);
+    BigDecimal calcProxyPrintCost(Printer printer,
+            ProxyPrintCostParms costParms);
 
     /**
      * Calculates the cost for each individual {@link ProxyPrintJobChunk} in the
@@ -281,6 +362,15 @@ public interface AccountingService {
             Account.AccountTypeEnum accountType);
 
     /**
+     * Gets the {@link Account} account of an {@link UserGroup} by group name.
+     *
+     * @param groupName
+     *            The user group name.
+     * @return {@code null} when not found.
+     */
+    Account getActiveUserGroupAccount(String groupName);
+
+    /**
      * Gets the {@link UserAccount} account of a {@link User}. The
      * {@link UserAccount} and related {@link Account} are ad-hoc created when
      * they do not exist.
@@ -293,6 +383,16 @@ public interface AccountingService {
      */
     UserAccount lazyGetUserAccount(User user,
             Account.AccountTypeEnum accountType);
+
+    /**
+     * Gets the {@link Account} account of a {@link UserGroup}. The
+     * {@link Account} is ad-hoc created when it does not exist.
+     *
+     * @param userGroup
+     *            The {@link UserGroup}.
+     * @return The {@link Account}.
+     */
+    Account lazyGetUserGroupAccount(UserGroup userGroup);
 
     /**
      * Gets an <i>active</i> shared {@link Account} by name. If it does not
@@ -476,4 +576,15 @@ public interface AccountingService {
      */
     AbstractJsonRpcMethodResponse transferUserCredit(UserCreditTransferDto dto);
 
+    /**
+     * Creates a new shared {@link Account} object with default values (from a
+     * template).
+     *
+     * @param name
+     *            The name of the account.
+     * @param parent
+     *            The shared {@link Account} parent.
+     * @return
+     */
+    Account createSharedAccountTemplate(String name, Account parent);
 }

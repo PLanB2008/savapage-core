@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,8 +22,13 @@
 package org.savapage.core.dto;
 
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
+import org.savapage.core.dao.enums.ACLOidEnum;
+import org.savapage.core.dao.enums.ACLPermissionEnum;
+import org.savapage.core.dao.enums.ACLRoleEnum;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
@@ -32,13 +37,14 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 @JsonPropertyOrder({ "userName", "password", "fullName", "email", "emailOther",
         "card", "cardFormat", "cardFirstByte", "id;", "pin", "uuid", "admin",
         "person", "disabled", "keepEmailOther", "keepCard", "keepPassword",
-        "keepPin", "keepUuid", "accounting" })
+        "keepPin", "keepUuid", "accounting", "aclRoles", "aclOidsUser",
+        "aclOidsAdmin" })
 @JsonInclude(Include.NON_NULL)
 public class UserDto extends AbstractDto {
 
@@ -108,6 +114,25 @@ public class UserDto extends AbstractDto {
     @JsonProperty("accounting")
     private UserAccountingDto accounting;
 
+    @JsonProperty("aclRoles")
+    private Map<ACLRoleEnum, Boolean> aclRoles;
+
+    /**
+     * OIDS for Role "User". When a {@link ACLOidEnum} key is not present in the
+     * map the access is indeterminate. An empty {@link ACLPermissionEnum} list
+     * implies no privileges.
+     */
+    @JsonProperty("aclOidsUser")
+    private Map<ACLOidEnum, List<ACLPermissionEnum>> aclOidsUser;
+
+    /**
+     * OIDS for Role "Admin". When a {@link ACLOidEnum} key is not present in
+     * the map the access is indeterminate. An empty {@link ACLPermissionEnum}
+     * list implies no privileges.
+     */
+    @JsonProperty("aclOidsAdmin")
+    private Map<ACLOidEnum, List<ACLPermissionEnum>> aclOidsAdmin;
+
     /**
      *
      */
@@ -143,6 +168,11 @@ public class UserDto extends AbstractDto {
         keepPin = dto.keepPin;
         //
         accounting = dto.accounting;
+        //
+        aclRoles = dto.aclRoles;
+        //
+        aclOidsUser = dto.aclOidsUser;
+        aclOidsAdmin = dto.aclOidsAdmin;
     }
 
     public Long getDatabaseId() {
@@ -319,6 +349,57 @@ public class UserDto extends AbstractDto {
 
     public void setAccounting(UserAccountingDto accounting) {
         this.accounting = accounting;
+    }
+
+    /**
+     *
+     * @return The ACL roles.
+     */
+    public Map<ACLRoleEnum, Boolean> getAclRoles() {
+        return aclRoles;
+    }
+
+    /**
+     *
+     * @param roles
+     *            The ACL roles.
+     */
+    public void setAclRoles(final Map<ACLRoleEnum, Boolean> roles) {
+        this.aclRoles = roles;
+    }
+
+    /**
+     * @return OIDS for Role "User".
+     */
+    public Map<ACLOidEnum, List<ACLPermissionEnum>> getAclOidsUser() {
+        return aclOidsUser;
+    }
+
+    /**
+     * @param aclOidsUser
+     *            OIDS for Role "User".
+     */
+    public void setAclOidsUser(
+            final Map<ACLOidEnum, List<ACLPermissionEnum>> aclOidsUser) {
+        this.aclOidsUser = aclOidsUser;
+    }
+
+    /**
+     *
+     * @return OIDS for Role "Admin".
+     */
+    public Map<ACLOidEnum, List<ACLPermissionEnum>> getAclOidsAdmin() {
+        return aclOidsAdmin;
+    }
+
+    /**
+     *
+     * @param aclOidsAdmin
+     *            OIDS for Role "Admin".
+     */
+    public void setAclOidsAdmin(
+            Map<ACLOidEnum, List<ACLPermissionEnum>> aclOidsAdmin) {
+        this.aclOidsAdmin = aclOidsAdmin;
     }
 
     /**

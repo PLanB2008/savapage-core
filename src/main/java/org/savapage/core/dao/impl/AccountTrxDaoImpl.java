@@ -108,34 +108,41 @@ public final class AccountTrxDaoImpl extends GenericDaoImpl<AccountTrx>
 
         final boolean filterAccountType = filter.getAccountType() != null;
 
-        String joinClause;
+        final StringBuilder joinClause = new StringBuilder();
 
         if (filter.getUserId() != null) {
 
-            joinClause =
-                    " JOIN TRX.account AA WHERE AA.id ="
-                            + " (SELECT A.id FROM UserAccount UA"
-                            + " JOIN UA.user U" + " JOIN UA.account A"
-                            + " WHERE U.id = :userId";
+            joinClause.append(" JOIN TRX.account AA WHERE AA.id ="
+                    + " (SELECT A.id FROM UserAccount UA" + " JOIN UA.user U"
+                    + " JOIN UA.account A" + " WHERE U.id = :userId");
 
             if (filterAccountType) {
-                joinClause += " AND A.accountType = :accountType";
+                joinClause.append(" AND A.accountType = :accountType");
             }
 
-            joinClause += ")";
+            joinClause.append(")");
+
+        } else if (filter.getAccountId() != null) {
+
+            joinClause.append(" JOIN TRX.account AA WHERE AA.id = ")
+                    .append(filter.getAccountId());
+
+        } else if (filter.getDocLogId() != null) {
+
+            joinClause.append(" WHERE TRX.docLog.id = :docLogId");
 
         } else {
 
-            joinClause = " JOIN TRX.account AA";
+            joinClause.append(" JOIN TRX.account AA");
 
             if (filterAccountType) {
-                joinClause += " WHERE AA.accountType = :accountType";
+                joinClause.append(" WHERE AA.accountType = :accountType");
             }
 
         }
 
         int nWhere = 0;
-        StringBuilder where = new StringBuilder();
+        final StringBuilder where = new StringBuilder();
 
         if (filter.getTrxType() != null) {
             if (nWhere > 0) {
@@ -191,9 +198,13 @@ public final class AccountTrxDaoImpl extends GenericDaoImpl<AccountTrx>
 
         final Query query = getEntityManager().createQuery(jpql.toString());
 
+        if (filter.getDocLogId() != null) {
+            query.setParameter("docLogId", filter.getDocLogId());
+        }
+
         if (filter.getAccountType() != null) {
-            query.setParameter("accountType", filter.getAccountType()
-                    .toString());
+            query.setParameter("accountType",
+                    filter.getAccountType().toString());
         }
         if (filter.getUserId() != null) {
             query.setParameter("userId", filter.getUserId());
@@ -217,9 +228,8 @@ public final class AccountTrxDaoImpl extends GenericDaoImpl<AccountTrx>
     @Override
     public int cleanHistory(final Date dateBackInTime) {
 
-        final String jpql =
-                "SELECT T FROM AccountTrx T WHERE"
-                        + " transactionDate <= :transactionDate";
+        final String jpql = "SELECT T FROM AccountTrx T WHERE"
+                + " transactionDate <= :transactionDate";
 
         final Query query = getEntityManager().createQuery(jpql);
 
@@ -262,9 +272,8 @@ public final class AccountTrxDaoImpl extends GenericDaoImpl<AccountTrx>
     @Override
     public List<AccountTrx> findByExtMethodAddress(final String address) {
 
-        final String jpql =
-                "SELECT T FROM AccountTrx T "
-                        + "WHERE extMethodAddress = :extMethodAddress";
+        final String jpql = "SELECT T FROM AccountTrx T "
+                + "WHERE extMethodAddress = :extMethodAddress";
 
         final Query query = getEntityManager().createQuery(jpql);
 

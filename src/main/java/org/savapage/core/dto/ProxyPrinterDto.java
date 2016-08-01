@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,7 +27,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 @JsonInclude(Include.NON_NULL)
@@ -52,10 +52,19 @@ public class ProxyPrinterDto extends AbstractDto {
     String location;
 
     /**
-     * A comma separated list of printer group names.
+     * A " ,;:" separated list of printer group names.
      */
     @JsonProperty("printerGroups")
     String printerGroups;
+
+    /**
+     * A file with custom setting for PPD to IPP conversion and constraints.
+     */
+    @JsonProperty("ppdExtFile")
+    String ppdExtFile;
+
+    @JsonProperty("internal")
+    Boolean internal;
 
     @JsonProperty("disabled")
     Boolean disabled;
@@ -110,6 +119,22 @@ public class ProxyPrinterDto extends AbstractDto {
 
     public void setPrinterGroups(String printerGroups) {
         this.printerGroups = printerGroups;
+    }
+
+    public String getPpdExtFile() {
+        return ppdExtFile;
+    }
+
+    public void setPpdExtFile(String ppdExtFile) {
+        this.ppdExtFile = ppdExtFile;
+    }
+
+    public Boolean getInternal() {
+        return internal;
+    }
+
+    public void setInternal(Boolean internal) {
+        this.internal = internal;
     }
 
     public Boolean getDisabled() {

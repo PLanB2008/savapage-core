@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,20 +27,22 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
-import org.savapage.core.dao.helpers.PrintModeEnum;
+import org.savapage.core.dao.enums.PrintModeEnum;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
+import org.savapage.core.services.helpers.InboxSelectScopeEnum;
+import org.savapage.core.services.helpers.ProxyPrintCostParms;
 
 /**
  * Proxy Print Request base on the SafePages inbox.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public abstract class AbstractProxyPrintReq implements
-        ProxyPrintSheetsCalcParms {
+public abstract class AbstractProxyPrintReq
+        implements ProxyPrintSheetsCalcParms {
 
     /**
      * Proxy Print Request Status.
@@ -93,6 +95,7 @@ public abstract class AbstractProxyPrintReq implements
     private int numberOfCopies;
     private int numberOfPages;
     private boolean removeGraphics;
+    private boolean drm;
 
     private boolean ecoPrint;
 
@@ -103,6 +106,13 @@ public abstract class AbstractProxyPrintReq implements
      */
     private boolean collate;
 
+    /**
+     * {@code true} if PDF must to be converted to grayscale before proxy
+     * printing.
+     */
+    private boolean convertToGrayscale = false;
+
+    //
     private Locale locale = Locale.getDefault();
 
     private String userMsg;
@@ -114,7 +124,7 @@ public abstract class AbstractProxyPrintReq implements
 
     private Map<String, String> optionValues;
 
-    private boolean clearPages;
+    private InboxSelectScopeEnum clearScope;
 
     private Boolean fitToPage;
 
@@ -130,9 +140,10 @@ public abstract class AbstractProxyPrintReq implements
     private ExternalSupplierInfo supplierInfo;
 
     /**
-     * The number of SafePages cleared at status {@link Status#PRINTED}.
+     * The number of cleared object (pages or documents, depending on
+     * {@link #clearScope}) at status {@link Status#PRINTED}.
      */
-    private int clearedPages = 0;
+    private int clearedObjects = 0;
 
     /**
      *
@@ -142,34 +153,32 @@ public abstract class AbstractProxyPrintReq implements
         this.printMode = printMode;
     }
 
+    public InboxSelectScopeEnum getClearScope() {
+        return clearScope;
+    }
+
+    public void setClearScope(InboxSelectScopeEnum clearScope) {
+        this.clearScope = clearScope;
+    }
+
     /**
+     * Gets the number of cleared object (pages or documents, depending on
+     * {@link #clearScope}) at status {@link Status#PRINTED}.
      *
      * @return
      */
-    public boolean isClearPages() {
-        return clearPages;
-    }
-
-    public void setClearPages(boolean clearPages) {
-        this.clearPages = clearPages;
+    public int getClearedObjects() {
+        return clearedObjects;
     }
 
     /**
-     * Gets the number of SafePages cleared at status {@link Status#PRINTED}.
+     * Sets the number of cleared object (pages or documents, depending on
+     * {@link #clearScope}) at status {@link Status#PRINTED}.
      *
-     * @return
+     * @param clearedObjects
      */
-    public int getClearedPages() {
-        return clearedPages;
-    }
-
-    /**
-     * Sets the number of SafePages cleared at status {@link Status#PRINTED}.
-     *
-     * @param clearedPages
-     */
-    public void setClearedPages(int clearedPages) {
-        this.clearedPages = clearedPages;
+    public void setClearedObjects(int clearedObjects) {
+        this.clearedObjects = clearedObjects;
     }
 
     public boolean isRemoveGraphics() {
@@ -178,6 +187,14 @@ public abstract class AbstractProxyPrintReq implements
 
     public void setRemoveGraphics(boolean removeGraphics) {
         this.removeGraphics = removeGraphics;
+    }
+
+    public boolean isDrm() {
+        return drm;
+    }
+
+    public void setDrm(boolean drm) {
+        this.drm = drm;
     }
 
     /**
@@ -369,12 +386,19 @@ public abstract class AbstractProxyPrintReq implements
     }
 
     /**
-     * Gets the value of the PWG5101.1 IPP "media" option.
-     *
-     * @return
+     * @return The value of the PWG5101.1 IPP "media" option.
      */
     public String getMediaOption() {
-        return this.optionValues.get(IppDictJobTemplateAttr.ATTR_MEDIA);
+        return getMediaOption(this.optionValues);
+    }
+
+    /**
+     *
+     * @param optionValues
+     * @return The value of the PWG5101.1 IPP "media" option.
+     */
+    public static String getMediaOption(Map<String, String> optionValues) {
+        return optionValues.get(IppDictJobTemplateAttr.ATTR_MEDIA);
     }
 
     /**
@@ -581,6 +605,43 @@ public abstract class AbstractProxyPrintReq implements
 
     public void setComment(String comment) {
         this.comment = comment;
+    }
+
+    /**
+     * Creates {@link ProxyPrintCostParms}.
+     *
+     * @return The {@link ProxyPrintCostParms}.
+     */
+    public ProxyPrintCostParms createProxyPrintCostParms() {
+
+        final ProxyPrintCostParms costParms = new ProxyPrintCostParms();
+
+        costParms.setDuplex(this.isDuplex());
+        costParms.setEcoPrint(this.isEcoPrintShadow() || this.isEcoPrint());
+        costParms.setGrayscale(this.isGrayscale());
+        costParms.setNumberOfCopies(this.getNumberOfCopies());
+        costParms.setPagesPerSide(this.getNup());
+
+        return costParms;
+    }
+
+    /**
+     *
+     * @return {@code true} if PDF must to be converted to grayscale before
+     *         proxy printing.
+     */
+    public boolean isConvertToGrayscale() {
+        return convertToGrayscale;
+    }
+
+    /**
+     *
+     * @param convertToGrayscale
+     *            {@code true} if PDF must to be converted to grayscale before
+     *            proxy printing.
+     */
+    public void setConvertToGrayscale(boolean convertToGrayscale) {
+        this.convertToGrayscale = convertToGrayscale;
     }
 
 }

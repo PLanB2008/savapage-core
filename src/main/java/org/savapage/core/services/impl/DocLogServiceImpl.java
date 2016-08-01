@@ -34,6 +34,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.time.DateUtils;
 import org.savapage.core.PerformanceLogger;
 import org.savapage.core.SpException;
@@ -46,9 +47,12 @@ import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.crypto.CryptoUser;
 import org.savapage.core.dao.DaoContext;
-import org.savapage.core.dao.helpers.AccountTrxTypeEnum;
-import org.savapage.core.dao.helpers.DocLogProtocolEnum;
-import org.savapage.core.dao.helpers.PrintInDeniedReasonEnum;
+import org.savapage.core.dao.DocLogDao;
+import org.savapage.core.dao.enums.AccountTrxTypeEnum;
+import org.savapage.core.dao.enums.DocLogProtocolEnum;
+import org.savapage.core.dao.enums.ExternalSupplierEnum;
+import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
+import org.savapage.core.dao.enums.PrintInDeniedReasonEnum;
 import org.savapage.core.doc.DocContent;
 import org.savapage.core.ipp.IppJobStateEnum;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
@@ -76,14 +80,15 @@ import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.core.util.DateUtil;
+import org.savapage.ext.smartschool.SmartschoolPrintInData;
 
 /**
  *
  * @author Datraverse B.V.
  *
  */
-public final class DocLogServiceImpl extends AbstractService implements
-        DocLogService {
+public final class DocLogServiceImpl extends AbstractService
+        implements DocLogService {
 
     /**
      * Max points for {@link TimeSeriesInterval#DAY}.
@@ -103,10 +108,9 @@ public final class DocLogServiceImpl extends AbstractService implements
     @Override
     public final String generateSignature(final DocLog docLog) {
 
-        final String message =
-                DateUtil.dateAsIso8601(docLog.getCreatedDate())
-                        + docLog.getUser().getUserId() + docLog.getTitle()
-                        + docLog.getUuid();
+        final String message = DateUtil.dateAsIso8601(docLog.getCreatedDate())
+                + docLog.getUser().getUserId() + docLog.getTitle()
+                + docLog.getUuid();
         try {
             return CryptoUser.createHmac(message, false);
         } catch (UnsupportedEncodingException e) {
@@ -122,7 +126,7 @@ public final class DocLogServiceImpl extends AbstractService implements
 
     @Override
     public void logDocOut(final User user, final DocOut docOut) {
-        logDocOut(user, docOut, new AccountTrxInfoSet());
+        logDocOut(user, docOut, new AccountTrxInfoSet(0));
     }
 
     @Override
@@ -137,9 +141,8 @@ public final class DocLogServiceImpl extends AbstractService implements
         final int printOutPages;
 
         if (printOut != null) {
-            printOutPages =
-                    docOut.getDocLog().getNumberOfPages()
-                            * printOut.getNumberOfCopies();
+            printOutPages = docOut.getDocLog().getNumberOfPages()
+                    * printOut.getNumberOfCopies();
         } else {
             printOutPages = 0;
         }
@@ -147,7 +150,8 @@ public final class DocLogServiceImpl extends AbstractService implements
         /*
          * Commit #1: Create DocLog and update User statistics.
          */
-        commitDocOutAndStatsUser(user, docOut, accountTrxInfoSet, printOutPages);
+        commitDocOutAndStatsUser(user, docOut, accountTrxInfoSet,
+                printOutPages);
 
         /*
          * AFTER the DocOut is committed we can notify the
@@ -159,8 +163,9 @@ public final class DocLogServiceImpl extends AbstractService implements
                     IppJobStateEnum.asEnum(printOut.getCupsJobState());
 
             final ProxyPrintJobStatusPrintOut jobStatus =
-                    new ProxyPrintJobStatusPrintOut(printOut.getPrinter()
-                            .getPrinterName(), printOut.getCupsJobId(),
+                    new ProxyPrintJobStatusPrintOut(
+                            printOut.getPrinter().getPrinterName(),
+                            printOut.getCupsJobId(),
                             printOut.getDocOut().getDocLog().getTitle(),
                             jobState);
 
@@ -200,7 +205,8 @@ public final class DocLogServiceImpl extends AbstractService implements
      *            {@link AccountTypeEnum#USER} is used for accounting.
      */
     private void commitDocOutAndStatsUser(final User user, final DocOut docOut,
-            final AccountTrxInfoSet accountTrxInfoSet, final int printOutPages) {
+            final AccountTrxInfoSet accountTrxInfoSet,
+            final int printOutPages) {
 
         final Date perfStartTime = PerformanceLogger.startTime();
 
@@ -278,31 +284,46 @@ public final class DocLogServiceImpl extends AbstractService implements
                  * UserAttr - totals
                  */
                 userService().logPrintOut(lockedUser, now, printOutPages,
-                        printOut.getNumberOfSheets(),
-                        printOut.getNumberOfEsu(), docLog.getNumberOfBytes());
+                        printOut.getNumberOfSheets(), printOut.getNumberOfEsu(),
+                        docLog.getNumberOfBytes());
 
                 /*
                  * Account Transactions.
+                 *
+                 * NOTE: Always create account transactions when External
+                 * Supplier Status is Pending, even when costs are zero.
                  */
-                if (docLog.getCostOriginal().compareTo(BigDecimal.ZERO) != 0) {
+                final ExternalSupplierStatusEnum externalStatus =
+                        EnumUtils.getEnum(ExternalSupplierStatusEnum.class,
+                                docLog.getExternalStatus());
+
+                if (externalStatus == ExternalSupplierStatusEnum.PENDING_EXT
+                        || docLog.getCostOriginal()
+                                .compareTo(BigDecimal.ZERO) != 0) {
 
                     if (accountTrxInfoSet == null) {
 
-                        final UserAccount userAccount =
-                                accountingService().lazyGetUserAccount(
-                                        lockedUser, AccountTypeEnum.USER);
+                        final ExternalSupplierEnum externalSupplier =
+                                EnumUtils.getEnum(ExternalSupplierEnum.class,
+                                        docLog.getExternalSupplier());
 
-                        accountingService().createAccountTrx(
-                                userAccount.getAccount(), docLog,
-                                AccountTrxTypeEnum.PRINT_OUT);
+                        if (externalSupplier == null
+                                || externalSupplier == ExternalSupplierEnum.SAVAPAGE) {
+
+                            final UserAccount userAccount =
+                                    accountingService().lazyGetUserAccount(
+                                            lockedUser, AccountTypeEnum.USER);
+
+                            accountingService().createAccountTrx(
+                                    userAccount.getAccount(), docLog,
+                                    AccountTrxTypeEnum.PRINT_OUT);
+                        }
 
                     } else {
 
-                        accountingService().createAccountTrxs(
-                                accountTrxInfoSet, docLog,
-                                AccountTrxTypeEnum.PRINT_OUT);
+                        accountingService().createAccountTrxs(accountTrxInfoSet,
+                                docLog, AccountTrxTypeEnum.PRINT_OUT);
                     }
-
                 }
             }
 
@@ -374,9 +395,8 @@ public final class DocLogServiceImpl extends AbstractService implements
                 /*
                  * ConfigProperty - running totals
                  */
-                statsPages =
-                        new JsonRollingTimeSeries<>(TimeSeriesInterval.DAY,
-                                TIME_SERIES_INTERVAL_DAY_MAX_POINTS, 0);
+                statsPages = new JsonRollingTimeSeries<>(TimeSeriesInterval.DAY,
+                        TIME_SERIES_INTERVAL_DAY_MAX_POINTS, 0);
                 statsPages.addDataPoint(Key.STATS_PDF_OUT_ROLLING_DAY_PAGES,
                         now, docLog.getNumberOfPages());
                 /*
@@ -428,15 +448,13 @@ public final class DocLogServiceImpl extends AbstractService implements
 
             if (printOut != null) {
 
-                final int printOutPages =
-                        docLog.getNumberOfPages()
-                                * printOut.getNumberOfCopies();
+                final int printOutPages = docLog.getNumberOfPages()
+                        * printOut.getNumberOfCopies();
                 /*
                  * ConfigProperty - running totals
                  */
-                statsPages =
-                        new JsonRollingTimeSeries<>(TimeSeriesInterval.DAY,
-                                TIME_SERIES_INTERVAL_DAY_MAX_POINTS, 0);
+                statsPages = new JsonRollingTimeSeries<>(TimeSeriesInterval.DAY,
+                        TIME_SERIES_INTERVAL_DAY_MAX_POINTS, 0);
                 statsPages.addDataPoint(Key.STATS_PRINT_OUT_ROLLING_DAY_PAGES,
                         now, printOutPages);
                 /*
@@ -451,15 +469,13 @@ public final class DocLogServiceImpl extends AbstractService implements
                 statsPages =
                         new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
                                 TIME_SERIES_INTERVAL_WEEK_MAX_POINTS, 0);
-                statsPages.addDataPoint(
-                        Key.STATS_PRINT_OUT_ROLLING_WEEK_SHEETS, now,
-                        printOut.getNumberOfSheets());
+                statsPages.addDataPoint(Key.STATS_PRINT_OUT_ROLLING_WEEK_SHEETS,
+                        now, printOut.getNumberOfSheets());
                 //
-                statsEsu =
-                        new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
-                                TIME_SERIES_INTERVAL_WEEK_MAX_POINTS, 0L);
-                statsEsu.addDataPoint(Key.STATS_PRINT_OUT_ROLLING_WEEK_ESU,
-                        now, printOut.getNumberOfEsu());
+                statsEsu = new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
+                        TIME_SERIES_INTERVAL_WEEK_MAX_POINTS, 0L);
+                statsEsu.addDataPoint(Key.STATS_PRINT_OUT_ROLLING_WEEK_ESU, now,
+                        printOut.getNumberOfEsu());
                 //
                 statsBytes =
                         new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
@@ -472,9 +488,8 @@ public final class DocLogServiceImpl extends AbstractService implements
                 statsPages =
                         new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
                                 TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0);
-                statsPages.addDataPoint(
-                        Key.STATS_PRINT_OUT_ROLLING_MONTH_PAGES, now,
-                        printOutPages);
+                statsPages.addDataPoint(Key.STATS_PRINT_OUT_ROLLING_MONTH_PAGES,
+                        now, printOutPages);
                 //
                 statsPages =
                         new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
@@ -483,18 +498,16 @@ public final class DocLogServiceImpl extends AbstractService implements
                         Key.STATS_PRINT_OUT_ROLLING_MONTH_SHEETS, now,
                         printOut.getNumberOfSheets());
                 //
-                statsEsu =
-                        new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
-                                TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0L);
+                statsEsu = new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
+                        TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0L);
                 statsEsu.addDataPoint(Key.STATS_PRINT_OUT_ROLLING_MONTH_ESU,
                         now, printOut.getNumberOfEsu());
                 //
                 statsBytes =
                         new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
                                 TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0L);
-                statsBytes.addDataPoint(
-                        Key.STATS_PRINT_OUT_ROLLING_MONTH_BYTES, now,
-                        docLog.getNumberOfBytes());
+                statsBytes.addDataPoint(Key.STATS_PRINT_OUT_ROLLING_MONTH_BYTES,
+                        now, docLog.getNumberOfBytes());
                 /*
                  *
                  */
@@ -579,41 +592,36 @@ public final class DocLogServiceImpl extends AbstractService implements
             /*
              * .
              */
-            statsPages =
-                    new JsonRollingTimeSeries<>(TimeSeriesInterval.DAY,
-                            TIME_SERIES_INTERVAL_DAY_MAX_POINTS, 0);
+            statsPages = new JsonRollingTimeSeries<>(TimeSeriesInterval.DAY,
+                    TIME_SERIES_INTERVAL_DAY_MAX_POINTS, 0);
             statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_DAY_PAGES, now,
                     docLog.getNumberOfPages());
 
             /*
              * .
              */
-            statsPages =
-                    new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
-                            TIME_SERIES_INTERVAL_WEEK_MAX_POINTS, 0);
+            statsPages = new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
+                    TIME_SERIES_INTERVAL_WEEK_MAX_POINTS, 0);
             statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_WEEK_PAGES, now,
                     docLog.getNumberOfPages());
             //
-            statsBytes =
-                    new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
-                            TIME_SERIES_INTERVAL_WEEK_MAX_POINTS, 0L);
+            statsBytes = new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
+                    TIME_SERIES_INTERVAL_WEEK_MAX_POINTS, 0L);
             statsBytes.addDataPoint(Key.STATS_PRINT_IN_ROLLING_WEEK_BYTES, now,
                     docLog.getNumberOfBytes());
 
             /*
              * .
              */
-            statsPages =
-                    new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
-                            TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0);
-            statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_PAGES,
-                    now, docLog.getNumberOfPages());
+            statsPages = new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
+                    TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0);
+            statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_PAGES, now,
+                    docLog.getNumberOfPages());
             //
-            statsBytes =
-                    new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
-                            TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0L);
-            statsBytes.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_BYTES,
-                    now, docLog.getNumberOfBytes());
+            statsBytes = new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
+                    TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0L);
+            statsBytes.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_BYTES, now,
+                    docLog.getNumberOfBytes());
 
             /*
              *
@@ -686,9 +694,8 @@ public final class DocLogServiceImpl extends AbstractService implements
             /*
              * Printer LOCK.
              */
-            final Printer lockedPrinter =
-                    printerDAO()
-                            .lock(docOut.getPrintOut().getPrinter().getId());
+            final Printer lockedPrinter = printerDAO()
+                    .lock(docOut.getPrintOut().getPrinter().getId());
 
             printerService().addJobTotals(lockedPrinter,
                     docLog.getCreatedDate(), printOutPages,
@@ -741,9 +748,8 @@ public final class DocLogServiceImpl extends AbstractService implements
             // Queue LOCK.
             final IppQueue ippQueueLocked = ippQueueDAO().lock(queue.getId());
 
-            queueService().addJobTotals(ippQueueLocked,
-                    docLog.getCreatedDate(), docLog.getNumberOfPages(),
-                    docLog.getNumberOfBytes());
+            queueService().addJobTotals(ippQueueLocked, docLog.getCreatedDate(),
+                    docLog.getNumberOfPages(), docLog.getNumberOfBytes());
 
             ippQueueDAO().update(ippQueueLocked);
 
@@ -851,8 +857,8 @@ public final class DocLogServiceImpl extends AbstractService implements
                     printInInfo.getAccountTrxInfoSet();
 
             if (accountTrxInfoSet != null) {
-                accountingService().createAccountTrxs(accountTrxInfoSet,
-                        docLog, AccountTrxTypeEnum.PRINT_IN);
+                accountingService().createAccountTrxs(accountTrxInfoSet, docLog,
+                        AccountTrxTypeEnum.PRINT_IN);
             }
 
             /*
@@ -885,9 +891,8 @@ public final class DocLogServiceImpl extends AbstractService implements
                  */
                 final User user = userDAO().lock(docLog.getUser().getId());
 
-                userService().addPrintInJobTotals(user,
-                        docLog.getCreatedDate(), docLog.getNumberOfPages(),
-                        docLog.getNumberOfBytes());
+                userService().addPrintInJobTotals(user, docLog.getCreatedDate(),
+                        docLog.getNumberOfPages(), docLog.getNumberOfBytes());
 
                 userDAO().update(user);
 
@@ -938,12 +943,12 @@ public final class DocLogServiceImpl extends AbstractService implements
                 msgKey = "pub-user-print-in-success-multiple";
             }
 
-            AdminPublisher.instance().publish(
-                    PubTopicEnum.USER,
-                    PubLevelEnum.INFO,
-                    localize(msgKey, userId,
-                            String.valueOf(pageProps.getNumberOfPages()), "/"
-                                    + queue.getUrlPath(), originator));
+            AdminPublisher.instance()
+                    .publish(PubTopicEnum.USER, PubLevelEnum.INFO,
+                            localize(msgKey, userId,
+                                    String.valueOf(
+                                            pageProps.getNumberOfPages()),
+                                    "/" + queue.getUrlPath(), originator));
 
         } else {
 
@@ -955,8 +960,7 @@ public final class DocLogServiceImpl extends AbstractService implements
                 reasonKey = "print-in-denied-unknown";
             }
 
-            AdminPublisher.instance().publish(
-                    PubTopicEnum.USER,
+            AdminPublisher.instance().publish(PubTopicEnum.USER,
                     PubLevelEnum.WARN,
                     localize("pub-user-print-in-denied", userId,
                             "/" + queue.getUrlPath(), originator,
@@ -997,65 +1001,65 @@ public final class DocLogServiceImpl extends AbstractService implements
             if (resetDashboard) {
 
                 Key[] series = {
-                /* */
-                Key.STATS_PRINT_IN_ROLLING_DAY_PAGES,
-                /* */
-                Key.STATS_PRINT_IN_ROLLING_WEEK_PAGES,
-                /* */
-                Key.STATS_PRINT_IN_ROLLING_WEEK_BYTES,
-                /* */
-                Key.STATS_PRINT_IN_ROLLING_MONTH_PAGES,
-                /* */
-                Key.STATS_PRINT_IN_ROLLING_MONTH_BYTES,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_DAY_PAGES,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_WEEK_PAGES,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_WEEK_BYTES,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_MONTH_PAGES,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_MONTH_BYTES,
 
-                /* */
-                Key.STATS_PDF_OUT_ROLLING_DAY_PAGES,
-                /* */
-                Key.STATS_PDF_OUT_ROLLING_WEEK_PAGES,
-                /* */
-                Key.STATS_PDF_OUT_ROLLING_WEEK_BYTES,
-                /* */
-                Key.STATS_PDF_OUT_ROLLING_MONTH_PAGES,
-                /* */
-                Key.STATS_PDF_OUT_ROLLING_MONTH_BYTES,
+                        /* */
+                        Key.STATS_PDF_OUT_ROLLING_DAY_PAGES,
+                        /* */
+                        Key.STATS_PDF_OUT_ROLLING_WEEK_PAGES,
+                        /* */
+                        Key.STATS_PDF_OUT_ROLLING_WEEK_BYTES,
+                        /* */
+                        Key.STATS_PDF_OUT_ROLLING_MONTH_PAGES,
+                        /* */
+                        Key.STATS_PDF_OUT_ROLLING_MONTH_BYTES,
 
-                /* */
-                Key.STATS_PRINT_OUT_ROLLING_DAY_PAGES,
-                /* */
-                Key.STATS_PRINT_OUT_ROLLING_WEEK_PAGES,
-                /* */
-                Key.STATS_PRINT_OUT_ROLLING_WEEK_SHEETS,
-                /* */
-                Key.STATS_PRINT_OUT_ROLLING_WEEK_ESU,
-                /* */
-                Key.STATS_PRINT_OUT_ROLLING_WEEK_BYTES,
-                /* */
-                Key.STATS_PRINT_OUT_ROLLING_MONTH_PAGES,
-                /* */
-                Key.STATS_PRINT_OUT_ROLLING_MONTH_SHEETS,
-                /* */
-                Key.STATS_PRINT_OUT_ROLLING_MONTH_ESU,
-                /* */
-                Key.STATS_PRINT_OUT_ROLLING_MONTH_BYTES };
+                        /* */
+                        Key.STATS_PRINT_OUT_ROLLING_DAY_PAGES,
+                        /* */
+                        Key.STATS_PRINT_OUT_ROLLING_WEEK_PAGES,
+                        /* */
+                        Key.STATS_PRINT_OUT_ROLLING_WEEK_SHEETS,
+                        /* */
+                        Key.STATS_PRINT_OUT_ROLLING_WEEK_ESU,
+                        /* */
+                        Key.STATS_PRINT_OUT_ROLLING_WEEK_BYTES,
+                        /* */
+                        Key.STATS_PRINT_OUT_ROLLING_MONTH_PAGES,
+                        /* */
+                        Key.STATS_PRINT_OUT_ROLLING_MONTH_SHEETS,
+                        /* */
+                        Key.STATS_PRINT_OUT_ROLLING_MONTH_ESU,
+                        /* */
+                        Key.STATS_PRINT_OUT_ROLLING_MONTH_BYTES };
 
                 // -----------------------
                 Key[] counters = {
-                /* */
-                Key.STATS_TOTAL_PDF_OUT_PAGES,
-                /* */
-                Key.STATS_TOTAL_PDF_OUT_BYTES,
-                /* */
-                Key.STATS_TOTAL_PRINT_IN_PAGES,
-                /* */
-                Key.STATS_TOTAL_PRINT_IN_BYTES,
-                /* */
-                Key.STATS_TOTAL_PRINT_OUT_PAGES,
-                /* */
-                Key.STATS_TOTAL_PRINT_OUT_SHEETS,
-                /* */
-                Key.STATS_TOTAL_PRINT_OUT_ESU,
-                /* */
-                Key.STATS_TOTAL_PRINT_OUT_BYTES,
+                        /* */
+                        Key.STATS_TOTAL_PDF_OUT_PAGES,
+                        /* */
+                        Key.STATS_TOTAL_PDF_OUT_BYTES,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_IN_PAGES,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_IN_BYTES,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_OUT_PAGES,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_OUT_SHEETS,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_OUT_ESU,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_OUT_BYTES,
 
                 };
 
@@ -1114,8 +1118,8 @@ public final class DocLogServiceImpl extends AbstractService implements
         docLogCollect.setUser(user);
         docLogCollect.setUuid(java.util.UUID.randomUUID().toString());
         docLogCollect.setMimetype(DocContent.MIMETYPE_PDF);
-        docLogCollect.setNumberOfBytes(Files.size(Paths.get(pdfFile
-                .getAbsolutePath())));
+        docLogCollect.setNumberOfBytes(
+                Files.size(Paths.get(pdfFile.getAbsolutePath())));
 
         //
         final List<DocInOut> inoutList = new ArrayList<>();
@@ -1129,7 +1133,6 @@ public final class DocLogServiceImpl extends AbstractService implements
             /*
              * INVARIANT: docLogIn is NOT null (see Mantis #268)
              */
-
             final DocLog docLogIn = docLogDAO().findByUuid(user.getId(), uuid);
 
             final DocIn docIn = docLogIn.getDocIn();
@@ -1148,9 +1151,43 @@ public final class DocLogServiceImpl extends AbstractService implements
         docLogCollect.setNumberOfPages(numberOfPages);
         docLogCollect.getDocOut().setDocsInOut(inoutList);
 
-        docLogCollect.getDocOut().setSignature(
-                this.generateSignature(docLogCollect));
+        docLogCollect.getDocOut()
+                .setSignature(this.generateSignature(docLogCollect));
 
     }
 
+    @Override
+    public DocLog getSuppliedDocLog(final ExternalSupplierEnum supplier,
+            final String supplierAccount, final String suppliedId,
+            final ExternalSupplierStatusEnum status) {
+
+        final DocLogDao.ListFilter filter = new DocLogDao.ListFilter();
+        filter.setExternalSupplier(supplier);
+        filter.setExternalId(suppliedId);
+        filter.setExternalStatus(status);
+
+        final List<DocLog> list = docLogDAO().getListChunk(filter);
+
+        /*
+         * Same document ID can be used by different accounts from same
+         * Supplier: find the right one.
+         */
+        Long docLogId = null;
+
+        for (final DocLog docLog : list) {
+            if (docLog.getExternalData() == null) {
+                continue;
+            }
+            final SmartschoolPrintInData data = SmartschoolPrintInData
+                    .createFromData(docLog.getExternalData());
+            if (data != null && data.getAccount().equals(supplierAccount)) {
+                docLogId = docLog.getId();
+            }
+        }
+
+        if (docLogId == null) {
+            return null;
+        }
+        return docLogDAO().findById(docLogId);
+    }
 }

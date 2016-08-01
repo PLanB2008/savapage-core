@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,6 +22,7 @@
 package org.savapage.core.services;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
 import java.util.Date;
@@ -57,6 +58,7 @@ import org.savapage.core.json.rpc.AbstractJsonRpcMethodResponse;
 import org.savapage.core.json.rpc.JsonRpcMethodError;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
 import org.savapage.core.json.rpc.impl.ParamsPrinterSnmp;
+import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
 import org.savapage.core.print.proxy.JsonProxyPrintJob;
 import org.savapage.core.print.proxy.JsonProxyPrinter;
 import org.savapage.core.print.proxy.JsonProxyPrinterOpt;
@@ -65,15 +67,19 @@ import org.savapage.core.print.proxy.ProxyPrintDocReq;
 import org.savapage.core.print.proxy.ProxyPrintException;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
+import org.savapage.core.print.proxy.ProxyPrinterOptGroupEnum;
+import org.savapage.core.services.helpers.InboxSelectScopeEnum;
 import org.savapage.core.services.helpers.PageScalingEnum;
 import org.savapage.core.services.helpers.PrinterAttrLookup;
+import org.savapage.core.services.helpers.ProxyPrintOutboxResult;
 import org.savapage.core.services.helpers.SyncPrintJobsResult;
+import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.snmp.SnmpConnectException;
 
 /**
  * Service for Proxy Printing.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface ProxyPrintService {
@@ -179,9 +185,8 @@ public interface ProxyPrintService {
      * @throws IppConnectException
      *             When an connection error occurs.
      */
-    IppStatusCode getNotifications(String requestingUser,
-            String subscriptionId, List<IppAttrGroup> response)
-            throws IppConnectException;
+    IppStatusCode getNotifications(String requestingUser, String subscriptionId,
+            List<IppAttrGroup> response) throws IppConnectException;
 
     /**
      *
@@ -203,7 +208,7 @@ public interface ProxyPrintService {
      *
      * @param printerName
      *            The printer name.
-     * @return {@code null} when the printer is not present in CUPS an no part
+     * @return {@code null} when the printer is not present in CUPS and not part
      *         of the cache.
      */
     JsonProxyPrinter getCachedPrinter(String printerName);
@@ -235,8 +240,8 @@ public interface ProxyPrintService {
      *            The printer name.
      * @return {@code null} when the printer is no longer part of the cache.
      */
-    JsonPrinterDetail
-            getPrinterDetailUserCopy(Locale locale, String printerName);
+    JsonPrinterDetail getPrinterDetailUserCopy(Locale locale,
+            String printerName);
 
     /**
      * Gets the IPP attributes of a printer.
@@ -250,6 +255,15 @@ public interface ProxyPrintService {
      */
     List<IppAttrGroup> getIppPrinterAttr(String printerName, URI printerUri)
             throws IppConnectException;
+
+    /**
+     * Gets the printer option UI group of an IPP keyword.
+     *
+     * @param keywordIpp
+     *            The IPP keyword.
+     * @return {@code null} when printer option is not shown in UI.
+     */
+    ProxyPrinterOptGroupEnum getUiOptGroup(final String keywordIpp);
 
     /**
      * Localizes the texts in all printer options.
@@ -286,7 +300,7 @@ public interface ProxyPrintService {
             List<JsonProxyPrinterOptChoice> choices);
 
     /**
-     * Gets the valid printers for a user on a terminal.
+     * Gets the valid printers for a user on a terminal (sorted on alias).
      * <ul>
      * <li>Terminal {@link Device} restriction and {@link UserGroup} Access
      * Control are applied.</li>
@@ -303,7 +317,7 @@ public interface ProxyPrintService {
      *            available.
      * @param userName
      *            The unique name of the requesting user.
-     * @return The {@link JsonPrinterList}.
+     * @return The sorted {@link JsonPrinterList}.
      * @throws IppConnectException
      * @throws IppSyntaxException
      */
@@ -371,6 +385,16 @@ public interface ProxyPrintService {
      *             When a syntax error.
      */
     void initPrinterCache() throws IppConnectException, IppSyntaxException;
+
+    /**
+     * Peeks if the CUPS printer cache is available.
+     * <p>
+     * Note: The cache is lazy initialized upon first use.
+     * </p>
+     *
+     * @return {@code true} when available.
+     */
+    boolean isPrinterCacheAvailable();
 
     /**
      * Synchronizes (updates) the PrintOut jobs with the CUPS job state (if the
@@ -442,10 +466,21 @@ public interface ProxyPrintService {
             throws IppConnectException, ProxyPrintException;
 
     /**
-     * Prints one (1) copy of each the vanilla inbox job of the {@link User}
-     * identified by card number, to the proxy printer associated with the card
-     * reader. Printer defaults are used. The inbox is cleared after the print
-     * job is successfully put on the print queue.
+     * Prints one (1) copy of each job in a vanilla inbox job of the
+     * {@link User} identified by card number, to the proxy printer associated
+     * with the card reader. Printer defaults are used.
+     *
+     * <p>
+     * <i>When the inbox is not vanilla, because user edited the SafePages, the
+     * inbox is cleared, and zero (0) is returned.</i>
+     * </p>
+     *
+     * <ul>
+     * <li>Print-in jobs that are expired for Fast Proxy Printing are deleted
+     * first.</li>
+     * <li>The inbox is cleared after the print jobs are successfully put on the
+     * print queue.</li>
+     * </ul>
      * <p>
      * Note: All invariants for {@link Printer}, {@link User},
      * {@link UserAccount}, etc. are checked. When a invariant is violated a
@@ -478,12 +513,35 @@ public interface ProxyPrintService {
      *            The card reader {@link Device}.
      * @param cardNumber
      *            The RFID card number identifying the user.
-     * @return The number of printed pages.
+     * @return The number {@link ProxyPrintOutboxResult}.
      * @throws ProxyPrintException
      *             When a invariant is violated.
      */
-    int proxyPrintOutbox(Device reader, String cardNumber)
+    ProxyPrintOutboxResult proxyPrintOutbox(Device reader, String cardNumber)
             throws ProxyPrintException;
+
+    /**
+     * Print a Job Ticket.
+     *
+     * @param lockedUser
+     *            The {@link User} who owns the Job Ticket, which should be
+     *            locked.
+     * @param job
+     *            The {@link OutboxJobDto} Job Ticket.
+     * @param pdfFileToPrint
+     *            The PDF file to print.
+     * @param extPrinterManager
+     *            The {@link ThirdPartyEnum} external print manager:
+     *            {@code null} when native SavaPage.
+     * @return The number of printed pages.
+     * @throws IOException
+     *             When IO error.
+     * @throws IppConnectException
+     *             When connection to CUPS fails.
+     */
+    int proxyPrintJobTicket(User lockedUser, OutboxJobDto job,
+            File pdfFileToPrint, ThirdPartyEnum extPrinterManager)
+            throws IOException, IppConnectException;
 
     /**
      * Sends Print Job to the CUPS Printer, and updates {@link User},
@@ -553,6 +611,16 @@ public interface ProxyPrintService {
      *         printer is unknown.
      */
     Boolean isLocalPrinter(String cupsPrinterName);
+
+    /**
+     * Checks if the CUPS printer is managed by an external (third-party)
+     * application.
+     *
+     * @param cupsPrinterName
+     *            The printer CUPS name.
+     * @return {@code null} when not managed by external party.
+     */
+    ThirdPartyEnum getExtPrinterManager(String cupsPrinterName);
 
     /**
      * Gets the media option choices for a printer.
@@ -678,6 +746,19 @@ public interface ProxyPrintService {
     void chunkProxyPrintRequest(User lockedUser, ProxyPrintInboxReq request,
             PageScalingEnum pageScaling, boolean chunkVanillaJobs,
             Integer iVanillaJob) throws ProxyPrintException;
+
+    /**
+     * Clears the user's inbox depending on the print request and the
+     * {@link InboxSelectScopeEnum} in it.
+     *
+     * @param lockedUser
+     *            The requesting {@link User}, which should be locked.
+     * @param request
+     *            The {@link ProxyPrintInboxReq}.
+     * @return The number of cleared object (pages or documents, depending on
+     *         {@link ProxyPrintInboxReq#getClearScope()}).
+     */
+    int clearInbox(User lockedUser, ProxyPrintInboxReq request);
 
     /**
      * Reads SNMP printer info.

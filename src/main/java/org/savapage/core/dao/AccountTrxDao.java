@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,7 +24,7 @@ package org.savapage.core.dao;
 import java.util.Date;
 import java.util.List;
 
-import org.savapage.core.dao.helpers.AccountTrxTypeEnum;
+import org.savapage.core.dao.enums.AccountTrxTypeEnum;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.AccountTrx;
 import org.savapage.core.jpa.AccountVoucher;
@@ -32,7 +32,7 @@ import org.savapage.core.jpa.User;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface AccountTrxDao extends GenericDao<AccountTrx> {
@@ -58,6 +58,9 @@ public interface AccountTrxDao extends GenericDao<AccountTrx> {
     class ListFilter {
 
         private Long userId;
+        private Long accountId;
+        private Long docLogId;
+
         private AccountTypeEnum accountType;
         private AccountTrxTypeEnum trxType;
         private Date dateFrom;
@@ -70,6 +73,22 @@ public interface AccountTrxDao extends GenericDao<AccountTrx> {
 
         public void setUserId(Long userId) {
             this.userId = userId;
+        }
+
+        public Long getAccountId() {
+            return accountId;
+        }
+
+        public void setAccountId(Long accountId) {
+            this.accountId = accountId;
+        }
+
+        public Long getDocLogId() {
+            return docLogId;
+        }
+
+        public void setDocLogId(Long docLogId) {
+            this.docLogId = docLogId;
         }
 
         public AccountTypeEnum getAccountType() {

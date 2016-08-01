@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,7 +29,7 @@ import org.savapage.core.jpa.UserGroupMember;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface UserGroupMemberDao extends GenericDao<UserGroupMember> {
@@ -62,6 +62,7 @@ public interface UserGroupMemberDao extends GenericDao<UserGroupMember> {
         public void setUserId(Long userId) {
             this.userId = userId;
         }
+
     }
 
     /**
@@ -91,15 +92,6 @@ public interface UserGroupMemberDao extends GenericDao<UserGroupMember> {
     long getGroupCount(UserFilter filter);
 
     /**
-     * Gets the number of user members of a group.
-     *
-     * @param filter
-     *            The filter.
-     * @return The number of filtered entries.
-     */
-    long getUserCount(GroupFilter filter);
-
-    /**
      *
      * Gets a chunk of user groups a user belongs to.
      *
@@ -122,8 +114,26 @@ public interface UserGroupMemberDao extends GenericDao<UserGroupMember> {
             Integer maxResults, GroupField orderBy, boolean sortAscending);
 
     /**
+     * Gets the number of active (non-deleted) user members of a group.
      *
-     * Gets a chunk of user members of a group.
+     * @param groupId
+     *            The ID of the {@link UserGroup}.
+     * @return The number of members.
+     */
+    long getUserCount(Long groupId);
+
+    /**
+     * Gets the number of active (non-deleted) user members of a group.
+     *
+     * @param filter
+     *            The filter.
+     * @return The number of filtered entries.
+     */
+    long getUserCount(GroupFilter filter);
+
+    /**
+     *
+     * Gets a chunk of active (non-deleted) user members of a group.
      *
      * @param filter
      *            The filter.
@@ -144,8 +154,8 @@ public interface UserGroupMemberDao extends GenericDao<UserGroupMember> {
             Integer maxResults, UserField orderBy, boolean sortAscending);
 
     /**
-     * Gets the full {@link UserGroupMember} list of a {@link UserGroup} sorted
-     * (ascending) by user name.
+     * Gets the full list of active (non-deleted) {@link UserGroupMember} of a
+     * {@link UserGroup} sorted (ascending) by user name.
      *
      * @param groupId
      *            The primary key of the {@link UserGroup}.
@@ -154,10 +164,10 @@ public interface UserGroupMemberDao extends GenericDao<UserGroupMember> {
     List<UserGroupMember> getGroupMembers(Long groupId);
 
     /**
-     * Delete all member of a group.
+     * Deletes all members of a group.
      *
      * @param groupId
-     *            The primary key of the the group.
+     *            The primary key of the group.
      * @return The number of deleted group members.
      */
     int deleteGroup(Long groupId);

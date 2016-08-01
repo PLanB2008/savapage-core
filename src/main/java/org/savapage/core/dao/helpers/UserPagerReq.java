@@ -25,7 +25,6 @@ import java.io.IOException;
 
 import org.savapage.core.SpException;
 import org.savapage.core.dao.UserDao;
-import org.savapage.core.dao.UserDao.Field;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -73,17 +72,27 @@ public class UserPagerReq extends AbstractPagerReq {
 
     public static class Select {
 
+        @JsonProperty("usergroup_id")
+        private Long userGroupId;
+
         @JsonProperty("id_text")
         private String idContainingText = null;
 
         @JsonProperty("email_text")
         private String emailContainingText = null;
 
-        private Boolean internal = null;
         private Boolean admin = null;
         private Boolean person = null;
         private Boolean disabled = null;
         private Boolean deleted = null;
+
+        public Long getUserGroupId() {
+            return userGroupId;
+        }
+
+        public void setUserGroupId(Long userGroupId) {
+            this.userGroupId = userGroupId;
+        }
 
         public String getIdContainingText() {
             return idContainingText;
@@ -133,13 +142,6 @@ public class UserPagerReq extends AbstractPagerReq {
             this.deleted = deleted;
         }
 
-        public Boolean getInternal() {
-            return internal;
-        }
-
-        public void setInternal(Boolean internal) {
-            this.internal = internal;
-        }
     }
 
     public static class Sort {

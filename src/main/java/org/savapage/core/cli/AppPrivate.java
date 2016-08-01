@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,14 +27,13 @@ import java.util.Properties;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.OptionBuilder;
+import org.apache.commons.cli.DefaultParser;
+import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
-import org.apache.commons.cli.PosixParser;
 import org.apache.xmlrpc.XmlRpcException;
 import org.apache.xmlrpc.client.XmlRpcClient;
 import org.apache.xmlrpc.client.XmlRpcClientConfigImpl;
 import org.savapage.core.config.ConfigManager;
-import org.savapage.core.crypto.CryptoUser;
 
 /**
  * <p>
@@ -48,12 +47,12 @@ import org.savapage.core.crypto.CryptoUser;
  * rights to execute the commands.
  * </p>
  * <p>
- * See <a
- * href="http://ws.apache.org/xmlrpc/client.html">http://ws.apache.org/xmlrpc
+ * See
+ * <a href="http://ws.apache.org/xmlrpc/client.html">http://ws.apache.org/xmlrpc
  * /client.html</a>
  * </p>
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class AppPrivate extends AbstractApp {
@@ -75,23 +74,17 @@ public final class AppPrivate extends AbstractApp {
 
         Options options = new Options();
 
-        //
         options.addOption(CLI_SWITCH_HELP, CLI_SWITCH_HELP_LONG, false,
                 "Displays this help text.");
 
-        //
-        OptionBuilder.hasArg(false);
-        OptionBuilder.withLongOpt(CLI_SWITCH_CUPS_SUBS_STOP);
-        OptionBuilder.withDescription("Stops the CUPS event subscription.");
-        options.addOption(OptionBuilder.create());
+        options.addOption(Option.builder().hasArg(false)
+                .longOpt(CLI_SWITCH_CUPS_SUBS_STOP)
+                .desc("Stops the CUPS event subscription.").build());
 
-        //
-        OptionBuilder.hasArg(false);
-        OptionBuilder.withLongOpt(CLI_SWITCH_CUPS_SUBS_START);
-        OptionBuilder.withDescription("Starts the CUPS event subscription.");
-        options.addOption(OptionBuilder.create());
+        options.addOption(Option.builder().hasArg(false)
+                .longOpt(CLI_SWITCH_CUPS_SUBS_START)
+                .desc("Starts the CUPS event subscription.").build());
 
-        //
         return options;
     }
 
@@ -104,7 +97,7 @@ public final class AppPrivate extends AbstractApp {
         // Parse parameters from CLI
         // ......................................................
         Options options = createCliOptions();
-        CommandLineParser parser = new PosixParser();
+        CommandLineParser parser = new DefaultParser();
         CommandLine cmd = null;
 
         try {
@@ -142,16 +135,14 @@ public final class AppPrivate extends AbstractApp {
             if (cmd.hasOption(CLI_SWITCH_CUPS_SUBS_START)) {
 
                 XmlRpcClient client = createClient();
-                ret =
-                        (Integer) client.execute("admin.cupsSubscriptionStart",
-                                new Object[] {});
+                ret = (Integer) client.execute("admin.cupsSubscriptionStart",
+                        new Object[] {});
 
             } else if (cmd.hasOption(CLI_SWITCH_CUPS_SUBS_STOP)) {
 
                 XmlRpcClient client = createClient();
-                ret =
-                        (Integer) client.execute("admin.cupsSubscriptionStop",
-                                new Object[] {});
+                ret = (Integer) client.execute("admin.cupsSubscriptionStop",
+                        new Object[] {});
 
             } else {
 
@@ -209,9 +200,6 @@ public final class AppPrivate extends AbstractApp {
      */
     @Override
     protected void onInit() throws Exception {
-
-        CryptoUser.init();
-
     }
 
     /**

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -25,7 +25,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 
-import org.savapage.core.dao.helpers.DocLogProtocolEnum;
+import org.savapage.core.dao.enums.DocLogProtocolEnum;
 import org.savapage.core.ipp.attribute.IppAttrValue;
 import org.savapage.core.jpa.User;
 import org.savapage.core.print.server.DocContentPrintProcessor;
@@ -35,9 +35,10 @@ import org.slf4j.LoggerFactory;
 /**
  * 3.2.1.1 Print-Job Request.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
+ *
  */
-public class IppPrintJobReq extends AbstractIppRequest {
+public final class IppPrintJobReq extends AbstractIppRequest {
 
     /*
      * Group 1: Operation Attributes
@@ -47,10 +48,9 @@ public class IppPrintJobReq extends AbstractIppRequest {
      * Group 3: Document Content
      */
 
-    private static final Logger LOGGER = LoggerFactory
-            .getLogger(IppPrintJobReq.class);
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(IppPrintJobReq.class);
 
-    private IppPrintJobOperation operation = null;
     private DocContentPrintProcessor printInProcessor = null;
 
     /**
@@ -63,7 +63,13 @@ public class IppPrintJobReq extends AbstractIppRequest {
     public void processAttributes(final IppPrintJobOperation operation,
             final InputStream istr) throws Exception {
 
-        this.operation = operation;
+        final String authWebAppUser;
+
+        if (operation.isTrustedUserAsRequester()) {
+            authWebAppUser = null;
+        } else {
+            authWebAppUser = operation.getTrustedIppClientUserId();
+        }
 
         /*
          * Create generic PrintIn handler. This should be a fist action because
@@ -71,19 +77,28 @@ public class IppPrintJobReq extends AbstractIppRequest {
          */
         this.printInProcessor =
                 new DocContentPrintProcessor(operation.getQueue(),
-                        operation.getOriginatorIp(), null,
-                        operation.getTrustedIppClientUserId());
+                        operation.getOriginatorIp(), null, authWebAppUser);
         /*
-         * Read the IPP attributes.
+         * Then, read the IPP attributes.
          */
         readAttributes(istr);
+
+        /*
+         * Then, get the IPP requesting user.
+         */
+        final String requestingUserId;
+
+        if (operation.isTrustedUserAsRequester()) {
+            requestingUserId = operation.getTrustedIppClientUserId();
+        } else {
+            requestingUserId = this.getRequestingUserName();
+        }
 
         /*
          * Check...
          */
         printInProcessor.setJobName(getJobName());
-        printInProcessor.processRequestingUser(getRequestingUserName());
-
+        printInProcessor.processRequestingUser(requestingUserId);
     }
 
     /**
@@ -103,9 +118,9 @@ public class IppPrintJobReq extends AbstractIppRequest {
 
     /**
      *
-     * @return
+     * @return The job name.
      */
-    public final String getJobName() {
+    public String getJobName() {
 
         final IppAttrValue ippValue = getAttrValue("job-name");
 
@@ -203,7 +218,8 @@ public class IppPrintJobReq extends AbstractIppRequest {
     }
 
     /**
-     * Wraps the {@link DocContentPrintProcessor#evaluateErrorState(boolean)} method.
+     * Wraps the {@link DocContentPrintProcessor#evaluateErrorState(boolean)}
+     * method.
      *
      * @param isAuthorized
      * @throws Exception

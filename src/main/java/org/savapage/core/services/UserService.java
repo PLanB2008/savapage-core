@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,7 +26,8 @@ import java.io.IOException;
 import java.util.Date;
 import java.util.UUID;
 
-import org.savapage.core.dao.helpers.UserAttrEnum;
+import org.savapage.core.config.IConfigProp;
+import org.savapage.core.dao.enums.UserAttrEnum;
 import org.savapage.core.dto.UserDto;
 import org.savapage.core.dto.UserPropertiesDto;
 import org.savapage.core.jpa.Account;
@@ -39,7 +40,7 @@ import org.savapage.core.users.IUserSource;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface UserService {
@@ -166,8 +167,8 @@ public interface UserService {
      * @throws IOException
      *             When something went wrong.
      */
-    AbstractJsonRpcMethodResponse
-            setUserProperties(final UserPropertiesDto dto) throws IOException;
+    AbstractJsonRpcMethodResponse setUserProperties(final UserPropertiesDto dto)
+            throws IOException;
 
     /**
      * Logically deletes a User.
@@ -180,6 +181,25 @@ public interface UserService {
      */
     AbstractJsonRpcMethodResponse deleteUser(final String userIdToDelete)
             throws IOException;
+
+    /**
+     * Logically deletes a user and auto-corrects the inconsistent situation
+     * where multiple active instances with same user name exist (in that case
+     * all instances are logically deleted).
+     * <p>
+     * NOTE: Any inconsistent situation is caused by a program bug, which of
+     * course needs to be fixed. In the mean time this method can be used to
+     * ad-hoc fix inconsistencies by deleting all user instances.
+     * </p>
+     *
+     * @param userIdToDelete
+     *            The unique user name to delete.
+     * @return The JSON-RPC Return message (either a result or an error);
+     * @throws IOException
+     *             When something went wrong.
+     */
+    AbstractJsonRpcMethodResponse deleteUserAutoCorrect(
+            final String userIdToDelete) throws IOException;
 
     /**
      * Lists Users sorted by user name.
@@ -323,9 +343,8 @@ public interface UserService {
      * @param jobBytes
      *            The number of bytes.
      */
-    void
-            addPdfOutJobTotals(User user, Date jobDate, int jobPages,
-                    long jobBytes);
+    void addPdfOutJobTotals(User user, Date jobDate, int jobPages,
+            long jobBytes);
 
     /**
      * Adds totals of a PrintOut job to a {@link User} (database is NOT
@@ -546,8 +565,9 @@ public interface UserService {
      * @param userId
      *            The user id.
      * @param userGroup
-     *            The group the user belongs to. Can be empty or {@code null}
-     *            when no group is specified or known.
+     *            The {@link IConfigProp.Key#USER_SOURCE_GROUP} the user belongs
+     *            to. Can be empty or {@code null} when no group is specified or
+     *            known.
      * @return {@code null} if the user does NOT exist in the user source
      *         (group), or is a reserved name like 'admin'.
      */
@@ -557,8 +577,8 @@ public interface UserService {
     /**
      * Creates a user's home directory structure when it does not exist.
      * <p>
-     * Note: This method has its own database transaction. When creating the
-     * home directory the {@link User} database row is locked.
+     * IMPORTANT: This method has its own database transaction. When creating
+     * the home directory the {@link User} database row is locked.
      * </p>
      *
      * @param user
@@ -571,6 +591,12 @@ public interface UserService {
 
     /**
      * Creates a user's home directory structure when it does not exist.
+     *
+     * <p>
+     * IMPORTANT: This method does NOT have its own database transaction. Any
+     * client should lock the {@link User} database row before calling this
+     * method.
+     * </p>
      *
      * @param userId
      *            The unique id of the user.

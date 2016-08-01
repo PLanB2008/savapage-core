@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,13 +24,14 @@ package org.savapage.core.dao;
 import java.util.Date;
 import java.util.List;
 
+import org.savapage.core.dao.enums.ReservedUserGroupEnum;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.User;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface UserDao extends GenericDao<User> {
@@ -53,6 +54,7 @@ public interface UserDao extends GenericDao<User> {
      */
     class ListFilter {
 
+        private Long userGroupId;
         private String containingIdText;
         private String containingNameText;
         private String containingEmailText;
@@ -61,6 +63,14 @@ public interface UserDao extends GenericDao<User> {
         private Boolean person;
         private Boolean disabled;
         private Boolean deleted;
+
+        public Long getUserGroupId() {
+            return userGroupId;
+        }
+
+        public void setUserGroupId(Long userGroupId) {
+            this.userGroupId = userGroupId;
+        }
 
         public String getContainingIdText() {
             return containingIdText;
@@ -142,11 +152,19 @@ public interface UserDao extends GenericDao<User> {
      * </p>
      *
      * @param filter
+     *            The filter.
      * @param startPosition
+     *            The zero-based start position of the chunk related to the
+     *            total number of rows. If {@code null} the chunk starts with
+     *            the first row.
      * @param maxResults
+     *            The maximum number of rows in the chunk. If {@code null}, then
+     *            ALL (remaining rows) are returned.
      * @param orderBy
+     *            The sort field.
      * @param sortAscending
-     * @return
+     *            {@code true} when sorted ascending.
+     * @return The chunk.
      */
     List<User> getListChunk(ListFilter filter, Integer startPosition,
             Integer maxResults, Field orderBy, boolean sortAscending);
@@ -160,6 +178,17 @@ public interface UserDao extends GenericDao<User> {
      * @return {@code null} when not found (or logically deleted).
      */
     User lockByUserId(String userId);
+
+    /**
+     * Finds an active (i.e. not logically deleted) {@link User} by id, when not
+     * found (or logically deleted) {@code null} is returned.
+     *
+     * @param id
+     *            The primary id of the user.
+     * @return The {@link User} instance, or {@code null} when not found (or
+     *         logically deleted).
+     */
+    User findActiveUserById(Long id);
 
     /**
      * Finds an active (i.e. not logically deleted) {@link User} by user id,
@@ -210,6 +239,20 @@ public interface UserDao extends GenericDao<User> {
             String insertedBy);
 
     /**
+     * Checks the active (i.e. not logically deleted) {@link User} by user id.
+     * When not found (or logically deleted) an empty list is returned.
+     * <p>
+     * NOTE: A returned list with more than one (1) element signals an
+     * <b>inconsistent</b> state.
+     * </p>
+     *
+     * @param userId
+     *            The unique user id.
+     * @return The list of active users found.
+     */
+    List<User> checkActiveUserByUserId(final String userId);
+
+    /**
      * Finds a User by primary key of his {@link Account}.
      *
      * @param accountId
@@ -247,4 +290,15 @@ public interface UserDao extends GenericDao<User> {
      */
     long countActiveUsers();
 
+    /**
+     * Counts the number of active users in a {@link ReservedUserGroupEnum}.
+     * <p>
+     * NOTE: logically deleted users are excluded from the count.
+     * </p>
+     *
+     * @param userGroupEnum
+     *            The {@link ReservedUserGroupEnum}.
+     * @return the number of active users.
+     */
+    long countActiveUsers(ReservedUserGroupEnum userGroupEnum);
 }

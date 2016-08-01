@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2015 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -25,34 +25,66 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
+ * A unit of weighted {@link AccountTrxInfo} objects.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public class AccountTrxInfoSet {
+public final class AccountTrxInfoSet {
+
+    /**
+     * .
+     */
+    private final int weightTotal;
 
     /**
      * .
      */
     private List<AccountTrxInfo> accountTrxInfoList = new ArrayList<>();
 
-    public List<AccountTrxInfo> getAccountTrxInfoList() {
-        return accountTrxInfoList;
-    }
-
-    public void setAccountTrxInfoList(List<AccountTrxInfo> accountTrxInfoList) {
-        this.accountTrxInfoList = accountTrxInfoList;
+    /**
+     *
+     * @param weightTotal
+     *            The weight total. IMPORTANT: This total need NOT be the same
+     *            as the accumulated weight of the individual Account
+     *            transactions. For example: parts of the printing costs may be
+     *            charged to (personal and shared) multiple accounts.
+     *
+     */
+    public AccountTrxInfoSet(final int weightTotal) {
+        this.weightTotal = weightTotal;
     }
 
     /**
      *
-     * @return
+     * @return The list of {@link AccountTrxInfo} objects.
      */
-    public int calcTotalWeight() {
-        int nTotal = 0;
-        for (final AccountTrxInfo trxInfo : this.getAccountTrxInfoList()) {
-            nTotal += trxInfo.getWeight().intValue();
-        }
-        return nTotal;
+    public List<AccountTrxInfo> getAccountTrxInfoList() {
+        return accountTrxInfoList;
     }
+
+    /**
+     *
+     * @param list
+     *            The list of {@link AccountTrxInfo} objects.
+     */
+    public void setAccountTrxInfoList(final List<AccountTrxInfo> list) {
+        this.accountTrxInfoList = list;
+    }
+
+    /**
+     * Gets the weights total.
+     *
+     * <p>
+     * IMPORTANT: This total need NOT be the same as the accumulated weight of
+     * the individual Account transactions. For example: parts of the printing
+     * costs may be charged to (personal and shared) multiple accounts.
+     * </p>
+     *
+     * @return The weight total.
+     */
+    public int getWeightTotal() {
+        return weightTotal;
+    }
+
 }

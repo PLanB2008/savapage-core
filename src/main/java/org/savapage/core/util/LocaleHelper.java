@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,6 +21,7 @@
  */
 package org.savapage.core.util;
 
+import java.io.File;
 import java.math.BigDecimal;
 import java.text.DateFormat;
 import java.text.NumberFormat;
@@ -28,20 +29,28 @@ import java.text.ParseException;
 import java.util.Date;
 import java.util.Locale;
 
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.StringUtils;
+
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class LocaleHelper {
 
+    /**
+     *
+     */
     private final Locale locale;
 
     /**
+     * Construct.
      *
      * @param locale
+     *            The locale.
      */
-    public LocaleHelper(Locale locale) {
+    public LocaleHelper(final Locale locale) {
         this.locale = locale;
     }
 
@@ -77,14 +86,15 @@ public final class LocaleHelper {
      * @return The localized date string.
      */
     public String getLongDate(final Date date) {
-        return DateFormat.getDateInstance(DateFormat.LONG, this.locale).format(
-                date);
+        return DateFormat.getDateInstance(DateFormat.LONG, this.locale)
+                .format(date);
     }
 
     /**
      * Gets as localized string of a Number.
      *
      * @param number
+     *            The number.
      * @return The localized string.
      */
     public String getNumber(final long number) {
@@ -140,6 +150,71 @@ public final class LocaleHelper {
     public String getDecimal(final BigDecimal decimal, int fractionDigits)
             throws ParseException {
         return getCurrencyDecimal(decimal, fractionDigits, "");
+    }
+
+    /**
+     * Gets the localized user interface text of an {@link Enum} value.
+     *
+     * @param <E>
+     *            The Enum class.
+     * @param value
+     *            The Enum value.
+     * @param locale
+     *            The {@link Locale}.
+     * @return The localized text.
+     */
+    public static <E extends Enum<E>> String uiText(final Enum<E> value,
+            final Locale locale) {
+        return Messages
+                .loadXmlResource(value.getClass(),
+                        value.getClass().getSimpleName(), locale)
+                .getString(value.toString());
+    }
+
+    /**
+     * Gets the sibling locale variant of a file. A locale variant is formatted
+     * as {@code name_xx_XX.ext} where 'xx' is the language code and 'XX' the
+     * country/region code.
+     *
+     * @param file
+     *            The plain file without locale naming.
+     * @param locale
+     *            The {@link Locale}.
+     * @return The locale variant of the file, or the input file when no locale
+     *         variant is found.
+     */
+    public static File getLocaleFile(final File file, final Locale locale) {
+
+        final String lang = StringUtils.defaultString(locale.getLanguage());
+        final String ctry = StringUtils.defaultString(locale.getCountry());
+
+        if (StringUtils.isBlank(lang)) {
+            return file;
+        }
+
+        final String filePathBase =
+                FilenameUtils.removeExtension(file.getAbsolutePath());
+
+        final String filePathExt = FilenameUtils.getExtension(file.getName());
+
+        if (StringUtils.isNotBlank(ctry)) {
+
+            final File fileLoc = new File(String.format("%s_%s_%s.%s",
+                    filePathBase, lang, ctry, filePathExt));
+
+            if (fileLoc.exists()) {
+                return fileLoc;
+            }
+        }
+
+        final File fileLoc = new File(
+                String.format("%s_%s.%s", filePathBase, lang, filePathExt));
+
+        if (fileLoc.exists()) {
+            return fileLoc;
+        }
+
+        return file;
     }
 
 }

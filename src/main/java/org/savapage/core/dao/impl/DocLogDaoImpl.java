@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,24 +34,23 @@ import org.slf4j.LoggerFactory;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public final class DocLogDaoImpl extends GenericDaoImpl<DocLog> implements
-        DocLogDao {
+public final class DocLogDaoImpl extends GenericDaoImpl<DocLog>
+        implements DocLogDao {
 
     /**
      * .
      */
-    private static final Logger LOGGER = LoggerFactory
-            .getLogger(DocLogDaoImpl.class);
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(DocLogDaoImpl.class);
 
     @Override
     public DocLog findByUuid(final Long userId, final String uuid) {
 
-        final String jpql =
-                "SELECT D FROM DocLog D JOIN D.user U"
-                        + " WHERE U.id = :userId AND D.uuid = :uuid";
+        final String jpql = "SELECT D FROM DocLog D JOIN D.user U"
+                + " WHERE U.id = :userId AND D.uuid = :uuid";
 
         final Query query = getEntityManager().createQuery(jpql);
 
@@ -72,9 +71,8 @@ public final class DocLogDaoImpl extends GenericDaoImpl<DocLog> implements
     @Override
     public int cleanDocOutHistory(final Date dateBackInTime) {
 
-        final String jpql =
-                "SELECT D FROM DocLog D WHERE "
-                        + "docOut IS NOT NULL AND createdDay <= :createdDay";
+        final String jpql = "SELECT D FROM DocLog D WHERE "
+                + "docOut IS NOT NULL AND createdDay <= :createdDay";
 
         final Query query = getEntityManager().createQuery(jpql);
 
@@ -97,9 +95,8 @@ public final class DocLogDaoImpl extends GenericDaoImpl<DocLog> implements
     @Override
     public int cleanDocInHistory(final Date dateBackInTime) {
 
-        final String jpql =
-                "SELECT D FROM DocLog D WHERE "
-                        + "docIn IS NOT NULL AND createdDay <= :createdDay";
+        final String jpql = "SELECT D FROM DocLog D WHERE "
+                + "docIn IS NOT NULL AND createdDay <= :createdDay";
 
         final Query query = getEntityManager().createQuery(jpql);
         query.setParameter("createdDay", dateBackInTime);
@@ -174,7 +171,6 @@ public final class DocLogDaoImpl extends GenericDaoImpl<DocLog> implements
             }
         }
 
-        //
         if (LOGGER.isTraceEnabled()) {
             LOGGER.trace(jpql.toString());
         }
@@ -230,6 +226,14 @@ public final class DocLogDaoImpl extends GenericDaoImpl<DocLog> implements
             where.append(" D.externalStatus = :externalStatus");
         }
 
+        if (filter.getExternalId() != null) {
+            if (nWhere > 0) {
+                where.append(" AND");
+            }
+            nWhere++;
+            where.append(" D.externalId = :externalId");
+        }
+
         if (nWhere > 0) {
             jpql.append(" WHERE").append(where);
         }
@@ -250,17 +254,22 @@ public final class DocLogDaoImpl extends GenericDaoImpl<DocLog> implements
         final Query query = getEntityManager().createQuery(jpql.toString());
 
         if (filter.getProtocol() != null) {
-            query.setParameter("deliveryProtocol", filter.getProtocol()
-                    .getDbName());
+            query.setParameter("deliveryProtocol",
+                    filter.getProtocol().getDbName());
         }
 
         if (filter.getExternalSupplier() != null) {
-            query.setParameter("externalSupplier", filter.getExternalSupplier()
-                    .toString());
+            query.setParameter("externalSupplier",
+                    filter.getExternalSupplier().toString());
         }
 
         if (filter.getExternalStatus() != null) {
-            query.setParameter("externalStatus", filter.getExternalStatus());
+            query.setParameter("externalStatus",
+                    filter.getExternalStatus().toString());
+        }
+
+        if (filter.getExternalId() != null) {
+            query.setParameter("externalId", filter.getExternalId());
         }
 
         return query;

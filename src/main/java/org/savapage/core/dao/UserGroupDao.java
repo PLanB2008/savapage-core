@@ -23,7 +23,8 @@ package org.savapage.core.dao;
 
 import java.util.List;
 
-import org.savapage.core.dao.helpers.ReservedUserGroupEnum;
+import org.savapage.core.dao.enums.ACLRoleEnum;
+import org.savapage.core.dao.enums.ReservedUserGroupEnum;
 import org.savapage.core.jpa.UserGroup;
 
 /**
@@ -56,6 +57,7 @@ public interface UserGroupDao extends GenericDao<UserGroup> {
     class ListFilter {
 
         private String containingText;
+        private ACLRoleEnum aclRole;
 
         public String getContainingText() {
             return containingText;
@@ -65,12 +67,21 @@ public interface UserGroupDao extends GenericDao<UserGroup> {
             this.containingText = containingText;
         }
 
+        public ACLRoleEnum getAclRole() {
+            return aclRole;
+        }
+
+        public void setAclRole(ACLRoleEnum aclRole) {
+            this.aclRole = aclRole;
+        }
+
     }
 
     /**
      *
      * @param filter
-     * @return
+     *            The {@link ListFilter}.
+     * @return The number of filtered rows.
      */
     long getListCount(ListFilter filter);
 
@@ -97,9 +108,20 @@ public interface UserGroupDao extends GenericDao<UserGroup> {
             Integer maxResults, Field orderBy, boolean sortAscending);
 
     /**
-     * Finds a reserved {@link UserGroup}.
+     * Finds the {@link ReservedUserGroupEnum} by primary key.
+     *
+     * @param id
+     *            The primary key.
+     * @return The {@link ReservedUserGroupEnum}, or {@code null} when not
+     *         found.
+     */
+    ReservedUserGroupEnum findReservedGroup(Long id);
+
+    /**
+     * Finds a reserved {@link UserGroup} by enum.
      *
      * @param reservedGroup
+     *            The {@link ReservedUserGroupEnum}.
      * @return The {@link UserGroup}, or {@code null} when not found.
      */
     UserGroup find(ReservedUserGroupEnum reservedGroup);

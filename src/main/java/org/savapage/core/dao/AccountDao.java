@@ -22,6 +22,7 @@
 package org.savapage.core.dao;
 
 import java.math.BigDecimal;
+import java.util.Date;
 import java.util.List;
 
 import org.savapage.core.dao.helpers.AggregateResult;
@@ -44,13 +45,55 @@ public interface AccountDao extends GenericDao<Account> {
         /**
          * Account type.
          */
-        ACCOUNT_TYPE
+        ACCOUNT_TYPE,
+        /**
+         * The account name.
+         */
+        NAME
     }
 
     /**
      * Empty placeholder for now.
      */
     class ListFilter {
+
+        private AccountTypeEnum accountType;
+        private AccountTypeEnum accountTypeExtra;
+
+        private String containingNameText;
+        private Boolean deleted;
+
+        public AccountTypeEnum getAccountType() {
+            return accountType;
+        }
+
+        public void setAccountType(AccountTypeEnum accountType) {
+            this.accountType = accountType;
+        }
+
+        public AccountTypeEnum getAccountTypeExtra() {
+            return accountTypeExtra;
+        }
+
+        public void setAccountTypeExtra(AccountTypeEnum accountTypeExtra) {
+            this.accountTypeExtra = accountTypeExtra;
+        }
+
+        public String getContainingNameText() {
+            return containingNameText;
+        }
+
+        public void setContainingNameText(String containingNameText) {
+            this.containingNameText = containingNameText;
+        }
+
+        public Boolean getDeleted() {
+            return deleted;
+        }
+
+        public void setDeleted(Boolean deleted) {
+            this.deleted = deleted;
+        }
 
     }
 
@@ -60,7 +103,7 @@ public interface AccountDao extends GenericDao<Account> {
      *            The {@link ListFilter}.
      * @return The number of filtered instances.
      */
-    long getListCount(final ListFilter filter);
+    long getListCount(ListFilter filter);
 
     /**
      *
@@ -71,12 +114,11 @@ public interface AccountDao extends GenericDao<Account> {
      * @param sortAscending
      * @return The list.
      */
-    List<Account> getListChunk(final ListFilter filter,
-            final Integer startPosition, final Integer maxResults,
-            final Field orderBy, final boolean sortAscending);
+    List<Account> getListChunk(ListFilter filter, Integer startPosition,
+            Integer maxResults, Field orderBy, boolean sortAscending);
 
     /**
-     * Finds an active (i.e. not logically deleted)
+     * Finds the active (i.e. not logically deleted)
      * {@link AccountTypeEnum#SHARED} top-level {@link Account} by its unique
      * name.
      * <p>
@@ -89,6 +131,22 @@ public interface AccountDao extends GenericDao<Account> {
      * @return The {@link Account} instance or {@code null} when not found.
      */
     Account findActiveSharedAccountByName(String name);
+
+    /**
+     * Finds the active (i.e. not logically deleted) top-level {@link Account}
+     * of {@link AccountTypeEnum} by its unique name.
+     * <p>
+     * Note: The name might not be unique in the database as such, but there
+     * MUST only be one (1) <i>active</i> instance with that name.
+     * </p>
+     *
+     * @param name
+     *            The unique active account name.
+     * @param accountType
+     *            The {@link AccountTypeEnum}.
+     * @return The {@link Account} instance or {@code null} when not found.
+     */
+    Account findActiveAccountByName(String name, AccountTypeEnum accountType);
 
     /**
      * Finds an active (i.e. not logically deleted)
@@ -137,4 +195,45 @@ public interface AccountDao extends GenericDao<Account> {
     AggregateResult<BigDecimal> getBalanceStats(boolean userAccounts,
             boolean debit);
 
+    /**
+     *
+     * @param parentId
+     *            The primary key of the parent {@link Account}.
+     * @return The number of sub accounts of a parent.
+     */
+    long countSubAccounts(Long parentId);
+
+    /**
+     * @param parentId
+     *            The primary key of the parent {@link Account}.
+     * @return The sub accounts of a parent.
+     */
+    List<Account> getSubAccounts(final Long parentId);
+
+    /**
+     *
+     * @param parentId
+     *            The primary key of the parent {@link Account}.
+     * @param deletedDate
+     *            The delete date.
+     * @param deletedBy
+     *            The delete actor.
+     * @return The number of sub accounts that were updated.
+     */
+    int logicalDeleteSubAccounts(Long parentId, Date deletedDate,
+            String deletedBy);
+
+    /**
+     * Sets the logical delete attributes of an {@link Account} (no database
+     * upoate is performed).
+     *
+     * @param account
+     *            The {@link Account}.
+     * @param deletedDate
+     *            The delete date.
+     * @param deletedBy
+     *            The delete actor.
+     * @param deletedBy
+     */
+    void setLogicalDelete(Account account, Date deletedDate, String deletedBy);
 }

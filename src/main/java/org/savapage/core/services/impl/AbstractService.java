@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -42,6 +42,7 @@ import org.savapage.core.dao.UserAttrDao;
 import org.savapage.core.dao.UserCardDao;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.UserEmailDao;
+import org.savapage.core.dao.UserGroupAttrDao;
 import org.savapage.core.dao.UserGroupDao;
 import org.savapage.core.dao.UserGroupMemberDao;
 import org.savapage.core.dao.UserNumberDao;
@@ -49,25 +50,33 @@ import org.savapage.core.inbox.OutputProducer;
 import org.savapage.core.json.rpc.JsonRpcError;
 import org.savapage.core.json.rpc.JsonRpcMethodError;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
+import org.savapage.core.services.AccessControlService;
 import org.savapage.core.services.AccountVoucherService;
 import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.DeviceService;
 import org.savapage.core.services.DocLogService;
 import org.savapage.core.services.InboxService;
+import org.savapage.core.services.JobTicketService;
 import org.savapage.core.services.OutboxService;
 import org.savapage.core.services.PrinterService;
+import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.QueueService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.UserGroupService;
 import org.savapage.core.services.UserService;
 import org.savapage.core.util.Messages;
+import org.savapage.ext.papercut.services.PaperCutService;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public abstract class AbstractService {
+
+    protected static AccessControlService accessControlService() {
+        return ServiceContext.getServiceFactory().getAccessControlService();
+    }
 
     protected static AccountingService accountingService() {
         return ServiceContext.getServiceFactory().getAccountingService();
@@ -89,12 +98,24 @@ public abstract class AbstractService {
         return ServiceContext.getServiceFactory().getInboxService();
     }
 
+    protected static JobTicketService jobTicketService() {
+        return ServiceContext.getServiceFactory().getJobTicketService();
+    }
+
     protected static OutputProducer outputProducer() {
         return OutputProducer.instance();
     }
 
     protected static OutboxService outboxService() {
         return ServiceContext.getServiceFactory().getOutboxService();
+    }
+
+    protected static PaperCutService paperCutService() {
+        return ServiceContext.getServiceFactory().getPaperCutService();
+    }
+
+    protected static ProxyPrintService proxyPrintService() {
+        return ServiceContext.getServiceFactory().getProxyPrintService();
     }
 
     protected static PrinterService printerService() {
@@ -207,6 +228,10 @@ public abstract class AbstractService {
         return ServiceContext.getDaoContext().getUserGroupDao();
     }
 
+    protected static UserGroupAttrDao userGroupAttrDAO() {
+        return ServiceContext.getDaoContext().getUserGroupAttrDao();
+    }
+
     protected static UserGroupMemberDao userGroupMemberDAO() {
         return ServiceContext.getDaoContext().getUserGroupMemberDao();
     }
@@ -240,7 +265,7 @@ public abstract class AbstractService {
     protected final JsonRpcMethodError createErrorMsg(final String key,
             final String... args) {
         return JsonRpcMethodError.createBasicError(
-                JsonRpcError.Code.INVALID_PARAMS, key, localize(key, args));
+                JsonRpcError.Code.INVALID_PARAMS, null, localize(key, args));
     }
 
     /**
@@ -252,7 +277,7 @@ public abstract class AbstractService {
     protected final JsonRpcMethodError createError(final String msgKey,
             final String... msgArgs) {
         return JsonRpcMethodError.createBasicError(
-                JsonRpcError.Code.INVALID_PARAMS, "Invalid input.",
+                JsonRpcError.Code.INVALID_PARAMS, null,
                 localize(msgKey, msgArgs));
     }
 

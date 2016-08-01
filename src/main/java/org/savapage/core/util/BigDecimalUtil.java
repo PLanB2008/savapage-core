@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,6 +22,7 @@
 package org.savapage.core.util;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.text.ParseException;
@@ -32,7 +33,7 @@ import org.apache.commons.lang3.StringUtils;
 /**
  * Utility methods for {@link BigDecimal} conversions.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class BigDecimalUtil {
@@ -56,7 +57,7 @@ public final class BigDecimalUtil {
      */
     public static BigDecimal parse(final String localizedDecimal,
             final Locale locale, boolean currency, boolean groupingUsed)
-            throws ParseException {
+                    throws ParseException {
         final DecimalFormat df = getDecimalFormat(locale, currency);
         df.setParseBigDecimal(true);
         df.setGroupingUsed(groupingUsed);
@@ -72,8 +73,8 @@ public final class BigDecimalUtil {
      * @return
      * @throws ParseException
      */
-    public static String localize(final BigDecimal decimal,
-            final Locale locale, boolean groupingUsed) throws ParseException {
+    public static String localize(final BigDecimal decimal, final Locale locale,
+            boolean groupingUsed) throws ParseException {
         final DecimalFormat df = getDecimalFormat(locale, false);
         df.setParseBigDecimal(true);
         df.setGroupingUsed(groupingUsed);
@@ -111,7 +112,7 @@ public final class BigDecimalUtil {
      */
     public static String localize(final BigDecimal decimal, int fractionDigits,
             final Locale locale, boolean currency, boolean groupingUsed)
-            throws ParseException {
+                    throws ParseException {
 
         final DecimalFormat df = getDecimalFormat(locale, currency);
 
@@ -124,26 +125,112 @@ public final class BigDecimalUtil {
     }
 
     /**
+     * Gets the right-sized precision of a {@link BigDecimal}.
+     *
+     * @param decimal
+     *            The {@link BigDecimal} to localize.
+     * @param fractionDigitsMinimum
+     *            The minimum number of fraction digits in the result.
+     * @return the right-sized precision.
+     */
+    private static int getRightSizedPrecision(final BigDecimal decimal,
+            final int fractionDigitsMinimum) {
+
+        if (decimal.compareTo(BigDecimal.ZERO) != 0) {
+
+            final BigDecimal min = BigDecimal.ONE
+                    .divide(BigDecimal.TEN.pow(fractionDigitsMinimum));
+
+            final BigDecimal abs = decimal.abs();
+            final BigDecimal decimalsOnly =
+                    abs.subtract(abs.setScale(0, RoundingMode.DOWN));
+
+            if (decimalsOnly.compareTo(BigDecimal.ZERO) != 0
+                    && decimalsOnly.compareTo(min) < 0) {
+                return decimal.scale();
+            }
+        }
+        return fractionDigitsMinimum;
+    }
+
+    /**
+     * Localizes a {@link BigDecimal} with a minimal precision.
+     *
+     * @param decimal
+     *            The {@link BigDecimal} to localize.
+     * @param fractionDigitsMinimum
+     *            The minimum number of fraction digits in the result.
+     * @param locale
+     *            The {@link Locale}.
+     * @param currencySymbol
+     *            The currency symbol to prepend to the formatted decimal.
+     * @param groupingUsed
+     *            {@code true} when integer part is grouped.
+     * @return The localized decimal as string.
+     * @throws ParseException
+     *             When parsing fails.
+     */
+    public static String localizeMinimalPrecision(final BigDecimal decimal,
+            final int fractionDigitsMinimum, final Locale locale,
+            final String currencySymbol, final boolean groupingUsed)
+                    throws ParseException {
+
+        return localize(decimal,
+                getRightSizedPrecision(decimal, fractionDigitsMinimum), locale,
+                currencySymbol, groupingUsed);
+    }
+
+    /**
+     * Localizes a {@link BigDecimal} with a minimal precision.
+     *
+     * @param decimal
+     *            The {@link BigDecimal} to localize.
+     * @param fractionDigitsMinimum
+     *            The minimum number of fraction digits in the result.
+     * @param locale
+     *            The {@link Locale}.
+     * @param groupingUsed
+     *            {@code true} when integer part is grouped.
+     * @return The localized decimal as string.
+     * @throws ParseException
+     *             When parsing fails.
+     */
+    public static String localizeMinimalPrecision(final BigDecimal decimal,
+            final int fractionDigitsMinimum, final Locale locale,
+            final boolean groupingUsed) throws ParseException {
+        return localize(decimal,
+                getRightSizedPrecision(decimal, fractionDigitsMinimum), locale,
+                groupingUsed);
+    }
+
+    /**
      * Localizes a {@link BigDecimal}.
      *
      * @param decimal
+     *            The {@link BigDecimal} to localize.
      * @param fractionDigits
+     *            The number of fraction digits in the result.
      * @param locale
+     *            The {@link Locale}.
      * @param currencySymbol
      *            The currency symbol to prepend to the formatted decimal.
-     * @return
+     * @param groupingUsed
+     *            {@code true} when integer part is grouped.
+     * @return The localized string.
      * @throws ParseException
+     *             When parsing fails.
      */
-    public static String localize(final BigDecimal decimal, int fractionDigits,
-            final Locale locale, final String currencySymbol,
-            boolean groupingUsed) throws ParseException {
+    public static String localize(final BigDecimal decimal,
+            final int fractionDigits, final Locale locale,
+            final String currencySymbol, final boolean groupingUsed)
+                    throws ParseException {
         final StringBuilder txt = new StringBuilder();
 
         if (StringUtils.isNotBlank(currencySymbol)) {
             txt.append(currencySymbol).append(" ");
         }
-        return txt.append(
-                localize(decimal, fractionDigits, locale, groupingUsed))
+        return txt
+                .append(localize(decimal, fractionDigits, locale, groupingUsed))
                 .toString();
     }
 
@@ -183,9 +270,9 @@ public final class BigDecimalUtil {
      */
     public static String toPlainString(final String localizedDecimal,
             final Locale locale, final boolean groupingUsed)
-            throws ParseException {
-        return BigDecimalUtil.toPlainString(BigDecimalUtil.parse(
-                localizedDecimal, locale, false, groupingUsed));
+                    throws ParseException {
+        return BigDecimalUtil.toPlainString(BigDecimalUtil
+                .parse(localizedDecimal, locale, false, groupingUsed));
     }
 
     /**

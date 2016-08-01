@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -31,18 +31,21 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
+import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.cometd.AdminPublisher;
 import org.savapage.core.cometd.PubLevelEnum;
 import org.savapage.core.cometd.PubTopicEnum;
 import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.AccountDao;
 import org.savapage.core.dao.PosPurchaseDao.ReceiptNumberPrefixEnum;
 import org.savapage.core.dao.PrinterDao;
 import org.savapage.core.dao.UserDao;
-import org.savapage.core.dao.helpers.AccountTrxTypeEnum;
+import org.savapage.core.dao.UserGroupMemberDao;
+import org.savapage.core.dao.enums.AccountTrxTypeEnum;
 import org.savapage.core.dao.helpers.AggregateResult;
 import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dto.AccountDisplayInfoDto;
@@ -54,6 +57,7 @@ import org.savapage.core.dto.MediaCostDto;
 import org.savapage.core.dto.MediaPageCostDto;
 import org.savapage.core.dto.PosDepositDto;
 import org.savapage.core.dto.PosDepositReceiptDto;
+import org.savapage.core.dto.SharedAccountDisplayInfoDto;
 import org.savapage.core.dto.UserAccountingDto;
 import org.savapage.core.dto.UserCreditTransferDto;
 import org.savapage.core.dto.UserPaymentGatewayDto;
@@ -87,11 +91,11 @@ import org.savapage.core.util.Messages;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public final class AccountingServiceImpl extends AbstractService implements
-        AccountingService {
+public final class AccountingServiceImpl extends AbstractService
+        implements AccountingService {
 
     @Override
     public PrinterDao.CostMediaAttr getCostMediaAttr() {
@@ -99,13 +103,14 @@ public final class AccountingServiceImpl extends AbstractService implements
     }
 
     @Override
-    public PrinterDao.CostMediaAttr getCostMediaAttr(final String ippMediaName) {
+    public PrinterDao.CostMediaAttr
+            getCostMediaAttr(final String ippMediaName) {
         return printerDAO().getCostMediaAttr(ippMediaName);
     }
 
     @Override
-    public PrinterDao.MediaSourceAttr getMediaSourceAttr(
-            final String ippMediaSourceName) {
+    public PrinterDao.MediaSourceAttr
+            getMediaSourceAttr(final String ippMediaSourceName) {
 
         return printerDAO().getMediaSourceAttr(ippMediaSourceName);
     }
@@ -117,6 +122,12 @@ public final class AccountingServiceImpl extends AbstractService implements
         return userAccountDAO().findByActiveUserId(userId, accountType);
     }
 
+    @Override
+    public Account getActiveUserGroupAccount(final String groupName) {
+        return accountDAO().findActiveAccountByName(groupName,
+                AccountTypeEnum.GROUP);
+    }
+
     /**
      * Checks if account is a shared account, if not an {@link SpException} is
      * thrown.
@@ -124,7 +135,7 @@ public final class AccountingServiceImpl extends AbstractService implements
      * @param account
      *            The account to check.
      */
-    private void checkSharedAccountType(final Account account) {
+    private static void checkSharedAccountType(final Account account) {
 
         final AccountTypeEnum accountType =
                 AccountTypeEnum.valueOf(account.getAccountType());
@@ -148,15 +159,13 @@ public final class AccountingServiceImpl extends AbstractService implements
         if (parent == null) {
             account = accountDAO().findActiveSharedAccountByName(accountName);
         } else {
-            account =
-                    accountDAO().findActiveSharedChildAccountByName(
-                            parent.getId(), accountName);
+            account = accountDAO().findActiveSharedChildAccountByName(
+                    parent.getId(), accountName);
         }
 
         if (account == null) {
-            account =
-                    accountDAO().createFromTemplate(accountName,
-                            accountTemplate);
+            account = accountDAO().createFromTemplate(accountName,
+                    accountTemplate);
         }
         return account;
     }
@@ -165,47 +174,120 @@ public final class AccountingServiceImpl extends AbstractService implements
     public UserAccount lazyGetUserAccount(final User user,
             final Account.AccountTypeEnum accountType) {
 
-        UserAccount userAccount =
+        final UserAccount userAccount =
                 this.getActiveUserAccount(user.getUserId(), accountType);
 
-        if (userAccount == null) {
+        if (userAccount != null) {
+            return userAccount;
+        }
+
+        if (accountType != AccountTypeEnum.USER) {
+            return null;
+        }
+
+        /*
+         * Check Group Memberships (explicit).
+         */
+        final UserGroupMemberDao.UserFilter filter =
+                new UserGroupMemberDao.UserFilter();
+
+        filter.setUserId(user.getId());
+
+        final List<UserGroup> groupList =
+                userGroupMemberDAO().getGroupChunk(filter, null, null,
+                        UserGroupMemberDao.GroupField.GROUP_NAME, true);
+
+        BigDecimal accumulatedBalance = BigDecimal.ZERO;
+        BigDecimal overdraft = BigDecimal.ZERO;
+        Boolean useGlobalOverdraft = Boolean.FALSE;
+        Boolean initiallyRestricted = Boolean.TRUE;
+
+        int groupCount = 0;
+
+        for (final UserGroup group : groupList) {
+
+            if (!group.getInitialSettingsEnabled()) {
+                continue;
+            }
+
+            if (!group.getInitiallyRestricted()) {
+                initiallyRestricted = Boolean.FALSE;
+            }
+
+            accumulatedBalance =
+                    accumulatedBalance.add(group.getInitialCredit());
+            overdraft = group.getInitialOverdraft();
+            useGlobalOverdraft = group.getInitialUseGlobalOverdraft();
+
+            groupCount++;
+        }
+
+        final UserAccount userAccountNew;
+        final Account account;
+
+        if (groupCount == 0) {
 
             final UserGroup userGroup;
 
-            if (accountType == AccountTypeEnum.USER) {
-                if (user.getInternal()) {
-                    userGroup = userGroupService().getInternalUserGroup();
-                } else {
-                    userGroup = userGroupService().getExternalUserGroup();
-                }
+            if (user.getInternal()) {
+                userGroup = userGroupService().getInternalUserGroup();
             } else {
-                userGroup = null;
+                userGroup = userGroupService().getExternalUserGroup();
             }
 
-            userAccount = createUserAccount(user, userGroup);
+            userAccountNew = createUserAccount(user, userGroup);
+            account = userAccountNew.getAccount();
+
+        } else {
+
+            userAccountNew = createUserAccount(user, null);
+            account = userAccountNew.getAccount();
+
+            account.setBalance(accumulatedBalance);
+            account.setRestricted(initiallyRestricted);
+            account.setOverdraft(overdraft);
+            account.setUseGlobalOverdraft(useGlobalOverdraft);
         }
-        return userAccount;
+
+        if (account.getBalance().compareTo(BigDecimal.ZERO) != 0) {
+            accountTrxDAO().create(
+                    createAccountTrx(account, AccountTrxTypeEnum.INITIAL,
+                            account.getBalance(), account.getBalance(), ""));
+        }
+
+        return userAccountNew;
     }
 
     @Override
-    public UserAccountingDto getUserAccounting(final User user) {
+    public Account lazyGetUserGroupAccount(final UserGroup userGroup) {
 
-        UserAccountingDto dto = new UserAccountingDto();
+        final Account account =
+                this.getActiveUserGroupAccount(userGroup.getGroupName());
+
+        if (account != null) {
+            return account;
+        }
+        return this.createUserGroupAccount(userGroup);
+    }
+
+    @Override
+    public UserAccountingDto createUserAccounting(final BigDecimal balance,
+            final Boolean restricted, final Boolean useGlobalOverdraft,
+            final BigDecimal overdraft) {
+
+        final UserAccountingDto dto = new UserAccountingDto();
+        final int minimalDecimals = ConfigManager.getUserBalanceDecimals();
 
         dto.setLocale(ServiceContext.getLocale().toLanguageTag());
 
-        Account account =
-                lazyGetUserAccount(user, AccountTypeEnum.USER).getAccount();
-
         try {
-            dto.setBalance(BigDecimalUtil.localize(account.getBalance(),
-                    ConfigManager.getUserBalanceDecimals(),
-                    ServiceContext.getLocale(), true));
+            dto.setBalance(BigDecimalUtil.localizeMinimalPrecision(balance,
+                    minimalDecimals, ServiceContext.getLocale(), true));
 
             UserAccountingDto.CreditLimitEnum creditLimit;
 
-            if (account.getRestricted()) {
-                if (account.getUseGlobalOverdraft()) {
+            if (restricted) {
+                if (useGlobalOverdraft) {
                     creditLimit = UserAccountingDto.CreditLimitEnum.DEFAULT;
                 } else {
                     creditLimit = UserAccountingDto.CreditLimitEnum.INDIVIDUAL;
@@ -215,15 +297,109 @@ public final class AccountingServiceImpl extends AbstractService implements
             }
 
             dto.setCreditLimit(creditLimit);
-            dto.setCreditLimitAmount(BigDecimalUtil.localize(
-                    account.getOverdraft(),
-                    ConfigManager.getUserBalanceDecimals(),
-                    ServiceContext.getLocale(), true));
+            dto.setCreditLimitAmount(
+                    BigDecimalUtil.localizeMinimalPrecision(overdraft,
+                            minimalDecimals, ServiceContext.getLocale(), true));
 
         } catch (ParseException e) {
             throw new SpException(e);
         }
         return dto;
+
+    }
+
+    @Override
+    public UserAccountingDto getUserAccounting(final User user) {
+
+        final Account account =
+                lazyGetUserAccount(user, AccountTypeEnum.USER).getAccount();
+
+        return this.createUserAccounting(account.getBalance(),
+                account.getRestricted(), account.getUseGlobalOverdraft(),
+                account.getOverdraft());
+    }
+
+    @Override
+    public UserAccountingDto getInitialUserAccounting(final UserGroup group) {
+        return this.createUserAccounting(group.getInitialCredit(),
+                group.getInitiallyRestricted(),
+                group.getInitialUseGlobalOverdraft(),
+                group.getInitialOverdraft());
+    }
+
+    @Override
+    public void setInitialUserAccounting(final UserGroup group,
+            final UserAccountingDto dto) throws ParseException {
+
+        final Locale dtoLocale;
+
+        if (dto.getLocale() != null) {
+            dtoLocale = Locale.forLanguageTag(dto.getLocale());
+        } else {
+            dtoLocale = ServiceContext.getLocale();
+        }
+
+        if (dto.getBalance() != null) {
+
+            final String amount = dto.getBalance();
+            group.setInitialCredit(
+                    BigDecimalUtil.parse(amount, dtoLocale, false, false));
+        }
+
+        final UserAccountingDto.CreditLimitEnum creditLimit =
+                dto.getCreditLimit();
+
+        if (creditLimit != null) {
+
+            group.setInitiallyRestricted(
+                    creditLimit != UserAccountingDto.CreditLimitEnum.NONE);
+
+            group.setInitialUseGlobalOverdraft(
+                    creditLimit == UserAccountingDto.CreditLimitEnum.DEFAULT);
+
+            if (creditLimit == UserAccountingDto.CreditLimitEnum.INDIVIDUAL) {
+                final String amount = dto.getCreditLimitAmount();
+                group.setInitialOverdraft(
+                        BigDecimalUtil.parse(amount, dtoLocale, false, false));
+            }
+        }
+    }
+
+    /**
+     * Creates an {@link AccountTrx} for an {@link Account} when relevant
+     * difference in balance is determined.
+     * <p>
+     * Note: A difference in user balance in decimal range beyond
+     * {@link IConfigProp.Key#FINANCIAL_USER_BALANCE_DECIMALS} is considered
+     * irrelevant.
+     * </p>
+     *
+     * @param account
+     *            The {@link Account} to set the balance in
+     * @param balanceNew
+     *            The new balance amount.
+     * @param comment
+     *            The comment for the {@link AccountTrx}.
+     */
+    private void checkCreateAccountTrx(final Account account,
+            final BigDecimal balanceNew, final String comment) {
+
+        final int userBalanceDecimals = ConfigManager.instance()
+                .getConfigInt(Key.FINANCIAL_USER_BALANCE_DECIMALS);
+
+        final BigDecimal balanceDiff = balanceNew.subtract(account.getBalance())
+                .setScale(userBalanceDecimals, BigDecimal.ROUND_DOWN);
+
+        if (balanceDiff.compareTo(BigDecimal.ZERO) != 0) {
+
+            final AccountTrx trx = createAccountTrx(account,
+                    AccountTrxTypeEnum.ADJUST, balanceDiff, balanceNew,
+                    StringUtils.defaultString(comment));
+
+            accountTrxDAO().create(trx);
+
+            account.setBalance(balanceNew);
+        }
     }
 
     @Override
@@ -261,30 +437,9 @@ public final class AccountingServiceImpl extends AbstractService implements
             final String amount = dto.getBalance();
 
             try {
-
                 final BigDecimal balanceNew =
                         BigDecimalUtil.parse(amount, dtoLocale, false, false);
-
-                final BigDecimal balanceDiff =
-                        balanceNew.subtract(account.getBalance());
-
-                if (balanceDiff.compareTo(BigDecimal.ZERO) != 0) {
-
-                    String comment = dto.getComment();
-                    if (StringUtils.isBlank(comment)) {
-                        comment = "";
-                    }
-
-                    final AccountTrx trx =
-                            createAccountTrx(account,
-                                    AccountTrxTypeEnum.ADJUST, balanceDiff,
-                                    balanceNew, comment);
-
-                    accountTrxDAO().create(trx);
-
-                    account.setBalance(balanceNew);
-                }
-
+                checkCreateAccountTrx(account, balanceNew, dto.getComment());
             } catch (ParseException e) {
                 return createError("msg-amount-error", amount);
             }
@@ -295,14 +450,16 @@ public final class AccountingServiceImpl extends AbstractService implements
 
         if (creditLimit != null) {
 
-            account.setRestricted(creditLimit != UserAccountingDto.CreditLimitEnum.NONE);
-            account.setUseGlobalOverdraft(creditLimit == UserAccountingDto.CreditLimitEnum.DEFAULT);
+            account.setRestricted(
+                    creditLimit != UserAccountingDto.CreditLimitEnum.NONE);
+            account.setUseGlobalOverdraft(
+                    creditLimit == UserAccountingDto.CreditLimitEnum.DEFAULT);
 
             if (creditLimit == UserAccountingDto.CreditLimitEnum.INDIVIDUAL) {
                 final String amount = dto.getCreditLimitAmount();
                 try {
-                    account.setOverdraft(BigDecimalUtil.parse(amount,
-                            dtoLocale, false, false));
+                    account.setOverdraft(BigDecimalUtil.parse(amount, dtoLocale,
+                            false, false));
                 } catch (ParseException e) {
                     return createError("msg-amount-error", amount);
                 }
@@ -343,8 +500,8 @@ public final class AccountingServiceImpl extends AbstractService implements
             account.setBalance(userGroupTemplate.getInitialCredit());
             account.setOverdraft(userGroupTemplate.getInitialOverdraft());
             account.setRestricted(userGroupTemplate.getInitiallyRestricted());
-            account.setUseGlobalOverdraft(userGroupTemplate
-                    .getInitialUseGlobalOverdraft());
+            account.setUseGlobalOverdraft(
+                    userGroupTemplate.getInitialUseGlobalOverdraft());
 
         } else {
             account.setBalance(BigDecimal.ZERO);
@@ -354,6 +511,7 @@ public final class AccountingServiceImpl extends AbstractService implements
         }
 
         account.setAccountType(Account.AccountTypeEnum.USER.toString());
+
         account.setComments(Account.CommentsEnum.COMMENT_OPTIONAL.toString());
         account.setInvoicing(Account.InvoicingEnum.USER_CHOICE_ON.toString());
         account.setDeleted(false);
@@ -377,8 +535,41 @@ public final class AccountingServiceImpl extends AbstractService implements
 
         userAccountDAO().create(userAccount);
 
-        //
         return userAccount;
+    }
+
+    /**
+     * Creates an {@link Account} of type {@link Account.AccountTypeEnum#GROUP}
+     * for a {@link UserGroup}.
+     *
+     * @param userGroup
+     *            The {@link UserGroup}.
+     * @return The {@link Account} created.
+     */
+    private Account createUserGroupAccount(final UserGroup userGroup) {
+
+        final Account account = new Account();
+
+        account.setAccountType(Account.AccountTypeEnum.GROUP.toString());
+
+        account.setBalance(BigDecimal.ZERO);
+        account.setOverdraft(BigDecimal.ZERO);
+        account.setRestricted(Boolean.FALSE);
+        account.setUseGlobalOverdraft(Boolean.FALSE);
+
+        account.setComments(Account.CommentsEnum.COMMENT_OPTIONAL.toString());
+        account.setInvoicing(Account.InvoicingEnum.USER_CHOICE_ON.toString());
+        account.setDeleted(Boolean.FALSE);
+        account.setDisabled(Boolean.FALSE);
+        account.setName(userGroup.getGroupName());
+        account.setNameLower(userGroup.getGroupName().toLowerCase());
+
+        account.setCreatedBy(ServiceContext.getActor());
+        account.setCreatedDate(ServiceContext.getTransactionDate());
+
+        accountDAO().create(account);
+
+        return account;
     }
 
     /**
@@ -403,9 +594,9 @@ public final class AccountingServiceImpl extends AbstractService implements
             final AccountTrxTypeEnum trxType, final BigDecimal amount,
             final BigDecimal accountBalance, final String comment) {
 
-        return createAccountTrx(account, trxType, ConfigManager
-                .getAppCurrency().getCurrencyCode(), amount, accountBalance,
-                comment);
+        return createAccountTrx(account, trxType,
+                ConfigManager.getAppCurrency().getCurrencyCode(), amount,
+                accountBalance, comment);
     }
 
     /**
@@ -463,7 +654,7 @@ public final class AccountingServiceImpl extends AbstractService implements
     public void createAccountTrxs(final AccountTrxInfoSet accountTrxInfoSet,
             final DocLog docLog, final AccountTrxTypeEnum trxType) {
 
-        final int nTotalWeight = accountTrxInfoSet.calcTotalWeight();
+        final int nTotalWeight = accountTrxInfoSet.getWeightTotal();
 
         for (final AccountTrxInfo trxInfo : accountTrxInfoSet
                 .getAccountTrxInfoList()) {
@@ -526,9 +717,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         BigDecimal trxAmount = docLog.getCostOriginal().negate();
 
         if (weight != weightTotal) {
-            trxAmount =
-                    calcWeightedAmount(trxAmount, weightTotal, weight,
-                            ConfigManager.getFinancialDecimalsInDatabase());
+            trxAmount = calcWeightedAmount(trxAmount, weightTotal, weight,
+                    ConfigManager.getFinancialDecimalsInDatabase());
         }
 
         /*
@@ -660,9 +850,8 @@ public final class AccountingServiceImpl extends AbstractService implements
             final BigDecimal creditLimit;
 
             if (account.getUseGlobalOverdraft()) {
-                creditLimit =
-                        ConfigManager.instance().getConfigBigDecimal(
-                                Key.FINANCIAL_GLOBAL_CREDIT_LIMIT);
+                creditLimit = ConfigManager.instance()
+                        .getConfigBigDecimal(Key.FINANCIAL_GLOBAL_CREDIT_LIMIT);
             } else {
                 creditLimit = account.getOverdraft();
             }
@@ -689,13 +878,11 @@ public final class AccountingServiceImpl extends AbstractService implements
             final MediaCostDto pageCost =
                     mediaSourceCost.getMedia().getPageCost();
 
-            pageCostOneSided =
-                    this.getCost(pageCost.getCostOneSided(),
-                            costParms.isGrayscale());
+            pageCostOneSided = this.getCost(pageCost.getCostOneSided(),
+                    costParms.isGrayscale());
 
-            pageCostTwoSided =
-                    this.getCost(pageCost.getCostTwoSided(),
-                            costParms.isGrayscale());
+            pageCostTwoSided = this.getCost(pageCost.getCostTwoSided(),
+                    costParms.isGrayscale());
 
         } else {
 
@@ -709,21 +896,18 @@ public final class AccountingServiceImpl extends AbstractService implements
 
             case MEDIA:
 
-                final IppMediaCostDto costDto =
-                        printerDAO().getMediaCost(printer,
-                                costParms.getIppMediaOption());
+                final IppMediaCostDto costDto = printerDAO()
+                        .getMediaCost(printer, costParms.getIppMediaOption());
 
                 if (costDto != null) {
 
                     final MediaCostDto pageCost = costDto.getPageCost();
 
-                    pageCostOneSided =
-                            this.getCost(pageCost.getCostOneSided(),
-                                    costParms.isGrayscale());
+                    pageCostOneSided = this.getCost(pageCost.getCostOneSided(),
+                            costParms.isGrayscale());
 
-                    pageCostTwoSided =
-                            this.getCost(pageCost.getCostTwoSided(),
-                                    costParms.isGrayscale());
+                    pageCostTwoSided = this.getCost(pageCost.getCostTwoSided(),
+                            costParms.isGrayscale());
                 }
                 break;
 
@@ -736,11 +920,10 @@ public final class AccountingServiceImpl extends AbstractService implements
         final BigDecimal discountPerc;
 
         if (costParms.isEcoPrint()) {
-            discountPerc =
-                    BigDecimal.valueOf(
-                            ConfigManager.instance().getConfigLong(
-                                    Key.ECO_PRINT_DISCOUNT_PERC, 0L)).divide(
-                            BigDecimal.valueOf(100L));
+            discountPerc = BigDecimal
+                    .valueOf(ConfigManager.instance()
+                            .getConfigLong(Key.ECO_PRINT_DISCOUNT_PERC, 0L))
+                    .divide(BigDecimal.valueOf(100L));
         } else {
             discountPerc = BigDecimal.ZERO;
         }
@@ -775,10 +958,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         String cost = null;
 
         try {
-            cost =
-                    BigDecimalUtil.localize(value,
-                            ConfigManager.getPrinterCostDecimals(), locale,
-                            true);
+            cost = BigDecimalUtil.localize(value,
+                    ConfigManager.getPrinterCostDecimals(), locale, true);
         } catch (ParseException e) {
             throw new SpException(e.getMessage());
         }
@@ -797,9 +978,8 @@ public final class AccountingServiceImpl extends AbstractService implements
          * INVARIANT: User is NOT allowed to print when resulting balance is
          * below credit limit.
          */
-        final Account account =
-                this.lazyGetUserAccount(user, AccountTypeEnum.USER)
-                        .getAccount();
+        final Account account = this
+                .lazyGetUserAccount(user, AccountTypeEnum.USER).getAccount();
 
         final BigDecimal balanceBefore = account.getBalance();
         final BigDecimal balanceAfter = balanceBefore.subtract(cost);
@@ -809,9 +989,8 @@ public final class AccountingServiceImpl extends AbstractService implements
             final BigDecimal creditLimit;
 
             if (account.getUseGlobalOverdraft()) {
-                creditLimit =
-                        ConfigManager.instance().getConfigBigDecimal(
-                                Key.FINANCIAL_GLOBAL_CREDIT_LIMIT);
+                creditLimit = ConfigManager.instance()
+                        .getConfigBigDecimal(Key.FINANCIAL_GLOBAL_CREDIT_LIMIT);
             } else {
                 creditLimit = account.getOverdraft();
             }
@@ -820,11 +999,12 @@ public final class AccountingServiceImpl extends AbstractService implements
 
                 if (creditLimit.compareTo(BigDecimal.ZERO) == 0) {
 
-                    throw new ProxyPrintException(localize(
-                            "msg-print-denied-no-balance",
-                            localizedPrinterCost(balanceBefore, locale,
-                                    currencySymbol),
-                            localizedPrinterCost(cost, locale, currencySymbol)));
+                    throw new ProxyPrintException(
+                            localize("msg-print-denied-no-balance",
+                                    localizedPrinterCost(balanceBefore, locale,
+                                            currencySymbol),
+                                    localizedPrinterCost(cost, locale,
+                                            currencySymbol)));
 
                 } else {
                     throw new ProxyPrintException(localize(
@@ -841,8 +1021,8 @@ public final class AccountingServiceImpl extends AbstractService implements
 
     @Override
     public BigDecimal calcProxyPrintCost(final Locale locale,
-            final String currencySymbol, final User user,
-            final Printer printer, final ProxyPrintCostParms costParms,
+            final String currencySymbol, final User user, final Printer printer,
+            final ProxyPrintCostParms costParms,
             final ProxyPrintJobChunkInfo jobChunkInfo)
             throws ProxyPrintException {
 
@@ -854,8 +1034,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         for (final ProxyPrintJobChunk chunk : jobChunkInfo.getChunks()) {
 
             costParms.setNumberOfPages(chunk.getNumberOfPages());
-            costParms.setIppMediaOption(chunk.getAssignedMedia()
-                    .getIppKeyword());
+            costParms.setIppMediaOption(
+                    chunk.getAssignedMedia().getIppKeyword());
             costParms.setMediaSourceCost(chunk.getAssignedMediaSource());
 
             final BigDecimal chunkCost =
@@ -882,12 +1062,11 @@ public final class AccountingServiceImpl extends AbstractService implements
             balance =
                     formatUserBalance(
                             userAccountDAO().findByUserId(user.getId(),
-                                    AccountTypeEnum.USER), locale,
-                            currencySymbol);
+                                    AccountTypeEnum.USER),
+                            locale, currencySymbol);
         } else {
-            balance =
-                    getFormattedUserBalance(user.getUserId(), locale,
-                            currencySymbol);
+            balance = getFormattedUserBalance(user.getUserId(), locale,
+                    currencySymbol);
         }
         return balance;
     }
@@ -982,40 +1161,36 @@ public final class AccountingServiceImpl extends AbstractService implements
             valueWlk = valueEmpty;
 
             if (aggr.getAvg() != null) {
-                valueWlk =
-                        BigDecimalUtil.localize(
-                                aggr.getAvg().multiply(multiplicand),
-                                balanceDecimals, locale, currencySymbol, true);
+                valueWlk = BigDecimalUtil.localize(
+                        aggr.getAvg().multiply(multiplicand), balanceDecimals,
+                        locale, currencySymbol, true);
             }
             stats.setAvg(valueWlk);
 
             //
             valueWlk = valueEmpty;
             if (aggr.getMax() != null) {
-                valueWlk =
-                        BigDecimalUtil.localize(
-                                aggr.getMax().multiply(multiplicand),
-                                balanceDecimals, locale, currencySymbol, true);
+                valueWlk = BigDecimalUtil.localize(
+                        aggr.getMax().multiply(multiplicand), balanceDecimals,
+                        locale, currencySymbol, true);
             }
             stats.setMax(valueWlk);
 
             //
             valueWlk = valueEmpty;
             if (aggr.getMin() != null) {
-                valueWlk =
-                        BigDecimalUtil.localize(
-                                aggr.getMin().multiply(multiplicand),
-                                balanceDecimals, locale, currencySymbol, true);
+                valueWlk = BigDecimalUtil.localize(
+                        aggr.getMin().multiply(multiplicand), balanceDecimals,
+                        locale, currencySymbol, true);
             }
             stats.setMin(valueWlk);
 
             //
             valueWlk = valueEmpty;
             if (aggr.getSum() != null) {
-                valueWlk =
-                        BigDecimalUtil.localize(
-                                aggr.getSum().multiply(multiplicand),
-                                balanceDecimals, locale, currencySymbol, true);
+                valueWlk = BigDecimalUtil.localize(
+                        aggr.getSum().multiply(multiplicand), balanceDecimals,
+                        locale, currencySymbol, true);
             }
             stats.setSum(valueWlk);
 
@@ -1036,52 +1211,276 @@ public final class AccountingServiceImpl extends AbstractService implements
 
         dto.setLocale(locale.getDisplayLanguage());
 
-        dto.setUserCredit(createFinancialDisplayInfoStats(accountDAO()
-                .getBalanceStats(true, false), locale, currencySymbolWrk,
-                BigDecimal.ONE.negate()));
+        dto.setUserCredit(createFinancialDisplayInfoStats(
+                accountDAO().getBalanceStats(true, false), locale,
+                currencySymbolWrk, BigDecimal.ONE.negate()));
 
-        dto.setUserDebit(createFinancialDisplayInfoStats(accountDAO()
-                .getBalanceStats(true, true), locale, currencySymbolWrk,
-                BigDecimal.ONE));
+        dto.setUserDebit(createFinancialDisplayInfoStats(
+                accountDAO().getBalanceStats(true, true), locale,
+                currencySymbolWrk, BigDecimal.ONE));
 
         return dto;
+    }
+
+    /**
+     * Throws an {@link IllegalArgumentException} when account is not of type
+     * {@link AccountTypeEnum#SHARED} or {@link AccountTypeEnum#GROUP}.
+     *
+     * @param account
+     *            The account.
+     * @return The {@link AccountTypeEnum}.
+     */
+    private static AccountTypeEnum
+            checkAccountSharedOrGroup(final Account account) {
+
+        final AccountTypeEnum accountType = EnumUtils
+                .getEnum(AccountTypeEnum.class, account.getAccountType());
+
+        if (accountType != AccountTypeEnum.SHARED
+                && accountType != AccountTypeEnum.GROUP) {
+
+            throw new IllegalArgumentException(
+                    String.format("Account [%s] : type %s is not allowed.",
+                            account.getName(), accountType.toString()));
+        }
+        return accountType;
+    }
+
+    @Override
+    public SharedAccountDisplayInfoDto getSharedAccountDisplayInfo(
+            final Account account, final Locale locale,
+            final String currencySymbol) {
+
+        /*
+         * INVARIANT: Account MUST be of type SHARED.
+         */
+        final AccountTypeEnum accountType = checkAccountSharedOrGroup(account);
+
+        final SharedAccountDisplayInfoDto dto =
+                new SharedAccountDisplayInfoDto();
+
+        fillAccountDisplayInfo(account, locale, currencySymbol, dto);
+
+        dto.setId(account.getId());
+        dto.setName(account.getName());
+        dto.setAccountType(accountType);
+
+        if (account.getParent() != null) {
+            dto.setParentId(account.getParent().getId());
+            dto.setParentName(account.getParent().getName());
+        }
+
+        dto.setNotes(account.getNotes());
+        dto.setDeleted(account.getDeleted());
+
+        return dto;
+    }
+
+    @Override
+    public AbstractJsonRpcMethodResponse
+            lazyUpdateSharedAccount(final SharedAccountDisplayInfoDto dto) {
+
+        /*
+         * INVARIANT: Account name MUST be present.
+         */
+        if (StringUtils.isBlank(dto.getName())) {
+            return createErrorMsg("msg-shared-account-name-needed");
+        }
+
+        final Account parent;
+
+        if (StringUtils.isBlank(dto.getParentName())) {
+
+            parent = null;
+
+        } else {
+            /*
+             * INVARIANT: Account can NOT be a sub-account of oneself.
+             */
+            if (dto.getParentName().equalsIgnoreCase(dto.getName())) {
+                return createErrorMsg("msg-shared-account-parent-must-differ");
+            }
+            /*
+             * INVARIANT: Parent account MUST exist.
+             */
+            parent = accountDAO()
+                    .findActiveSharedAccountByName(dto.getParentName());
+
+            if (parent == null) {
+                return createErrorMsg("msg-shared-account-parent-unknown");
+            }
+        }
+
+        /*
+         * INVARIANT: Top Account name MUST be case insensitive unique among top
+         * accounts.
+         *
+         * INVARIANT: Account name must be case insensitive unique among sibling
+         * sub accounts.
+         */
+        final Account accountDuplicate;
+
+        if (parent == null) {
+            accountDuplicate =
+                    accountDAO().findActiveSharedAccountByName(dto.getName());
+        } else {
+            accountDuplicate = accountDAO().findActiveSharedChildAccountByName(
+                    parent.getId(), dto.getName());
+        }
+
+        if (accountDuplicate != null
+                && !accountDuplicate.getId().equals(dto.getId())) {
+            return createErrorMsg("msg-shared-account-name-in-use");
+        }
+
+        //
+        final Account account;
+        final boolean newAccount = dto.getId() == null;
+
+        if (newAccount) {
+            account = this.createSharedAccountTemplate(dto.getName(), parent);
+        } else {
+            account = accountDAO().findById(dto.getId());
+        }
+
+        /*
+         * INVARIANT: Account MUST exist.
+         */
+        if (account == null) {
+            throw new IllegalArgumentException(String
+                    .format("Account [%s] can not be found.", dto.getName()));
+        }
+
+        /*
+         * INVARIANT: Account MUST be of type SHARED.
+         */
+        checkAccountSharedOrGroup(account);
+
+        /*
+         * Is this a top account?
+         */
+        final boolean topAccount = account.getParent() == null;
+
+        /*
+         * Logical delete.
+         */
+        if (dto.getDeleted() != null && dto.getDeleted()) {
+
+            accountDAO().setLogicalDelete(account,
+                    ServiceContext.getTransactionDate(),
+                    ServiceContext.getActor());
+
+            int nUpdated = 1;
+
+            if (topAccount) {
+                nUpdated += accountDAO().logicalDeleteSubAccounts(
+                        account.getId(), ServiceContext.getTransactionDate(),
+                        ServiceContext.getActor());
+            }
+
+            accountDAO().update(account);
+            return createOkResult("msg-shared-accounts-deleted",
+                    String.valueOf(nUpdated));
+        }
+
+        /*
+         * INVARIANT: An account that has sub accounts can NOT have a parent
+         * account.
+         */
+        if (!newAccount && StringUtils.isNotBlank(dto.getParentName())
+                && accountDAO().countSubAccounts(account.getId()) > 0) {
+            return createErrorMsg("msg-shared-account-cannot-have-parent",
+                    account.getName());
+        }
+
+        account.setName(dto.getName().trim());
+        account.setNameLower(dto.getName().trim().toLowerCase());
+        account.setParent(parent);
+        account.setNotes(dto.getNotes());
+        account.setDeleted(dto.getDeleted());
+
+        final Locale dtoLocale;
+
+        if (dto.getLocale() != null) {
+            dtoLocale = Locale.forLanguageTag(dto.getLocale());
+        } else {
+            dtoLocale = ServiceContext.getLocale();
+        }
+
+        final BigDecimal balanceNew;
+        final String balance = dto.getBalance();
+        try {
+            if (!BigDecimalUtil.isValid(balance, dtoLocale, false)) {
+                throw new ParseException(balance, 0);
+            }
+            balanceNew = BigDecimalUtil.parse(balance, dtoLocale, false, false);
+        } catch (ParseException e) {
+            return createErrorMsg("msg-amount-error", balance);
+        }
+
+        if (newAccount) {
+            account.setBalance(balanceNew);
+            accountDAO().create(account);
+        } else {
+            checkCreateAccountTrx(account, balanceNew, null);
+            accountDAO().update(account);
+        }
+
+        return JsonRpcMethodResult.createOkResult();
     }
 
     @Override
     public AccountDisplayInfoDto getAccountDisplayInfo(final User user,
             final Locale locale, final String currencySymbol) {
 
+        final AccountDisplayInfoDto dto = new AccountDisplayInfoDto();
+
+        final Account account = this
+                .lazyGetUserAccount(user, AccountTypeEnum.USER).getAccount();
+
+        fillAccountDisplayInfo(account, locale, currencySymbol, dto);
+
+        return dto;
+    }
+
+    /**
+     * Gets the {@link Account} information meant for display.
+     *
+     * @param account
+     *            The {@link Account}.
+     * @param locale
+     *            The {@link Locale} used for formatting financial data.
+     * @param currencySymbol
+     *            {@code null} or empty when not applicable.
+     * @param dto
+     *            The {@link AccountDisplayInfoDto} object
+     */
+    private static void fillAccountDisplayInfo(final Account account,
+            final Locale locale, final String currencySymbol,
+            final AccountDisplayInfoDto dto) {
+
         final String currencySymbolWrk =
                 StringUtils.defaultString(currencySymbol);
 
         final int balanceDecimals = ConfigManager.getUserBalanceDecimals();
 
-        AccountDisplayInfoDto dto = new AccountDisplayInfoDto();
-
-        final Account account =
-                this.lazyGetUserAccount(user, AccountTypeEnum.USER)
-                        .getAccount();
-
-        // ------------------
-        String formattedCreditLimit;
-        AccountDisplayInfoDto.Status status;
+        final String formattedCreditLimit;
+        final AccountDisplayInfoDto.Status status;
 
         if (account.getRestricted()) {
 
             BigDecimal creditLimit;
 
             if (account.getUseGlobalOverdraft()) {
-                creditLimit =
-                        ConfigManager.instance().getConfigBigDecimal(
-                                Key.FINANCIAL_GLOBAL_CREDIT_LIMIT);
+                creditLimit = ConfigManager.instance()
+                        .getConfigBigDecimal(Key.FINANCIAL_GLOBAL_CREDIT_LIMIT);
             } else {
                 creditLimit = account.getOverdraft();
             }
 
             try {
-                formattedCreditLimit =
-                        BigDecimalUtil.localize(creditLimit, balanceDecimals,
-                                locale, currencySymbolWrk, true);
+                formattedCreditLimit = BigDecimalUtil.localize(creditLimit,
+                        balanceDecimals, locale, currencySymbolWrk, true);
             } catch (ParseException e) {
                 throw new SpException(e);
             }
@@ -1111,16 +1510,15 @@ public final class AccountingServiceImpl extends AbstractService implements
         } catch (ParseException e) {
             throw new SpException(e);
         }
+
         dto.setLocale(locale.getDisplayLanguage());
         dto.setCreditLimit(formattedCreditLimit);
         dto.setStatus(status);
-
-        return dto;
     }
 
     @Override
-    public AbstractJsonRpcMethodResponse redeemVoucher(
-            final AccountVoucherRedeemDto dto) {
+    public AbstractJsonRpcMethodResponse
+            redeemVoucher(final AccountVoucherRedeemDto dto) {
 
         final AccountVoucher voucher =
                 accountVoucherDAO().findByCardNumber(dto.getCardNumber());
@@ -1131,10 +1529,9 @@ public final class AccountingServiceImpl extends AbstractService implements
          * INVARIANT: cardNumber MUST exist, MUST NOT already be redeemed, and
          * MUST NOT be expired on the redeem date.
          */
-        if (voucher == null
-                || voucher.getRedeemedDate() != null
-                || accountVoucherService()
-                        .isVoucherExpired(voucher, redeemDate)) {
+        if (voucher == null || voucher.getRedeemedDate() != null
+                || accountVoucherService().isVoucherExpired(voucher,
+                        redeemDate)) {
             return createErrorMsg(MSG_KEY_VOUCHER_REDEEM_NUMBER_INVALID);
         }
 
@@ -1151,9 +1548,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         /*
          * Update account.
          */
-        final Account account =
-                this.lazyGetUserAccount(user, AccountTypeEnum.USER)
-                        .getAccount();
+        final Account account = this
+                .lazyGetUserAccount(user, AccountTypeEnum.USER).getAccount();
 
         account.setBalance(account.getBalance().add(voucher.getValueAmount()));
         account.setModifiedBy(ServiceContext.getActor());
@@ -1167,9 +1563,9 @@ public final class AccountingServiceImpl extends AbstractService implements
         final String comment =
                 localize("msg-voucher-redeem-trx-comment", dto.getCardNumber());
 
-        final AccountTrx accountTrx =
-                this.createAccountTrx(account, AccountTrxTypeEnum.VOUCHER,
-                        voucher.getValueAmount(), account.getBalance(), comment);
+        final AccountTrx accountTrx = this.createAccountTrx(account,
+                AccountTrxTypeEnum.VOUCHER, voucher.getValueAmount(),
+                account.getBalance(), comment);
 
         accountTrx.setAccountVoucher(voucher);
 
@@ -1221,9 +1617,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         /*
          * Find the account to add the amount on.
          */
-        final Account account =
-                this.lazyGetUserAccount(user, AccountTypeEnum.USER)
-                        .getAccount();
+        final Account account = this
+                .lazyGetUserAccount(user, AccountTypeEnum.USER).getAccount();
 
         /*
          * Create and fill transaction.
@@ -1244,15 +1639,15 @@ public final class AccountingServiceImpl extends AbstractService implements
          * INVARIANT: transaction must not be accepted.
          */
         if (trx.getAmount().compareTo(BigDecimal.ZERO) != 0) {
-            throw new AccountingException(String.format(
-                    "Transaction %s is already accepted.",
-                    dto.getTransactionId()));
+            throw new AccountingException(
+                    String.format("Transaction %s is already accepted.",
+                            dto.getTransactionId()));
         }
 
         final Account account = trx.getAccount();
 
-        account.setBalance(account.getBalance()
-                .add(dto.getAmountAcknowledged()));
+        account.setBalance(
+                account.getBalance().add(dto.getAmountAcknowledged()));
         account.setModifiedBy(ServiceContext.getActor());
         account.setModifiedDate(ServiceContext.getTransactionDate());
 
@@ -1279,23 +1674,21 @@ public final class AccountingServiceImpl extends AbstractService implements
         if (user == null) {
             account = orphanedPaymentAccount;
         } else {
-            account =
-                    this.lazyGetUserAccount(user, AccountTypeEnum.USER)
-                            .getAccount();
+            account = this.lazyGetUserAccount(user, AccountTypeEnum.USER)
+                    .getAccount();
         }
 
-        account.setBalance(account.getBalance()
-                .add(dto.getAmountAcknowledged()));
+        account.setBalance(
+                account.getBalance().add(dto.getAmountAcknowledged()));
         account.setModifiedBy(ServiceContext.getActor());
         account.setModifiedDate(ServiceContext.getTransactionDate());
 
         /*
          * Create and fill transaction.
          */
-        final AccountTrx trx =
-                this.createAccountTrx(account, AccountTrxTypeEnum.GATEWAY,
-                        dto.getAmountAcknowledged(), account.getBalance(),
-                        dto.getComment());
+        final AccountTrx trx = this.createAccountTrx(account,
+                AccountTrxTypeEnum.GATEWAY, dto.getAmountAcknowledged(),
+                account.getBalance(), dto.getComment());
 
         fillTrxFromDto(trx, dto);
 
@@ -1345,9 +1738,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         /*
          * Create transaction.
          */
-        final AccountTrx accountTrx =
-                this.createAccountTrx(account, accountTrxType, amount,
-                        account.getBalance(), comment);
+        final AccountTrx accountTrx = this.createAccountTrx(account,
+                accountTrxType, amount, account.getBalance(), comment);
 
         // Set references.
         accountTrx.setPosPurchase(purchase);
@@ -1408,13 +1800,11 @@ public final class AccountingServiceImpl extends AbstractService implements
         /*
          * Deposit amount into Account.
          */
-        final Account account =
-                this.lazyGetUserAccount(user, AccountTypeEnum.USER)
-                        .getAccount();
+        final Account account = this
+                .lazyGetUserAccount(user, AccountTypeEnum.USER).getAccount();
 
-        final String receiptNumber =
-                purchaseDAO().getNextReceiptNumber(
-                        ReceiptNumberPrefixEnum.DEPOSIT);
+        final String receiptNumber = purchaseDAO()
+                .getNextReceiptNumber(ReceiptNumberPrefixEnum.DEPOSIT);
 
         return depositFundsToAccount(account, AccountTrxTypeEnum.DEPOSIT,
                 dto.getPaymentType(), receiptNumber, depositAmount,
@@ -1423,8 +1813,8 @@ public final class AccountingServiceImpl extends AbstractService implements
     }
 
     @Override
-    public PosDepositReceiptDto createPosDepositReceiptDto(
-            final Long accountTrxId) {
+    public PosDepositReceiptDto
+            createPosDepositReceiptDto(final Long accountTrxId) {
 
         final AccountTrx accountTrx = accountTrxDAO().findById(accountTrxId);
 
@@ -1432,16 +1822,15 @@ public final class AccountingServiceImpl extends AbstractService implements
             throw new SpException("Transaction not found.");
         }
 
-        if (!accountTrx.getTrxType().equals(
-                AccountTrxTypeEnum.DEPOSIT.toString())) {
+        if (!accountTrx.getTrxType()
+                .equals(AccountTrxTypeEnum.DEPOSIT.toString())) {
             throw new SpException("This is not a DEPOSIT transaction.");
         }
 
         final PosPurchase purchase = accountTrx.getPosPurchase();
 
-        final User user =
-                userAccountDAO().findByAccountId(
-                        accountTrx.getAccount().getId()).getUser();
+        final User user = userAccountDAO()
+                .findByAccountId(accountTrx.getAccount().getId()).getUser();
 
         //
         final PosDepositReceiptDto receipt = new PosDepositReceiptDto();
@@ -1449,8 +1838,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         receipt.setAccountTrx(accountTrx);
 
         receipt.setComment(purchase.getComment());
-        receipt.setPlainAmount(BigDecimalUtil.toPlainString(accountTrx
-                .getAmount()));
+        receipt.setPlainAmount(
+                BigDecimalUtil.toPlainString(accountTrx.getAmount()));
         receipt.setPaymentType(purchase.getPaymentType());
         receipt.setReceiptNumber(purchase.getReceiptNumber());
         receipt.setTransactedBy(accountTrx.getTransactedBy());
@@ -1463,9 +1852,8 @@ public final class AccountingServiceImpl extends AbstractService implements
 
     @Override
     public AbstractJsonRpcMethodResponse changeBaseCurrency(
-            final DaoBatchCommitter batchCommitter,
-            final Currency currencyFrom, final Currency currencyTo,
-            final double exchangeRate) {
+            final DaoBatchCommitter batchCommitter, final Currency currencyFrom,
+            final Currency currencyTo, final double exchangeRate) {
 
         int nAccounts = 0;
         int nTrx = 0;
@@ -1473,14 +1861,13 @@ public final class AccountingServiceImpl extends AbstractService implements
         /*
          * INVARIANT: currencyFrom must match current currency.
          */
-        if (!ConfigManager.getAppCurrencyCode().equals(
-                currencyFrom.getCurrencyCode())) {
+        if (!ConfigManager.getAppCurrencyCode()
+                .equals(currencyFrom.getCurrencyCode())) {
 
-            final String err =
-                    String.format("Currency %s does not match current "
-                            + "base currency %s.",
-                            currencyFrom.getCurrencyCode(),
-                            ConfigManager.getAppCurrencyCode());
+            final String err = String.format(
+                    "Currency %s does not match current " + "base currency %s.",
+                    currencyFrom.getCurrencyCode(),
+                    ConfigManager.getAppCurrencyCode());
 
             return JsonRpcMethodError.createBasicError(Code.INVALID_REQUEST,
                     err, null);
@@ -1489,7 +1876,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         /*
          * INVARIANT: currencyFrom and currencyTo must differ.
          */
-        if (currencyFrom.getCurrencyCode().equals(currencyTo.getCurrencyCode())) {
+        if (currencyFrom.getCurrencyCode()
+                .equals(currencyTo.getCurrencyCode())) {
             return JsonRpcMethodError.createBasicError(Code.INVALID_REQUEST,
                     "Currency codes must be different.", null);
         }
@@ -1512,10 +1900,9 @@ public final class AccountingServiceImpl extends AbstractService implements
 
         int startPosition = 0;
 
-        final List<Account> list =
-                accountDAO().getListChunk(filter,
-                        Integer.valueOf(startPosition), maxResults,
-                        AccountDao.Field.ACCOUNT_TYPE, true);
+        final List<Account> list = accountDAO().getListChunk(filter,
+                Integer.valueOf(startPosition), maxResults,
+                AccountDao.Field.ACCOUNT_TYPE, true);
 
         final BigDecimal exchangeDecimal = BigDecimal.valueOf(exchangeRate);
 
@@ -1525,8 +1912,8 @@ public final class AccountingServiceImpl extends AbstractService implements
 
             // Overdraft
             if (account.getOverdraft().compareTo(BigDecimal.ZERO) != 0) {
-                account.setOverdraft(account.getOverdraft().multiply(
-                        exchangeDecimal));
+                account.setOverdraft(
+                        account.getOverdraft().multiply(exchangeDecimal));
                 nChanges++;
             }
 
@@ -1536,10 +1923,9 @@ public final class AccountingServiceImpl extends AbstractService implements
             if (balance.compareTo(BigDecimal.ZERO) != 0) {
 
                 // Reverse current balance currency.
-                final AccountTrx trxReversal =
-                        this.createAccountTrx(account,
-                                AccountTrxTypeEnum.ADJUST, balance.negate(),
-                                BigDecimal.ZERO, null);
+                final AccountTrx trxReversal = this.createAccountTrx(account,
+                        AccountTrxTypeEnum.ADJUST, balance.negate(),
+                        BigDecimal.ZERO, null);
 
                 trxReversal.setCurrencyCode(currencyFrom.getCurrencyCode());
 
@@ -1558,10 +1944,9 @@ public final class AccountingServiceImpl extends AbstractService implements
                 final BigDecimal balanceInit =
                         balance.multiply(exchangeDecimal);
 
-                final AccountTrx trxInit =
-                        this.createAccountTrx(account,
-                                AccountTrxTypeEnum.ADJUST, balanceInit,
-                                balanceInit, comment.toString());
+                final AccountTrx trxInit = this.createAccountTrx(account,
+                        AccountTrxTypeEnum.ADJUST, balanceInit, balanceInit,
+                        comment.toString());
 
                 trxInit.setCurrencyCode(currencyTo.getCurrencyCode());
 
@@ -1600,10 +1985,11 @@ public final class AccountingServiceImpl extends AbstractService implements
             result.append("[TEST] ");
         }
 
-        result.append(localize("msg-changed-base-currency", currencyFrom
-                .getCurrencyCode(), currencyTo.getCurrencyCode(), Double
-                .valueOf(exchangeRate).toString(), Integer.valueOf(nTrx)
-                .toString(), Integer.valueOf(nAccounts).toString()));
+        result.append(localize("msg-changed-base-currency",
+                currencyFrom.getCurrencyCode(), currencyTo.getCurrencyCode(),
+                Double.valueOf(exchangeRate).toString(),
+                Integer.valueOf(nTrx).toString(),
+                Integer.valueOf(nAccounts).toString()));
 
         return JsonRpcMethodResult.createOkResult(result.toString());
     }
@@ -1625,9 +2011,9 @@ public final class AccountingServiceImpl extends AbstractService implements
      *            The transaction comment.
      */
     private void addAccountTrx(final User user,
-            final AccountTypeEnum accountType,
-            final AccountTrxTypeEnum trxType, final String currencyCode,
-            final BigDecimal amount, final String trxComment) {
+            final AccountTypeEnum accountType, final AccountTrxTypeEnum trxType,
+            final String currencyCode, final BigDecimal amount,
+            final String trxComment) {
 
         final Account account =
                 this.lazyGetUserAccount(user, accountType).getAccount();
@@ -1636,9 +2022,8 @@ public final class AccountingServiceImpl extends AbstractService implements
         account.setModifiedBy(ServiceContext.getActor());
         account.setModifiedDate(ServiceContext.getTransactionDate());
 
-        final AccountTrx trx =
-                this.createAccountTrx(account, trxType, currencyCode, amount,
-                        account.getBalance(), trxComment);
+        final AccountTrx trx = this.createAccountTrx(account, trxType,
+                currencyCode, amount, account.getBalance(), trxComment);
 
         accountDAO().update(account);
         accountTrxDAO().create(trx);
@@ -1668,8 +2053,8 @@ public final class AccountingServiceImpl extends AbstractService implements
     }
 
     @Override
-    public AbstractJsonRpcMethodResponse transferUserCredit(
-            final UserCreditTransferDto dto) {
+    public AbstractJsonRpcMethodResponse
+            transferUserCredit(final UserCreditTransferDto dto) {
 
         /*
          * INVARIANT: Amount MUST be valid.
@@ -1714,21 +2099,18 @@ public final class AccountingServiceImpl extends AbstractService implements
             final String msg;
 
             if (lockedUserFrom != null) {
-                msg =
-                        localize("msg-user-credit-transfer-err-unknown-user",
-                                dto.getUserIdTo());
+                msg = localize("msg-user-credit-transfer-err-unknown-user",
+                        dto.getUserIdTo());
             } else if (lockedUserTo != null) {
-                msg =
-                        localize("msg-user-credit-transfer-err-unknown-user",
-                                dto.getUserIdFrom());
+                msg = localize("msg-user-credit-transfer-err-unknown-user",
+                        dto.getUserIdFrom());
             } else {
-                msg =
-                        localize("msg-user-credit-transfer-err-unknown-users",
-                                dto.getUserIdFrom(), dto.getUserIdTo());
+                msg = localize("msg-user-credit-transfer-err-unknown-users",
+                        dto.getUserIdFrom(), dto.getUserIdTo());
             }
 
-            return JsonRpcMethodError
-                    .createBasicError(Code.INVALID_PARAMS, msg);
+            return JsonRpcMethodError.createBasicError(Code.INVALID_PARAMS,
+                    msg);
         }
 
         /*
@@ -1760,13 +2142,15 @@ public final class AccountingServiceImpl extends AbstractService implements
             if (minimalTransfer != null
                     && transferAmount.compareTo(minimalTransfer) < 0) {
 
-                return JsonRpcMethodError.createBasicError(
-                        Code.INVALID_PARAMS,
-                        localize("msg-amount-must-be-gt-eq", BigDecimalUtil
-                                .localize(minimalTransfer, userBalanceDecimals,
-                                        ServiceContext.getLocale(),
-                                        ServiceContext.getAppCurrencySymbol(),
-                                        true)));
+                return JsonRpcMethodError
+                        .createBasicError(Code.INVALID_PARAMS,
+                                localize("msg-amount-must-be-gt-eq",
+                                        BigDecimalUtil.localize(minimalTransfer,
+                                                userBalanceDecimals,
+                                                ServiceContext.getLocale(),
+                                                ServiceContext
+                                                        .getAppCurrencySymbol(),
+                                                true)));
             }
 
             final BigDecimal maximalTransfer =
@@ -1776,13 +2160,15 @@ public final class AccountingServiceImpl extends AbstractService implements
             if (maximalTransfer != null
                     && transferAmount.compareTo(maximalTransfer) > 0) {
 
-                return JsonRpcMethodError.createBasicError(
-                        Code.INVALID_PARAMS,
-                        localize("msg-amount-must-be-lt-eq", BigDecimalUtil
-                                .localize(maximalTransfer, userBalanceDecimals,
-                                        ServiceContext.getLocale(),
-                                        ServiceContext.getAppCurrencySymbol(),
-                                        true)));
+                return JsonRpcMethodError
+                        .createBasicError(Code.INVALID_PARAMS,
+                                localize("msg-amount-must-be-lt-eq",
+                                        BigDecimalUtil.localize(maximalTransfer,
+                                                userBalanceDecimals,
+                                                ServiceContext.getLocale(),
+                                                ServiceContext
+                                                        .getAppCurrencySymbol(),
+                                                true)));
             }
         } catch (ParseException e) {
             throw new SpException(e.getMessage(), e);
@@ -1794,9 +2180,9 @@ public final class AccountingServiceImpl extends AbstractService implements
         final String currencyCode = ConfigManager.getAppCurrencyCode();
 
         final StringBuilder trxComment =
-                new StringBuilder().append(Messages.getSystemMessage(
-                        getClass(), "msg-user-credit-transfer-comment",
-                        dto.getUserIdFrom(), dto.getUserIdTo()));
+                new StringBuilder().append(Messages.getSystemMessage(getClass(),
+                        "msg-user-credit-transfer-comment", dto.getUserIdFrom(),
+                        dto.getUserIdTo()));
 
         if (StringUtils.isNotBlank(dto.getComment())) {
             trxComment.append(" - ").append(dto.getComment());
@@ -1816,22 +2202,19 @@ public final class AccountingServiceImpl extends AbstractService implements
         final String userNotification;
 
         try {
-            userNotification =
-                    localize(
-                            "msg-user-credit-transfer-for-user",
-                            BigDecimalUtil.localize(transferAmount,
-                                    userBalanceDecimals,
-                                    ServiceContext.getLocale(),
-                                    ServiceContext.getAppCurrencySymbol(), true),
-                            dto.getUserIdTo());
+            userNotification = localize("msg-user-credit-transfer-for-user",
+                    BigDecimalUtil.localize(transferAmount, userBalanceDecimals,
+                            ServiceContext.getLocale(),
+                            ServiceContext.getAppCurrencySymbol(), true),
+                    dto.getUserIdTo());
 
-            AdminPublisher.instance().publish(
-                    PubTopicEnum.USER,
+            AdminPublisher.instance().publish(PubTopicEnum.USER,
                     PubLevelEnum.INFO,
                     Messages.getSystemMessage(getClass(),
-                            "msg-user-credit-transfer-for-system", dto
-                                    .getUserIdFrom(), BigDecimalUtil.localize(
-                                    transferAmount, userBalanceDecimals,
+                            "msg-user-credit-transfer-for-system",
+                            dto.getUserIdFrom(),
+                            BigDecimalUtil.localize(transferAmount,
+                                    userBalanceDecimals,
                                     ConfigManager.getDefaultLocale(),
                                     ConfigManager.getAppCurrencyCode(), true),
                             dto.getUserIdTo()));
@@ -1845,4 +2228,33 @@ public final class AccountingServiceImpl extends AbstractService implements
 
         return JsonRpcMethodResult.createOkResult(userNotification);
     }
+
+    @Override
+    public Account createSharedAccountTemplate(final String name,
+            final Account parent) {
+
+        final Account account = new Account();
+
+        account.setName(name);
+        account.setNameLower(name.toLowerCase());
+
+        account.setParent(parent);
+
+        account.setBalance(BigDecimal.ZERO);
+        account.setOverdraft(BigDecimal.ZERO);
+        account.setRestricted(false);
+        account.setUseGlobalOverdraft(false);
+
+        account.setAccountType(Account.AccountTypeEnum.SHARED.toString());
+        account.setComments(Account.CommentsEnum.COMMENT_OPTIONAL.toString());
+        account.setInvoicing(Account.InvoicingEnum.ALWAYS_ON.toString());
+        account.setDeleted(false);
+        account.setDisabled(false);
+
+        account.setCreatedBy(ServiceContext.getActor());
+        account.setCreatedDate(ServiceContext.getTransactionDate());
+
+        return account;
+    }
+
 }
