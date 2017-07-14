@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,18 +14,23 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.print.proxy;
 
+import java.math.BigDecimal;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.lang3.tuple.Pair;
+import org.savapage.core.dto.IppCostRule;
+import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.json.JsonAbstractBase;
@@ -48,23 +53,33 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
     private URI printerUri;
 
     /**
+     * If this is a CUPS printer class, the number of printer members. If
+     * {@code 0} (zero) this is <i>not</i> a printer class.
+     */
+    @JsonIgnore
+    private int cupsClassMembers;
+
+    /**
      * Corresponding Database Printer Object.
      */
     @JsonIgnore
     private Printer dbPrinter;
 
-    // "name": "HL-1430-series",
-    // "dfault": false,
-    // "is-accepting-jobs": true,
-    // "state": "3",
-    // "state-change-time": "1334326352",
-    // "state-reasons": "none",
-    // "location": "pampus",
-    // "info": "Brother HL-1430",
-    // "color_device": false,
-    // "modelname": "Brother HL-1430",
-    // "manufacturer": "Brother",
+    /**
+     * Custom cost rules for a printed media side.
+     */
+    @JsonIgnore
+    private List<IppCostRule> customCostRulesMedia;
 
+    /**
+     * Custom cost rules for a printed copy.
+     */
+    @JsonIgnore
+    private List<IppCostRule> customCostRulesCopy;
+
+    /**
+     *
+     */
     public enum State {
         IDLE, BUSY, STOPPED
     };
@@ -127,6 +142,19 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
     private boolean injectPpdExt = false;
 
     /**
+     * {@code true} when print-scaling was injected from a SavaPage PPD
+     * extension.
+     */
+    @JsonIgnore
+    private boolean printScalingExt = false;
+
+    /**
+     * {@code true} when this is a job ticket printer.
+     */
+    @JsonIgnore
+    private Boolean jobTicket = Boolean.FALSE;
+
+    /**
      * Gets the corresponding Database Printer Object.
      *
      * @return The db printer object.
@@ -147,6 +175,48 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
         this.dbPrinter = printer;
     }
 
+    /**
+     *
+     * @return Custom cost rules for a printed media side.
+     */
+    @JsonIgnore
+    public List<IppCostRule> getCustomCostRulesMedia() {
+        return customCostRulesMedia;
+    }
+
+    /**
+     *
+     * @param rules
+     *            Custom cost rules for a printed media side.
+     */
+    @JsonIgnore
+    public void setCustomCostRulesMedia(final List<IppCostRule> rules) {
+        this.customCostRulesMedia = rules;
+    }
+
+    /**
+     *
+     * @return Custom cost rules for a printed copy.
+     */
+    @JsonIgnore
+    public List<IppCostRule> getCustomCostRulesCopy() {
+        return customCostRulesCopy;
+    }
+
+    /**
+     *
+     * @param rules
+     *            Custom cost rules for a printed copy.
+     */
+    @JsonIgnore
+    public void setCustomCostRulesCopy(final List<IppCostRule> rules) {
+        this.customCostRulesCopy = rules;
+    }
+
+    /**
+     *
+     * @return The {@link State}.
+     */
     public State state() {
         if (state.equals("3")) {
             return State.IDLE;
@@ -402,6 +472,26 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
     }
 
     /**
+     * @return If this is a CUPS printer class, the number of printer members.
+     *         If {@code 0} (zero) this is <i>not</i> a printer class.
+     */
+    @JsonIgnore
+    public int getCupsClassMembers() {
+        return cupsClassMembers;
+    }
+
+    /**
+     * @param nMembers
+     *            If this is a CUPS printer class, the number of printer
+     *            members. If {@code 0} (zero) this is <i>not</i> a printer
+     *            class.
+     */
+    @JsonIgnore
+    public void setCupsClassMembers(final int nMembers) {
+        this.cupsClassMembers = nMembers;
+    }
+
+    /**
      * @return {@code true} when info was injected from a SavaPage PPD
      *         extension.
      */
@@ -416,6 +506,38 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
      */
     public void setInjectPpdExt(boolean injectPpdExt) {
         this.injectPpdExt = injectPpdExt;
+    }
+
+    /**
+     * @return {@code true} when page-scaling was injected from a SavaPage PPD
+     *         extension.
+     */
+    public boolean isPrintScalingExt() {
+        return printScalingExt;
+    }
+
+    /**
+     * @param printScalingExt
+     *            {@code true} when page-scaling was injected from a SavaPage
+     *            PPD extension.
+     */
+    public void setPrintScalingExt(boolean printScalingExt) {
+        this.printScalingExt = printScalingExt;
+    }
+
+    /**
+     * @return {@code true} when this is a job ticket printer.
+     */
+    public Boolean getJobTicket() {
+        return jobTicket;
+    }
+
+    /**
+     * @param jobTicket
+     *            {@code true} when this is a job ticket printer.
+     */
+    public void setJobTicket(Boolean jobTicket) {
+        this.jobTicket = jobTicket;
     }
 
     /**
@@ -443,16 +565,177 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
         copy.name = this.name;
         copy.ppd = this.ppd;
         copy.injectPpdExt = this.injectPpdExt;
+        copy.jobTicket = this.jobTicket;
         copy.ppdVersion = this.ppdVersion;
         copy.printerUri = this.printerUri;
         copy.state = this.state;
         copy.stateChangeTime = this.stateChangeTime;
         copy.stateReasons = this.stateReasons;
+        copy.customCostRulesCopy = this.customCostRulesCopy;
+        copy.customCostRulesMedia = this.customCostRulesMedia;
 
         copy.groups = new ArrayList<>();
         copy.groups.addAll(this.getGroups());
 
         return copy;
+    }
+
+    /**
+     * Calculates Media Cost of IPP choices according to the list of cost rules.
+     *
+     * @param ippChoices
+     *            The IPP attribute key/choices.
+     * @return {@code null} when none of the rules apply.
+     */
+    public BigDecimal
+            calcCustomCostMedia(final Map<String, String> ippChoices) {
+        return calcCost(this.getCustomCostRulesMedia(), ippChoices, false);
+    }
+
+    /**
+     * Calculates Copy Cost of IPP choices according to the list of cost rules.
+     *
+     * @param ippChoices
+     *            The IPP attribute key/choices.
+     * @return {@code null} when none of the rules apply.
+     */
+    public BigDecimal calcCustomCostCopy(final Map<String, String> ippChoices) {
+        return calcCost(this.getCustomCostRulesCopy(), ippChoices, true);
+    }
+
+    /**
+     * Gets the cover costs according to the list of cost rules.
+     *
+     * @param ippCoverChoice
+     *            The IPP choice of attribute
+     *            {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_COVER_TYPE}.
+     * @return {@code null} when none of the rules apply.
+     */
+    public BigDecimal getCustomCostCover(final String ippCoverChoice) {
+
+        if (ippCoverChoice == null) {
+            return null;
+        }
+
+        final Map<String, String> singleIppChoice = new HashMap<>();
+
+        singleIppChoice.put(IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_COVER_TYPE,
+                ippCoverChoice);
+
+        return calcCost(this.getCustomCostRulesCopy(), singleIppChoice, false);
+    }
+
+    /**
+     * Checks if an option is valid according to at least one (1) of the Custom
+     * Copy Cost rules.
+     *
+     * @param option
+     *            The IPP option key/value pair.
+     * @param ippChoices
+     *            The full context of IPP choices.
+     * @return {@code null} when no rule applies. {@link Boolean#TRUE} when at
+     *         least one rule applies and is valid.
+     */
+    public Boolean isCustomCostOptionValid(final Pair<String, String> option,
+            final Map<String, String> ippChoices) {
+        return isCustomCostOptionValid(getCustomCostRulesCopy(), option,
+                ippChoices);
+    }
+
+    /**
+     * Checks if an option is valid according to at least one (1) of the rules.
+     *
+     * @param rules
+     *            The list of cost rules.
+     * @param option
+     *            The IPP option key/value pair.
+     * @param ippChoices
+     *            The full context of IPP choices.
+     * @return {@code null} when no rule applies. {@link Boolean#TRUE} when at
+     *         least one rule applies and is valid.
+     */
+    private static Boolean isCustomCostOptionValid(
+            final List<IppCostRule> rules, final Pair<String, String> option,
+            final Map<String, String> ippChoices) {
+
+        // Assume no rule found.
+        Boolean isValid = null;
+
+        for (final IppCostRule rule : rules) {
+
+            final Boolean result = rule.isOptionValid(option, ippChoices);
+
+            if (result == null) {
+                continue;
+            }
+
+            // The first valid rule is OK.
+            if (result.booleanValue()) {
+                return result;
+            }
+
+            // Assume FALSE.
+            isValid = result;
+        }
+
+        return isValid;
+    }
+
+    /**
+     * Calculates cost of IPP choices according to a list of cost rules.
+     *
+     * @param rules
+     *            The list of cost rules.
+     * @param ippChoices
+     *            The IPP attribute key/choices.
+     * @param accumulate
+     *            If {@code true} all rules are checked, and the cost result of
+     *            each rule is accumulated. When {@code false} the cost of the
+     *            first rule with a non-null result is returned.
+     * @return {@code null} when none of the rules apply.
+     */
+    private static BigDecimal calcCost(final List<IppCostRule> rules,
+            final Map<String, String> ippChoices, final boolean accumulate) {
+
+        if (rules == null) {
+            return null;
+        }
+
+        BigDecimal total = null;
+
+        for (final IppCostRule rule : rules) {
+
+            final BigDecimal cost = rule.calcCost(ippChoices);
+
+            if (cost != null) {
+                if (accumulate) {
+                    if (total == null) {
+                        total = cost;
+                    } else {
+                        total = total.add(cost);
+                    }
+                } else {
+                    return cost;
+                }
+            }
+        }
+        return total;
+    }
+
+    /**
+     * @return {@code true} when custom media cost rules are present.
+     */
+    public boolean hasCustomCostRulesMedia() {
+        final List<IppCostRule> rules = this.getCustomCostRulesMedia();
+        return rules != null && !rules.isEmpty();
+    }
+
+    /**
+     * @return {@code true} when custom copy cost rules are present.
+     */
+    public boolean hasCustomCostRulesCopy() {
+        final List<IppCostRule> rules = this.getCustomCostRulesCopy();
+        return rules != null && !rules.isEmpty();
     }
 
 }

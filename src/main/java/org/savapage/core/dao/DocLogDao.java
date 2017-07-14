@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -50,7 +50,7 @@ public interface DocLogDao extends GenericDao<DocLog> {
      * Identifiers for DocLog type.
      */
     enum Type {
-        ALL, IN, OUT, PDF, PRINT
+        ALL, IN, OUT, PDF, PRINT, TICKET
     }
 
     /**
@@ -75,6 +75,7 @@ public interface DocLogDao extends GenericDao<DocLog> {
         private DocLogProtocolEnum protocol;
         private ExternalSupplierEnum externalSupplier;
         private String externalId;
+        private String containingExternalIdText;
         private ExternalSupplierStatusEnum externalStatus;
 
         public DocLogProtocolEnum getProtocol() {
@@ -99,6 +100,14 @@ public interface DocLogDao extends GenericDao<DocLog> {
 
         public void setExternalId(String externalId) {
             this.externalId = externalId;
+        }
+
+        public String getContainingExternalIdText() {
+            return containingExternalIdText;
+        }
+
+        public void setContainingExternalIdText(String text) {
+            this.containingExternalIdText = text;
         }
 
         public ExternalSupplierStatusEnum getExternalStatus() {
@@ -187,4 +196,31 @@ public interface DocLogDao extends GenericDao<DocLog> {
      */
     int cleanDocInHistory(Date dateBackInTime);
 
+    /**
+     * Updates a {@link DocLog} instance with new external supplier data, and
+     * optionally a new document title.
+     *
+     * <p>
+     * NOTE: Use this method instead of {@link #update(DocLog)}, to make sure
+     * updated data are available to other resident threads. Updates committed
+     * with {@link #update(DocLog)}, i.e merge(), will <b>not</b> show in other
+     * resident threads (this is a Hibernate "feature").
+     * </p>
+     *
+     * @param docLogId
+     *            The database primary key of the {@link DocLog} instance.
+     * @param extSupplier
+     *            The {@link ExternalSupplierEnum}. A {@code null} value is used
+     *            as such.
+     * @param extStatus
+     *            The {@link ExternalSupplierStatusEnum}. A {@code null} value
+     *            is used as such.
+     * @param documentTitle
+     *            The new document title. If {@code null} the document title is
+     *            <i>not</i> updated.
+     * @return {@code true} when instance is updated, {@code false} when not
+     *         found.
+     */
+    boolean updateExtSupplier(Long docLogId, ExternalSupplierEnum extSupplier,
+            ExternalSupplierStatusEnum extStatus, String documentTitle);
 }

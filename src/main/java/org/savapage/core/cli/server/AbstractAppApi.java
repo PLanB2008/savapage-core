@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -44,6 +44,7 @@ import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.conn.ssl.TrustSelfSignedStrategy;
 import org.apache.http.entity.ContentType;
@@ -138,6 +139,16 @@ public abstract class AbstractAppApi extends AbstractApp {
     /**
     *
     */
+    protected static final String ARG_ROLE_YES = "Y";
+    protected static final String ARG_ROLE_NO = "N";
+    protected static final String ARG_ROLE_UNDETERMINED = "U";
+
+    protected static final String ARG_ROLE =
+            ARG_ROLE_YES + "|" + ARG_ROLE_NO + "|" + ARG_ROLE_UNDETERMINED;
+
+    /**
+    *
+    */
     protected static final String ARG_NUMBER = "number";
 
     /**
@@ -172,6 +183,35 @@ public abstract class AbstractAppApi extends AbstractApp {
         } catch (Exception e) {
             throw new SpException(e);
         }
+    }
+
+    /**
+     * Gets the {@link Boolean} value of {@link #ARG_ROLE} argument.
+     *
+     * @param arg
+     *            The role argument.
+     * @return {@code null} when {@link #ARG_ROLE_UNDETERMINED}.
+     */
+    protected final Boolean getArgRoleValue(final String arg) {
+        if (arg.equalsIgnoreCase(ARG_ROLE_YES)) {
+            return Boolean.TRUE;
+        }
+        if (arg.equalsIgnoreCase(ARG_ROLE_NO)) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
+    /**
+     *
+     * @param arg
+     *            The role argument.
+     * @return {@code true} if argument is valid.
+     */
+    protected final boolean isArgRoleValid(final String arg) {
+        return arg.equalsIgnoreCase(ARG_ROLE_YES)
+                || arg.equalsIgnoreCase(ARG_ROLE_NO)
+                || arg.equalsIgnoreCase(ARG_ROLE_UNDETERMINED);
     }
 
     /**
@@ -298,11 +338,14 @@ public abstract class AbstractAppApi extends AbstractApp {
     }
 
     /**
+     * Add option names to {@link Option}.
      *
      * @param options
+     *            The {@link Option}.
      * @param optionNames
+     *            The names.
      */
-    protected final void addHelpOptions(final Options options,
+    protected static final void addHelpOptions(final Options options,
             final List<String> optionNames) {
         optionNames.add(CLI_SWITCH_HELP_LONG);
         options.addOption(CLI_SWITCH_HELP, CLI_SWITCH_HELP_LONG, false,
@@ -314,7 +357,7 @@ public abstract class AbstractAppApi extends AbstractApp {
      * @param options
      * @param optionNames
      */
-    protected final void addBatchOptions(final Options options,
+    protected static final void addBatchOptions(final Options options,
             final List<String> optionNames) {
 
         String opt;
@@ -343,6 +386,10 @@ public abstract class AbstractAppApi extends AbstractApp {
                 + "character encoding [default: utf-8].");
     }
 
+    /**
+     *
+     * @return
+     */
     protected final String getHostLocale() {
         return ConfigManager.getServerHostLocale().toLanguageTag();
     }
@@ -396,9 +443,8 @@ public abstract class AbstractAppApi extends AbstractApp {
      */
     public static String getApiDescriptHeader() {
         final String eol = System.lineSeparator();
-        final String name =
-                CommunityDictEnum.SAVAPAGE.getWord()
-                        + " Command Line Interface";
+        final String name = CommunityDictEnum.SAVAPAGE.getWord()
+                + " Command Line Interface";
         return StringUtils.repeat("_", name.length() + 1) + eol + name + eol
                 + eol;
     }
@@ -714,10 +760,16 @@ public abstract class AbstractAppApi extends AbstractApp {
          */
         SSLContextBuilder builder = new SSLContextBuilder();
 
-        builder.loadTrustMaterial(null, new TrustSelfSignedStrategy());
+        builder.loadTrustMaterial(null, TrustSelfSignedStrategy.INSTANCE);
 
-        SSLConnectionSocketFactory sslsf =
-                new SSLConnectionSocketFactory(builder.build());
+        /*
+         * The NoopHostnameVerifier instance is used to turn hostname
+         * verification off. As a result SSLPeerUnverifiedException: Host name
+         * 'XXX' does not match the certificate subject provided by the peer
+         * (CN=YYY).
+         */
+        SSLConnectionSocketFactory sslsf = new SSLConnectionSocketFactory(
+                builder.build(), NoopHostnameVerifier.INSTANCE);
 
         CloseableHttpClient httpClient =
                 HttpClients.custom().setSSLSocketFactory(sslsf).build();
@@ -770,25 +822,25 @@ public abstract class AbstractAppApi extends AbstractApp {
     }
 
     @Override
-    protected Options createCliOptions() throws Exception {
+    protected final Options createCliOptions() throws Exception {
 
         final Options options = new Options();
 
-        final List<String> optionNames = getOptionNames();
+        final List<String> optionNameList = getOptionNames();
 
         /*
          *
          */
         for (Object[] option : getOptionDictionary()) {
 
-            optionNames.add(option[1].toString());
+            optionNameList.add(option[1].toString());
 
             Boolean required = false;
             if (option.length > 3) {
                 required = (Boolean) option[3];
             }
             String descript;
-            ;
+
             if (required) {
                 descript = "[required] ";
             } else {
@@ -816,14 +868,14 @@ public abstract class AbstractAppApi extends AbstractApp {
             options.addOption(optionBuilder.build());
         }
 
-        addHelpOptions(options, optionNames);
+        addHelpOptions(options, optionNameList);
 
         if (hasBatchOptions()) {
-            addBatchOptions(options, optionNames);
+            addBatchOptions(options, optionNameList);
         }
 
         if (hasLocaleOption()) {
-            addLocaleOption(options, optionNames);
+            addLocaleOption(options, optionNameList);
         }
 
         return options;
@@ -838,8 +890,7 @@ public abstract class AbstractAppApi extends AbstractApp {
     }
 
     /**
-     *
-     * @return
+     * @return The usage string.
      */
     private String getUsageCmdLineSyntax() {
         return "--" + getCliMethodName() + " [OPTION]...";
@@ -847,13 +898,12 @@ public abstract class AbstractAppApi extends AbstractApp {
 
     /**
      *
-     * @return
+     * @return The API version.
      */
     protected abstract String getApiVersion();
 
     /**
-     *
-     * @return
+     * @return The full usage text.
      */
     private String getUsageDescript() {
 
@@ -969,7 +1019,8 @@ public abstract class AbstractAppApi extends AbstractApp {
      * @return {@code true} when the option switch is found or {@code false}
      *         when not.
      */
-    protected boolean getSwitchValue(CommandLine cmd, String optionSwitch) {
+    protected final boolean getSwitchValue(final CommandLine cmd,
+            final String optionSwitch) {
         return getSwitchValue(cmd, optionSwitch, true);
     }
 
@@ -984,8 +1035,8 @@ public abstract class AbstractAppApi extends AbstractApp {
      *            The return value when the option switch is ON.
      * @return valueOn when the option switch is found or !valueOn when not.
      */
-    protected boolean getSwitchValue(CommandLine cmd, String optionSwitch,
-            boolean valueOn) {
+    protected final boolean getSwitchValue(final CommandLine cmd,
+            final String optionSwitch, final boolean valueOn) {
 
         if (cmd.hasOption(optionSwitch)) {
             return valueOn;

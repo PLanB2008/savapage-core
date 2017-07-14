@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -38,12 +38,10 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Iterator;
 import java.util.List;
-import java.util.UUID;
 
 import javax.print.attribute.Size2DSyntax;
 import javax.print.attribute.standard.MediaSize;
 
-import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.community.CommunityDictEnum;
 import org.savapage.core.config.ConfigManager;
@@ -51,16 +49,9 @@ import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.doc.DocContentTypeEnum;
 import org.savapage.core.doc.IFileConverter;
-import org.savapage.core.doc.ImageToPdf;
 import org.savapage.core.doc.PdfToGrayscale;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
-import org.savapage.core.imaging.EcoImageFilter;
-import org.savapage.core.imaging.EcoImageFilterSquare;
-import org.savapage.core.imaging.Pdf2ImgCommandExt;
-import org.savapage.core.imaging.Pdf2PngPopplerCmd;
 import org.savapage.core.json.PdfProperties;
-import org.savapage.core.system.CommandExecutor;
-import org.savapage.core.system.ICommandExecutor;
 import org.savapage.core.util.MediaUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -116,7 +107,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     private PdfReader letterheadReader;
 
     private StringBuilder jobRangesWlk;
-    private String jobRotationWlk;
+    private Integer jobRotationWlk;
 
     private File jobPdfFileWlk;
 
@@ -303,13 +294,15 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         paper.setSize(mediabox.getWidth(), mediabox.getHeight());
         pageFormat.setPaper(paper);
 
+        // NOTE: the size in returned in PORTRAIT mode.
         final int[] size = MediaUtils.getMediaWidthHeight(pageFormat);
 
         int iSizeWidth = 0;
         int iSizeHeight = 1;
 
         /*
-         * Correct for landscape orientation.
+         * Since the size is in portrait mode, we swap height and width when the
+         * PDF mediabox reports landscape orientation.
          */
         if (mediabox.getWidth() > mediabox.getHeight()) {
             iSizeWidth = 1;
@@ -321,6 +314,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         pageProps.setMmWidth(size[iSizeWidth]);
         pageProps.setMmHeight(size[iSizeHeight]);
         pageProps.setSize(MediaUtils.getMediaSizeName(pageFormat));
+        pageProps.setRotationFirstPage(mediabox.getRotation());
 
         return pageProps;
     }
@@ -434,6 +428,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
             pageProps = this.createPageProps(reader.getPageSize(1));
             pageProps.setNumberOfPages(reader.getNumberOfPages());
+            pageProps.setRotationFirstPage(reader.getPageRotation(1));
 
         } catch (com.itextpdf.text.exceptions.BadPasswordException e) {
             throw new PdfSecurityException(
@@ -455,8 +450,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     @Override
     protected void onInit() {
 
-        this.onExitConvertToGrayscale =
-                this.isGrayscalePdf() && !this.isConvertToEcoPdf();
+        this.onExitConvertToGrayscale = this.isGrayscalePdf();
 
         this.targetPdfCopyFilePath = String.format("%s.tmp", this.pdfFile);
 
@@ -467,20 +461,8 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
             this.targetDocument = new Document();
 
-            if (this.isConvertToEcoPdf()) {
-
-                PdfWriter.getInstance(this.targetDocument, ostr);
-
-                /*
-                 * Do not open the target document yet, but lazy open it when
-                 * page size of first page is known.
-                 */
-
-            } else {
-
-                this.targetPdfCopy = new PdfCopy(this.targetDocument, ostr);
-                this.targetDocument.open();
-            }
+            this.targetPdfCopy = new PdfCopy(this.targetDocument, ostr);
+            this.targetDocument.open();
 
         } catch (Exception e) {
             throw new SpException(e);
@@ -514,7 +496,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     }
 
     @Override
-    protected void onInitJob(final String jobPfdName, final String rotation)
+    protected void onInitJob(final String jobPfdName, final Integer rotation)
             throws Exception {
 
         this.jobPdfFileWlk = new File(jobPfdName);
@@ -530,125 +512,15 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
         this.isRemoveGraphics = removeGraphics;
 
-        if (this.isConvertToEcoPdf()) {
-
-            onProcessJobPagesEco(nPageFrom, nPageTo, removeGraphics);
-
-        } else {
-
-            if (this.jobRangesWlk.length() > 0) {
-                this.jobRangesWlk.append(",");
-            }
-
-            this.jobRangesWlk.append(nPageFrom);
-
-            if (nPageFrom != nPageTo) {
-                this.jobRangesWlk.append("-").append(nPageTo);
-            }
-        }
-    }
-
-    /**
-     *
-     * @param nPageFrom
-     * @param nPageTo
-     * @param removeGraphics
-     * @throws InterruptedException
-     * @throws IOException
-     * @throws DocumentException
-     */
-    protected void onProcessJobPagesEco(final int nPageFrom, final int nPageTo,
-            final boolean removeGraphics)
-            throws IOException, InterruptedException, DocumentException {
-
-        final Pdf2ImgCommandExt pdf2ImgCmd = new Pdf2PngPopplerCmd();
-
-        final EcoImageFilterSquare.Parms ecoParms =
-                EcoImageFilterSquare.Parms.createDefault();
-
-        ecoParms.setConvertToGrayscale(this.isGrayscalePdf());
-
-        final EcoImageFilter filter = new EcoImageFilterSquare(ecoParms);
-
-        final File imageFile =
-                new File(String.format("%s%c_eco_%s.png", this.appTmpDir,
-                        File.separatorChar, UUID.randomUUID().toString()));
-
-        try {
-
-            for (int i = nPageFrom - 1; i < nPageTo; i++) {
-
-                /*
-                 * First, set page size and margins.
-                 */
-                final boolean rotatePdfPage;
-
-                if (StringUtils.defaultString(this.jobRotationWlk, "0")
-                        .equals("0")) {
-                    rotatePdfPage = false;
-                } else {
-                    final int rotate = Integer.valueOf(this.jobRotationWlk);
-                    // Rotate when odd multiple of 90.
-                    rotatePdfPage = (rotate / 90) % 2 != 0;
-                }
-
-                final Rectangle pageSize = this.readerWlk.getPageSize(i + 1);
-
-                if (rotatePdfPage) {
-                    this.targetDocument.setPageSize(pageSize.rotate());
-                } else {
-                    this.targetDocument.setPageSize(pageSize);
-                }
-                this.targetDocument.setMargins(0, 0, 0, 0);
-
-                /*
-                 * Then, open document or add new page.
-                 */
-                if (!this.targetDocument.isOpen()) {
-                    this.targetDocument.open();
-                } else {
-                    this.targetDocument.newPage();
-                }
-
-                // TODO: optimize resolution to PDF page size?
-                final int resolution = 300;
-
-                final String command =
-                        pdf2ImgCmd.createCommand(this.jobPdfFileWlk, imageFile,
-                                i, this.jobRotationWlk, resolution);
-
-                final ICommandExecutor exec =
-                        CommandExecutor.createSimple(command);
-
-                if (exec.executeCommand() != 0) {
-                    LOGGER.error(command);
-                    LOGGER.error(exec.getStandardErrorFromCommand().toString());
-                    throw new SpException(
-                            "image [" + imageFile.getAbsolutePath()
-                                    + "] could not be created.");
-                }
-
-                final com.itextpdf.text.Image image = com.itextpdf.text.Image
-                        .getInstance(filter.filter(imageFile), Color.WHITE);
-
-                if (LOGGER.isTraceEnabled()) {
-                    LOGGER.trace(String.format("Width x Height = %f x %f",
-                            this.targetDocument.getPageSize().getWidth(),
-                            this.targetDocument.getPageSize().getHeight()));
-                }
-
-                ImageToPdf.addImagePage(this.targetDocument, 0, 0, image);
-
-                imageFile.delete();
-            }
-
-        } finally {
-
-            if (imageFile.exists()) {
-                imageFile.delete();
-            }
+        if (this.jobRangesWlk.length() > 0) {
+            this.jobRangesWlk.append(",");
         }
 
+        this.jobRangesWlk.append(nPageFrom);
+
+        if (nPageFrom != nPageTo) {
+            this.jobRangesWlk.append("-").append(nPageTo);
+        }
     }
 
     /**
@@ -675,61 +547,88 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         return this.singleBlankPagePdfReader;
     }
 
+    /**
+     * Gets the page rotation for a copy of a source PDF page.
+     *
+     * @param srcPageSize
+     *            The size of the source PDF page.
+     * @param srcPageRotation
+     *            The rotation of the source PDF page.
+     * @param userRotation
+     *            The rotation applied by the user on the visible SafePages.
+     *
+     * @return The page rotation to apply to the PDF page copy.
+     */
+    public static Integer getPdfCopyPageRotation(final Rectangle srcPageSize,
+            final int srcPageRotation, final Integer userRotation) {
+
+        final boolean isLandscapePage =
+                srcPageSize.getHeight() < srcPageSize.getWidth();
+
+        return PdfPageRotateHelper.instance().getPageRotationForExport(
+                isLandscapePage, srcPageRotation, userRotation);
+    }
+
     @Override
-    protected void onExitJob() throws Exception {
+    protected void onExitJob(final int blankPagesToAppend) throws Exception {
 
-        if (!this.isConvertToEcoPdf()) {
+        this.readerWlk.selectPages(this.jobRangesWlk.toString());
+        int pages = this.readerWlk.getNumberOfPages();
 
-            this.readerWlk.selectPages(this.jobRangesWlk.toString());
-            int pages = this.readerWlk.getNumberOfPages();
+        // Create a new instance for the user rotation.
+        final Integer jobUserRotation =
+                new Integer(this.jobRotationWlk.intValue());
 
-            for (int i = 0; i < pages;) {
+        for (int i = 0; i < pages;) {
 
-                ++i;
+            ++i;
 
+            /*
+             * Rotate for export AND printing. Unconditional rotation is needed
+             * at this stage, because we need the intended orientation when a
+             * letterhead is to be applied.
+             */
+            this.jobRotationWlk =
+                    getPdfCopyPageRotation(this.readerWlk.getPageSize(i),
+                            this.readerWlk.getPageRotation(i), jobUserRotation);
+
+            final int rotate = this.jobRotationWlk.intValue();
+            final PdfDictionary pageDict = this.readerWlk.getPageN(i);
+            pageDict.put(PdfName.ROTATE, new PdfNumber(rotate));
+
+            final PdfImportedPage importedPage;
+
+            if (isPageContentsPresent(this.readerWlk, i)) {
+
+                importedPage =
+                        this.targetPdfCopy.getImportedPage(this.readerWlk, i);
+            } else {
                 /*
-                 * Rotate for BOTH export and printing.
+                 * Replace page without /Contents with our own blank content.
+                 * See Mantis #614.
                  */
-                if (this.jobRotationWlk != null) {
+                importedPage = this.targetPdfCopy.getImportedPage(this
+                        .getBlankPageReader(this.targetPdfCopy.getPageSize()),
+                        1);
 
-                    final int rotate = Integer.valueOf(this.jobRotationWlk);
-
-                    if (rotate != 0) {
-                        final PdfDictionary pageDict =
-                                this.readerWlk.getPageN(i);
-                        pageDict.put(PdfName.ROTATE, new PdfNumber(rotate));
-                    }
+                if (LOGGER.isInfoEnabled()) {
+                    LOGGER.info(String.format(
+                            "File [%s] page [%d] has NO /Contents: "
+                                    + "replaced by blank content.",
+                            this.jobPdfFileWlk.getName(), i));
                 }
-
-                final PdfImportedPage importedPage;
-
-                if (isPageContentsPresent(this.readerWlk, i)) {
-                    importedPage = this.targetPdfCopy
-                            .getImportedPage(this.readerWlk, i);
-                } else {
-                    /*
-                     * Replace page without /Contents with our own blank
-                     * content. See Mantis #614.
-                     */
-                    importedPage =
-                            this.targetPdfCopy.getImportedPage(
-                                    this.getBlankPageReader(
-                                            this.targetPdfCopy.getPageSize()),
-                                    1);
-
-                    if (LOGGER.isInfoEnabled()) {
-                        LOGGER.info(String.format(
-                                "File [%s] page [%d] has NO /Contents: "
-                                        + "replaced by blank content.",
-                                this.jobPdfFileWlk.getName(), i));
-                    }
-                }
-
-                this.targetPdfCopy.addPage(importedPage);
             }
-
-            this.targetPdfCopy.freeReader(this.readerWlk);
+            this.targetPdfCopy.addPage(importedPage);
         }
+
+        //
+        for (int i = 0; i < blankPagesToAppend; i++) {
+            this.targetPdfCopy.addPage(this.targetPdfCopy.getImportedPage(
+                    this.getBlankPageReader(this.targetPdfCopy.getPageSize()),
+                    1));
+        }
+
+        this.targetPdfCopy.freeReader(this.readerWlk);
 
         this.readerWlk.close();
         this.readerWlk = null;
@@ -868,7 +767,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         return String.format("%s %s • %s • %s",
                 CommunityDictEnum.SAVAPAGE.getWord(),
                 ConfigManager.getAppVersion(),
-                CommunityDictEnum.LIBRE_PRINT_MANAGEMENT.getWord(),
+                CommunityDictEnum.SAVAPAGE_SLOGAN.getWord(),
                 CommunityDictEnum.SAVAPAGE_DOT_ORG.getWord());
     }
 
@@ -950,289 +849,151 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
         final boolean isLetterhead = myPdfFileLetterhead != null;
 
-        if (!(isForPrinting() || isLetterhead)) {
-            return;
+        if (isLetterhead) {
+            applyLetterhead();
         }
+    }
+
+    /**
+     * Applies the letterhead.
+     *
+     * @throws IOException
+     */
+    private void applyLetterhead() throws IOException {
 
         int nLetterheadPage = 0;
         int nLetterheadPageMax = 1;
 
-        Rectangle lhPageSize = null;
         PdfImportedPage letterheadPage = null;
 
-        if (isLetterhead) {
-            this.letterheadReader = new PdfReader(myPdfFileLetterhead);
-            nLetterheadPageMax = myLetterheadJob.getPages();
-        }
+        this.letterheadReader = new PdfReader(myPdfFileLetterhead);
+        nLetterheadPageMax = myLetterheadJob.getPages();
 
         /*
          * Iterate over document's pages.
          */
         int nDocPages = this.readerWlk.getNumberOfPages();
+        Rectangle rectLetterheadPageWlk = null;
 
         for (int i = 0; i < nDocPages;) {
 
             ++i;
 
             /*
-             * Check if we rotated this page to show it in landscape
-             * orientation.
+             * If the letterhead document has more than one page, each page of
+             * the letterhead is applied to the corresponding page of the output
+             * document. If the output document has more pages than the
+             * letterhead, then the final letterhead page is repeated across
+             * these remaining pages of the output document.
              */
-            final int pageRotation = this.readerWlk.getPageRotation(i);
-            final boolean isPageRotated = pageRotation != 0;
+
+            if (nLetterheadPage < nLetterheadPageMax) {
+
+                nLetterheadPage++;
+                rectLetterheadPageWlk =
+                        this.letterheadReader.getPageSize(nLetterheadPage);
+
+                /*
+                 * Create a PdfTemplate from the nth page of the letterhead
+                 * (PdfImportedPage is derived from PdfTemplate).
+                 */
+                letterheadPage = this.targetStamper.getImportedPage(
+                        this.letterheadReader, nLetterheadPage);
+            }
 
             /*
-             * Gets the page size without taking rotation into account.
+             * The letterhead page is added as a layer, 'on top of' or
+             * 'underneath' the page content.
              */
-            Rectangle docPageSize = this.readerWlk.getPageSize(i);
+            final PdfContentByte contentByte;
+
+            if (myLetterheadJob.getForeground()) {
+                contentByte = this.targetStamper.getOverContent(i);
+            } else {
+                contentByte = this.targetStamper.getUnderContent(i);
+            }
+
+            /*
+             *
+             */
+            final Rectangle rectDocPage = this.readerWlk.getPageSize(i);
+            final int pageRotation = this.readerWlk.getPageRotation(i);
+
+            final boolean swapWidhtHeight;
+
+            if (pageRotation == PdfPageRotateHelper.PDF_ROTATION_0.intValue()
+                    || pageRotation == PdfPageRotateHelper.PDF_ROTATION_180
+                            .intValue()) {
+
+                swapWidhtHeight = false;
+
+            } else if (pageRotation == PdfPageRotateHelper.PDF_ROTATION_90
+                    .intValue()
+                    || pageRotation == PdfPageRotateHelper.PDF_ROTATION_270
+                            .intValue()) {
+
+                swapWidhtHeight = true;
+
+            } else {
+                throw new IllegalStateException(String
+                        .format("Invalid page rotation [%d]", pageRotation));
+            }
 
             /*
              * Virtual page width and height used for calculating the letterhead
-             * translate an rotate.
+             * translate and rotate.
              */
-            float virtualPageWidth;
-            float virtualPageHeight;
+            final float virtualDocPageWidth;
+            final float virtualDocPageHeight;
 
-            if (isPageRotated) {
-                /*
-                 * Since this is a landscape page in portrait orientation: we
-                 * swap height and width for calculation of the translate and
-                 * rotate of the letterhead.
-                 */
-                virtualPageWidth = docPageSize.getHeight();
-                virtualPageHeight = docPageSize.getWidth();
+            if (swapWidhtHeight) {
+                virtualDocPageWidth = rectDocPage.getHeight();
+                virtualDocPageHeight = rectDocPage.getWidth();
             } else {
-                virtualPageWidth = docPageSize.getWidth();
-                virtualPageHeight = docPageSize.getHeight();
-            }
-
-            boolean rotateLetterhead = false;
-
-            /*
-             * Rotate (back) to portrait for printing
-             */
-            if (isForPrinting()) {
-
-                rotateLetterhead =
-                        isPageRotated || (virtualPageHeight < virtualPageWidth);
-
-                if (rotateLetterhead) {
-
-                    int rotate;
-
-                    if (isPageRotated) {
-                        /*
-                         * We rotate back to its original.
-                         */
-                        rotate = 0;
-                    } else {
-                        rotate = 270;
-                    }
-
-                    PdfDictionary pageDict = this.readerWlk.getPageN(i);
-                    pageDict.put(PdfName.ROTATE, new PdfNumber(rotate));
-                }
+                virtualDocPageWidth = rectDocPage.getWidth();
+                virtualDocPageHeight = rectDocPage.getHeight();
             }
 
             /*
-             * Apply (rotated) letterhead
+             * Scale letterhead page and move it so it fits within the
+             * document's page (if document's page is cropped, this scale might
+             * not be small enough).
              */
-            if (isLetterhead) {
+            final float hScale =
+                    virtualDocPageWidth / rectLetterheadPageWlk.getWidth();
+            final float vScale =
+                    virtualDocPageHeight / rectLetterheadPageWlk.getHeight();
 
-                /*
-                 * If the letterhead document has more than one page, each page
-                 * of the letterhead is applied to the corresponding page of the
-                 * output document. If the output document has more pages than
-                 * the letterhead, then the final letterhead page is repeated
-                 * across these remaining pages of the output document.
-                 */
-                if (nLetterheadPage < nLetterheadPageMax) {
+            /*
+             * Proportional scaling: pick the smallest scaling factor.
+             */
+            final float sX;
 
-                    nLetterheadPage++;
-                    lhPageSize =
-                            this.letterheadReader.getPageSize(nLetterheadPage);
-
-                    /*
-                     * Create a PdfTemplate from the nth page of the letterhead
-                     * (PdfImportedPage is derived from PdfTemplate).
-                     */
-                    letterheadPage = this.targetStamper.getImportedPage(
-                            this.letterheadReader, nLetterheadPage);
-                }
-
-                /*
-                 * Scale letterhead page and move it so that it fits within the
-                 * document's page (if document's page is cropped, this scale
-                 * might not be small enough).
-                 */
-
-                float hScale = virtualPageWidth / lhPageSize.getWidth();
-
-                float vScale = virtualPageHeight / lhPageSize.getHeight();
-
-                /*
-                 * Proportional scaling: pick the smallest scaling factor.
-                 */
-                float sX = (hScale < vScale) ? hScale : vScale;
-                float sY = sX;
-
-                float tX =
-                        (float) ((virtualPageWidth - lhPageSize.getWidth() * sX)
-                                / 2.0);
-
-                float tY = (float) ((virtualPageHeight
-                        - lhPageSize.getHeight() * sY) / 2.0);
-
-                /*
-                 * Add letterhead page as a layer ...
-                 */
-                PdfContentByte contentByte = null;
-
-                if (myLetterheadJob.getForeground()) {
-                    /*
-                     * ... 'on top of' the page content.
-                     */
-                    contentByte = this.targetStamper.getOverContent(i);
-                } else {
-                    /*
-                     * ... 'underneath' the page content.
-                     */
-                    contentByte = this.targetStamper.getUnderContent(i);
-                }
-
-                if (rotateLetterhead) {
-
-                    /*
-                     * There is one serious caveat when you rotate an object:
-                     * the coordinate of the rotation pivot is (0, 0).
-                     *
-                     * If you rotate something, you have to watch out that it is
-                     * not rotated 'off' your page.
-                     *
-                     * You may have to perform a translation to keep the object
-                     * on the page. Of course you can combine translation (tX,
-                     * tY), scaling (sX, sY) rotation (angle) in one matrix:
-                     *
-                     * NOTE:
-                     *
-                     * (1) The (0,0) origin in a PDF document is LOWER LEFT.
-                     */
-
-                    // ----------------------------------------------------
-                    // ROTATE angle + SCALE + TRANSLATE
-                    // ----------------------------------------------------
-                    // a : sX * Math.cos(angle)
-                    // b : sY * Math.sin(angle)
-                    // c : -sX * Math.sin(angle)
-                    // d : sY * Math.cos(angle)
-                    // e : tX
-                    // f : tY
-                    // ----------------------------------------------------
-
-                    /*
-                     * NOTE: rotation is anti-clockwise, so an angle of 90
-                     * degrees will work out as -90 degrees.
-                     */
-
-                    //
-                    // Initial
-                    //
-                    // +---------------+
-                    // | . . . . . . . |
-                    // | . . . . . . . |
-                    // | . . . . . . . |
-                    // +---------+ . . |
-                    // | x x x x | . . |
-                    // | x x x x | . . |
-                    // | x x x x | . . |
-                    // | x x x x | . . |
-                    // | x x x x | . . |
-                    // | x x x x | . . |
-                    // | x x x x | . . |
-                    // 0,0-------+-----+
-                    //
-                    //
-                    // Rotation (90 degrees)
-                    //
-                    // . . . . . . . . +---------------+
-                    // . . . . . . . . | . . . . . . . |
-                    // . . . . . . . . | . . . . . . . |
-                    // . . . . . . . . | . . . . . . . |
-                    // . . . . . . . . | . . . . . . . |
-                    // . . . . . . . . | . . . . . . . |
-                    // . . . . . . . . | . . . . . . . |
-                    // +---------------+ . . . . . . . |
-                    // | x x x x x x x | . . . . . . . |
-                    // | x x x x x x x | . . . . . . . |
-                    // | x x x x x x x | . . . . . . . |
-                    // | x x x x x x x | . . . . . . . |
-                    // +-------------0,0---------------+
-                    //
-                    //
-                    // Translate:
-                    //
-                    // +---------------+
-                    // | . . . . . . . |
-                    // | . . . . . . . |
-                    // | . . . . . . . |
-                    // +---------------+
-                    // | x x x x x x x |
-                    // | x x x x x x x |
-                    // | x x x x x x x |
-                    // | x x x x x x x |
-                    // +---------------+
-                    // | . . . . . . . |
-                    // | . . . . . . . |
-                    // | . . . . . . . |
-                    // 0,0-------------+
-                    //
-
-                    final double angle = Math.PI * .5; // 90 degree
-
-                    float sin = (float) Math.sin(angle);
-                    float cos = (float) Math.cos(angle);
-
-                    contentByte.addTemplate(letterheadPage,
-                            //
-                            sX * cos,
-                            //
-                            sY * sin,
-                            //
-                            -sX * sin,
-                            //
-                            sY * cos,
-                            //
-                            lhPageSize.getHeight() * sY,
-                            //
-                            tX);
-
-                } else {
-                    // ----------------------------------------------------
-                    // SCALE + TRANSLATE
-                    // ----------------------------------------------------
-                    // a : sX (scale, in x-direction)
-                    // b : 0
-                    // c : 0
-                    // d : sY (scale, in y-direction)
-                    // e : tX (translate, moves e pixels in x-direction)
-                    // f : tY (translate, moves f pixels in y-direction)
-                    // ----------------------------------------------------
-                    contentByte.addTemplate(letterheadPage,
-                            //
-                            sX,
-                            //
-                            0,
-                            //
-                            0,
-                            //
-                            sY,
-                            //
-                            tX,
-                            //
-                            tY);
-                }
+            if (hScale < vScale) {
+                sX = hScale;
+            } else {
+                sX = vScale;
             }
 
+            final float sY = sX;
+
+            final float tX = (float) ((virtualDocPageWidth
+                    - rectLetterheadPageWlk.getWidth() * sX) / 2.0);
+
+            final float tY = (float) ((virtualDocPageHeight
+                    - rectLetterheadPageWlk.getHeight() * sY) / 2.0);
+
+            // ----------------------------------------------------
+            // SCALE + TRANSLATE
+            // ----------------------------------------------------
+            // a : sX (scale, in x-direction)
+            // b : 0
+            // c : 0
+            // d : sY (scale, in y-direction)
+            // e : tX (translate, moves e pixels in x-direction)
+            // f : tY (translate, moves f pixels in y-direction)
+            // ----------------------------------------------------
+            contentByte.addTemplate(letterheadPage, sX, 0, 0, sY, tX, tY);
         }
     }
 

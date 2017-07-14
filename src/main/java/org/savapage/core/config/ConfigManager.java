@@ -1,5 +1,5 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
  * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -100,6 +100,7 @@ import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.PrinterGroup;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.tools.DatabaseTypeEnum;
+import org.savapage.core.jpa.tools.DbConfig;
 import org.savapage.core.jpa.tools.DbUpgManager;
 import org.savapage.core.jpa.tools.DbVersionInfo;
 import org.savapage.core.print.proxy.ProxyPrintJobStatusMonitor;
@@ -107,6 +108,7 @@ import org.savapage.core.services.PrinterService;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.ServiceFactory;
+import org.savapage.core.services.helpers.SOfficeConfigProps;
 import org.savapage.core.users.ActiveDirectoryUserSource;
 import org.savapage.core.users.IExternalUserAuthenticator;
 import org.savapage.core.users.IUserSource;
@@ -144,10 +146,24 @@ public final class ConfigManager {
     private RunMode runMode = null;
 
     /**
+     * The relative path of the custom template files (relative to the
+     * {@code server} directory).
+     */
+    public static final String SERVER_REL_PATH_CUSTOM_TEMPLATE =
+            "custom/template";
+
+    /**
      * The relative path of the CUPS custom properties files (relative to the
      * {@code server} directory).
      */
     public static final String SERVER_REL_PATH_CUSTOM_CUPS = "custom/cups";
+
+    /**
+     * The relative path of the CUPS custom i18n XML files (relative to the
+     * {@code server} directory).
+     */
+    public static final String SERVER_REL_PATH_CUSTOM_CUPS_I18N =
+            SERVER_REL_PATH_CUSTOM_CUPS + "/i18n";
 
     /**
      * The relative path of the HTML injectable files (relative to the
@@ -457,12 +473,12 @@ public final class ConfigManager {
      * @return The {@link Locale}.
      */
     public static Locale getDefaultLocale() {
-        final String languageTag = ConfigManager.instance()
-                .getConfigValue(Key.SYS_DEFAULT_LOCALE).trim();
+        final String languageTag =
+                ConfigManager.instance().getConfigValue(Key.SYS_DEFAULT_LOCALE);
 
         if (StringUtils.isNotBlank(languageTag)) {
             Locale.Builder builder = new Locale.Builder();
-            return builder.setLanguageTag(languageTag).build();
+            return builder.setLanguageTag(languageTag.trim()).build();
         } else {
             return getServerHostLocale();
         }
@@ -666,6 +682,22 @@ public final class ConfigManager {
     }
 
     /**
+     * @return The SafePages home path.
+     */
+    public static String getSafePagesHomeDir() {
+
+        String homeSafePages =
+                theServerProps.getProperty(SERVER_PROP_APP_DIR_SAFEPAGES);
+
+        if (homeSafePages == null) {
+            homeSafePages = String.format("%s%c%s", getServerHome(),
+                    File.separatorChar, SERVER_REL_PATH_SAFEPAGES_DEFAULT);
+        }
+
+        return homeSafePages;
+    }
+
+    /**
      * Returns the location where the user's SafePages are stored.
      * <p>
      * The SafePages home of all users defaults to the
@@ -681,21 +713,12 @@ public final class ConfigManager {
      */
     public static String getUserHomeDir(final String user) {
 
-        String homeSafePages =
-                theServerProps.getProperty(SERVER_PROP_APP_DIR_SAFEPAGES);
-
-        if (homeSafePages == null) {
-            homeSafePages = String.format("%s%c%s", getServerHome(),
-                    File.separatorChar, SERVER_REL_PATH_SAFEPAGES_DEFAULT);
-        }
-
+        final String homeSafePages = getSafePagesHomeDir();
         final String md5hex = DigestUtils.md5Hex(user).toLowerCase();
 
-        final String userHomeDir = String.format("%s%c%c%c%c%c%s",
-                homeSafePages, File.separatorChar, md5hex.charAt(0),
-                File.separatorChar, md5hex.charAt(1), File.separatorChar, user);
-
-        return userHomeDir;
+        return String.format("%s%c%c%c%c%c%s", homeSafePages,
+                File.separatorChar, md5hex.charAt(0), File.separatorChar,
+                md5hex.charAt(1), File.separatorChar, user);
     }
 
     /**
@@ -843,11 +866,49 @@ public final class ConfigManager {
     }
 
     /**
+     * @return The directory with the custom template files.
+     */
+    public static File getServerCustomTemplateHome() {
+        return new File(String.format("%s%c%s", getServerHome(),
+                File.separatorChar, SERVER_REL_PATH_CUSTOM_TEMPLATE));
+    }
+
+    /**
+     * @return The directory with the custom Email template files.
+     */
+    public static File getServerCustomEmailTemplateHome() {
+
+        final File customHome = getServerCustomTemplateHome();
+
+        String subPath =
+                instance().getConfigValue(Key.CUSTOM_TEMPLATE_HOME_MAIL);
+
+        if (StringUtils.isBlank(subPath)) {
+            subPath = instance().getConfigValue(Key.CUSTOM_TEMPLATE_HOME);
+        }
+
+        if (StringUtils.isBlank(subPath)) {
+            return customHome;
+        }
+
+        return new File(String.format("%s%c%s", customHome.getAbsolutePath(),
+                File.separatorChar, subPath));
+    }
+
+    /**
      * @return The directory with the custom CUPS files.
      */
     public static File getServerCustomCupsHome() {
         return new File(String.format("%s/%s", getServerHome(),
                 SERVER_REL_PATH_CUSTOM_CUPS));
+    }
+
+    /**
+     * @return The directory with the custom CUPS i18n files.
+     */
+    public static File getServerCustomCupsI18nHome() {
+        return new File(String.format("%s/%s", getServerHome(),
+                SERVER_REL_PATH_CUSTOM_CUPS_I18N));
     }
 
     /**
@@ -1340,6 +1401,10 @@ public final class ConfigManager {
 
         //
         ServiceContext.getServiceFactory().start();
+
+        ServiceContext.getServiceFactory().getSOfficeService()
+                .start(new SOfficeConfigProps());
+
         ProxyPrintJobStatusMonitor.init();
     }
 
@@ -1526,13 +1591,15 @@ public final class ConfigManager {
     public void updateConfigKey(final Key key, final String value,
             final String actor) {
 
-        String val = value;
+        final String valUpdate;
 
-        if (isUserEncrypted(key)) {
-            val = CryptoUser.encrypt(value);
+        if (StringUtils.isNotBlank(value) && isUserEncrypted(key)) {
+            valUpdate = CryptoUser.encrypt(value);
+        } else {
+            valUpdate = value;
         }
 
-        myConfigProp.updateValue(key, val, actor);
+        myConfigProp.updateValue(key, valUpdate, actor);
     }
 
     /**
@@ -1690,7 +1757,7 @@ public final class ConfigManager {
      * @param key
      * @return
      */
-    private boolean isUserEncrypted(final IConfigProp.Key key) {
+    public boolean isUserEncrypted(final IConfigProp.Key key) {
         return key == Key.AUTH_LDAP_ADMIN_PASSWORD
                 || key == Key.CLIAPP_AUTH_ADMIN_PASSKEY
                 || key == Key.MAIL_SMTP_PASSWORD
@@ -1699,7 +1766,8 @@ public final class ConfigManager {
                 || key == Key.PRINT_IMAP_PASSWORD
                 || key == Key.SMARTSCHOOL_1_SOAP_PRINT_ENDPOINT_PASSWORD
                 || key == Key.SMARTSCHOOL_2_SOAP_PRINT_ENDPOINT_PASSWORD
-                || key == Key.WEB_LOGIN_TTP_API_KEY;
+                || key == Key.WEB_LOGIN_TTP_API_KEY
+                || key == Key.AUTH_MODE_YUBIKEY_API_SECRET_KEY;
     }
 
     /**
@@ -2225,7 +2293,11 @@ public final class ConfigManager {
     }
 
     /**
-     * Get the global application temp directory.
+     * Get the global temp directory for the SavaPage application.
+     * <p>
+     * Note: This does not affect temp directory settings for third party
+     * components.
+     * </p>
      *
      * @return The value of the server properties
      *         {@link #SERVER_PROP_APP_DIR_TMP} (when present) or the System
@@ -2358,44 +2430,32 @@ public final class ConfigManager {
             }
         }
 
-        config.put("javax.persistence.jdbc.driver",
+        config.put(DbConfig.JPA_JDBC_DRIVER,
                 "org.apache.derby.jdbc.EmbeddedDriver");
 
-        config.put("hibernate.dialect",
+        config.put(DbConfig.HIBERNATE_DIALECT,
                 "org.hibernate.dialect.DerbyTenSevenDialect");
     }
 
     /**
-     * Sets the Hibernate properties for PostgrSQL.
+     * Sets the Hibernate configuration for PostgrSQL.
      *
-     * @param properties
-     *            The properties.
+     * @param config
+     *            The configuration map.
      */
-    private void initHibernatePostgreSQL(final Map<String, Object> properties) {
-
-        properties.put("hibernate.dialect",
-                "org.hibernate.dialect.PostgreSQLDialect");
-
-        final String jdbcDriverDefault = "org.postgresql.Driver";
-        final String jdbcDriver;
+    private void initHibernatePostgreSQL(final Map<String, Object> config) {
 
         if (theServerProps != null) {
 
-            properties.put("javax.persistence.jdbc.user",
-                    theServerProps.getProperty(SERVER_PROP_DB_USER));
-            properties.put("javax.persistence.jdbc.password",
-                    getDbUserPassword());
-            properties.put("javax.persistence.jdbc.url",
-                    theServerProps.getProperty(SERVER_PROP_DB_URL));
-
-            jdbcDriver = theServerProps.getProperty(SERVER_PROP_DB_DRIVER,
-                    jdbcDriverDefault);
+            DbConfig.configHibernatePostgreSQL(config,
+                    theServerProps.getProperty(SERVER_PROP_DB_USER),
+                    getDbUserPassword(),
+                    theServerProps.getProperty(SERVER_PROP_DB_URL),
+                    theServerProps.getProperty(SERVER_PROP_DB_DRIVER));
 
         } else {
-            jdbcDriver = jdbcDriverDefault;
+            DbConfig.configHibernatePostgreSQL(config);
         }
-
-        properties.put("javax.persistence.jdbc.driver", jdbcDriver);
     }
 
     /**
@@ -2422,16 +2482,6 @@ public final class ConfigManager {
      */
     public void initHibernate(final DatabaseTypeEnum databaseTypeDefault) {
 
-        final Map<String, Object> configOverrides =
-                new HashMap<String, Object>();
-
-        /*
-         * The classname of a custom org.hibernate.connection.ConnectionProvider
-         * which provides JDBC connections to Hibernate. See Mantis #349.
-         */
-        configOverrides.put("hibernate.connection.provider_class",
-                "org.hibernate.connection.C3P0ConnectionProvider");
-
         /*
          * This is the place to override with MySQL or PostgreSQL driver/dialect
          */
@@ -2450,36 +2500,21 @@ public final class ConfigManager {
             useHibernateC3p0Parms = true;
         }
 
+        final Map<String, Object> configOverrides =
+                new HashMap<String, Object>();
+
+        /*
+         * The classname of a custom org.hibernate.connection.ConnectionProvider
+         * which provides JDBC connections to Hibernate. See Mantis #349.
+         */
+        configOverrides.put(DbConfig.HIBERNATE_CONNECTION_PROVIDER,
+                "org.hibernate.connection.C3P0ConnectionProvider");
+
         /*
          * Mantis #513: PostgreSQL: WebApp very slow.
          */
         if (useHibernateC3p0Parms) {
-            /*
-             * Minimum number of JDBC connections in the pool.
-             */
-            configOverrides.put("hibernate.c3p0.min_size", "5");
-            /*
-             * Maximum number of JDBC connections in the pool.
-             */
-            configOverrides.put("hibernate.c3p0.max_size", "400");
-
-            /*
-             * When an idle connection is removed from the pool (in second).
-             * Hibernate default: 0, never expire.
-             */
-            configOverrides.put("hibernate.c3p0.timeout", "600");
-
-            /*
-             * Number of prepared statements will be cached. Increase
-             * performance. Hibernate default: 0 , caching is disable.
-             */
-            configOverrides.put("hibernate.c3p0.max_statements", "50");
-
-            /*
-             * idle time in seconds before a connection is automatically
-             * validated. Hibernate default: 0.
-             */
-            configOverrides.put("hibernate.c3p0.idle_test_period", "120");
+            DbConfig.configHibernateC3p0(configOverrides);
         }
 
         //
@@ -2495,48 +2530,7 @@ public final class ConfigManager {
                     + "] is NOT supported");
         }
 
-        /*
-         * "The configuration for entity managers both inside an application
-         * server and in a standalone application reside in a persistence
-         * archive. A persistence archive is a JAR file which must define a
-         * persistence.xml file that resides in the META-INF folder."
-         *
-         * Use persistence.xml configuration. The map is a set of overrides that
-         * will take precedence over any properties defined in your
-         * persistence.xml file.
-         *
-         * See <persistence-unit name="savapage" ...> in
-         * resources/META-INF/persistence.xml
-         */
-        final String PERSISTENCE_UNIT_NAME = "savapage";
-
-        /*
-         * Since Mantis #348.
-         *
-         * Code below gives Hibernate warning HHH015016: deprecated
-         * javax.persistence.spi.PersistenceProvider (bug in Hibernate?).
-         */
-
-        // myEmf = Persistence.createEntityManagerFactory(PERSISTENCE_UNIT_NAME,
-        // configOverrides);
-
-        /*
-         * Since Mantis #348
-         */
-        final HibernatePersistenceProvider persistenceProvider =
-                new HibernatePersistenceProvider();
-
-        /*
-         * "An entity manager factory is typically create at application
-         * initialization time and closed at application end. It's creation is
-         * an expensive process. For those who are familiar with Hibernate, an
-         * entity manager factory is very much like a session factory. Actually,
-         * an entity manager factory is a wrapper on top of a session factory.
-         * Calls to the entityManagerFactory are thread safe."
-         */
-        this.myEmf = persistenceProvider.createEntityManagerFactory(
-                PERSISTENCE_UNIT_NAME, configOverrides);
-
+        this.myEmf = DbConfig.createEntityManagerFactory(configOverrides);
     }
 
     /**
@@ -2556,7 +2550,7 @@ public final class ConfigManager {
      *
      * @deprecated Use services from {@link ServiceFactory}.
      *
-     * @return
+     * @return The {@link EntityManager}.
      *
      */
     @Deprecated

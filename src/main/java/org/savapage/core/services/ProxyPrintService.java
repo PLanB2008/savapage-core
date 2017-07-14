@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -32,7 +32,10 @@ import java.util.Map;
 
 import javax.print.attribute.standard.MediaSizeName;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.savapage.core.config.IConfigProp;
+import org.savapage.core.dao.enums.ACLRoleEnum;
+import org.savapage.core.dao.enums.PrintModeEnum;
 import org.savapage.core.dto.IppMediaCostDto;
 import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.dto.ProxyPrinterCostDto;
@@ -43,10 +46,14 @@ import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.ipp.IppSyntaxException;
 import org.savapage.core.ipp.attribute.IppAttrGroup;
+import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.client.IppConnectException;
 import org.savapage.core.ipp.client.IppNotificationRecipient;
+import org.savapage.core.ipp.helpers.IppOptionMap;
 import org.savapage.core.ipp.operation.IppStatusCode;
 import org.savapage.core.jpa.Device;
+import org.savapage.core.jpa.DocLog;
+import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
@@ -59,6 +66,8 @@ import org.savapage.core.json.rpc.JsonRpcMethodError;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
 import org.savapage.core.json.rpc.impl.ParamsPrinterSnmp;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
+import org.savapage.core.pdf.PdfCreateInfo;
+import org.savapage.core.print.proxy.AbstractProxyPrintReq;
 import org.savapage.core.print.proxy.JsonProxyPrintJob;
 import org.savapage.core.print.proxy.JsonProxyPrinter;
 import org.savapage.core.print.proxy.JsonProxyPrinterOpt;
@@ -164,6 +173,18 @@ public interface ProxyPrintService {
     URL getCupsAdminUrl();
 
     /**
+     * @return The CUPS time (seconds from epoch) of "now" (this very moment).
+     */
+    int getCupsSystemTime();
+
+    /**
+     *
+     * @param cupsTime The CUPS time (seconds from epoch).
+     * @return The CUPS date.
+     */
+    Date getCupsDate(Integer cupsTime);
+
+    /**
      *
      * @return {@code true} When connected to CUPS.
      */
@@ -191,7 +212,9 @@ public interface ProxyPrintService {
     /**
      *
      * @param printerName
+     *            The printer name.
      * @param jobId
+     *            The job id.
      * @return {@code null} when NOT found.
      * @throws IppConnectException
      *             When a connection error occurs.
@@ -244,6 +267,21 @@ public interface ProxyPrintService {
             String printerName);
 
     /**
+     * Gets a user copy of IPP option for a printer from the printer cache.
+     *
+     * @param printerName
+     *            The unique name of the printer.
+     * @param ippKeyword
+     *            The IPP keyword. E.g.
+     *            {@link IppDictJobTemplateAttr#ATTR_OUTPUT_BIN}.
+     * @param locale
+     *            The {@link Locale} for the UI texts.
+     * @return The option choices, or {@code null} when no choices found.
+     */
+    JsonProxyPrinterOpt getPrinterOptUserCopy(String printerName,
+            String ippKeyword, Locale locale);
+
+    /**
      * Gets the IPP attributes of a printer.
      *
      * @param printerName
@@ -252,6 +290,7 @@ public interface ProxyPrintService {
      *            The {@link URI} of the IPP printer.
      * @return A list of {@link IppAttrGroup} instances.
      * @throws IppConnectException
+     *             When a connection error occurs.
      */
     List<IppAttrGroup> getIppPrinterAttr(String printerName, URI printerUri)
             throws IppConnectException;
@@ -283,8 +322,19 @@ public interface ProxyPrintService {
      * @param option
      *            The {@link JsonProxyPrinterOpt}.
      */
-    void localizePrinterOption(final Locale locale,
+    void localizePrinterOpt(final Locale locale,
             final JsonProxyPrinterOpt option);
+
+    /**
+     * Localizes an IPP option keyword.
+     *
+     * @param locale
+     *            The {@link Locale}.
+     * @param attrKeyword
+     *            The IPP option keyword.
+     * @return the localized UI keyword.
+     */
+    String localizePrinterOpt(final Locale locale, final String attrKeyword);
 
     /**
      * Localizes the texts in printer option choices.
@@ -298,6 +348,74 @@ public interface ProxyPrintService {
      */
     void localizePrinterOptChoices(Locale locale, String attrKeyword,
             List<JsonProxyPrinterOptChoice> choices);
+
+    /**
+     * Localizes the text in a printer option choice.
+     *
+     * @param locale
+     *            The {@link Locale}.
+     * @param attrKeyword
+     *            The IPP option keyword.
+     * @param choice
+     *            The {@link JsonProxyPrinterOptChoice} object.
+     */
+    void localizePrinterOptChoice(Locale locale, String attrKeyword,
+            JsonProxyPrinterOptChoice choice);
+
+    /**
+     * Localizes the text of a printer option value.
+     *
+     * @param locale
+     *            The {@link Locale}.
+     * @param attrKeyword
+     *            The IPP option keyword.
+     * @param value
+     *            The keyword value.
+     * @return The localized value.
+     */
+    String localizePrinterOptValue(Locale locale, String attrKeyword,
+            String value);
+
+    /**
+     * Composes a localized Job Ticket UI text from a selected combination of
+     * IPP options values.
+     *
+     * @param locale
+     *            The {@link Locale}.
+     * @param ippOptionKeys
+     *            The IPP options keys to the option map
+     * @param optionMap
+     *            The {@link IppOptionMap} with IPP key/values.
+     * @return {@code null} when no options keys found in the map.
+     */
+    String getJobTicketOptionsUiText(Locale locale, String[] ippOptionKeys,
+            IppOptionMap optionMap);
+
+    /**
+     * Composes a list with localized Job Ticket Custom Extension Option
+     * key/value UI texts from a map of IPP options values.
+     *
+     * @param locale
+     *            The {@link Locale}.
+     * @param optionMap
+     *            The {@link Map} with IPP key/values.
+     * @return {@code null} when no options keys found in the map.
+     */
+    List<Pair<String, String>> getJobTicketOptionsExtUiText(Locale locale,
+            Map<String, String> optionMap);
+
+    /**
+     * Same as {@link #getJobTicketOptionsExtUiText(Locale, Map)}, but returning
+     * HTML representation.
+     *
+     * @param locale
+     *            The {@link Locale}.
+     * @param optionMap
+     *            The {@link Map} with IPP key/values.
+     * @return {@code null} when no options keys found in the map.
+     */
+    String getJobTicketOptionsExtHtml(Locale locale,
+            Map<String, String> optionMap);
 
     /**
      * Gets the valid printers for a user on a terminal (sorted on alias).
@@ -319,9 +437,31 @@ public interface ProxyPrintService {
      *            The unique name of the requesting user.
      * @return The sorted {@link JsonPrinterList}.
      * @throws IppConnectException
+     *             When a connection error occurs.
      * @throws IppSyntaxException
+     *             When a syntax error.
      */
     JsonPrinterList getUserPrinterList(Device terminal, String userName)
+            throws IppConnectException, IppSyntaxException;
+
+    /**
+     * Checks if only Job Ticket printers are available for a user on a
+     * terminal.
+     *
+     * @param terminal
+     *            The {@link Device.DeviceTypeEnum#TERMINAL} definition of the
+     *            requesting client. Is {@code null} when NO definition is
+     *            available.
+     * @param userName
+     *            The unique name of the requesting user.
+     * @return {@code true} when only Job Ticket printers are available on
+     *         terminal for a user.
+     * @throws IppConnectException
+     *             When a connection error occurs.
+     * @throws IppSyntaxException
+     *             When a syntax error.
+     */
+    boolean areJobTicketPrintersOnly(Device terminal, String userName)
             throws IppConnectException, IppSyntaxException;
 
     /**
@@ -350,7 +490,9 @@ public interface ProxyPrintService {
      * Closes the service.
      *
      * @throws IppConnectException
+     *             When a connection error occurs.
      * @throws IppSyntaxException
+     *             When a syntax error.
      */
     void exit() throws IppConnectException, IppSyntaxException;
 
@@ -395,6 +537,11 @@ public interface ProxyPrintService {
      * @return {@code true} when available.
      */
     boolean isPrinterCacheAvailable();
+
+    /**
+     * @return {@code true} when at least one (1) Job Ticket Printer is present.
+     */
+    boolean isJobTicketPrinterPresent();
 
     /**
      * Synchronizes (updates) the PrintOut jobs with the CUPS job state (if the
@@ -455,15 +602,37 @@ public interface ProxyPrintService {
      *            The requesting {@link User}, which should be locked.
      * @param request
      *            The {@link ProxyPrintDocReq}.
-     * @param pdfFile
-     *            The PDF file to send to the printer.
+     * @param createInfo
+     *            The {@link PdfCreateInfo} with the PDF file to send to the
+     *            printer.
      * @throws IppConnectException
      *             When CUPS connection is broken.
      * @throws ProxyPrintException
      *             When a invariant is violated.
      */
-    void proxyPrintPdf(User lockedUser, ProxyPrintDocReq request, File pdfFile)
+    void proxyPrintPdf(User lockedUser, ProxyPrintDocReq request,
+            final PdfCreateInfo createInfo)
             throws IppConnectException, ProxyPrintException;
+
+    /**
+     * Sends a PDF file to a CUPS printer, and that is it. No database action is
+     * executed.
+     *
+     * @param request
+     *            The {@link AbstractProxyPrintReq}.
+     * @param jsonPrinter
+     *            The printer object.
+     * @param user
+     *            The requesting user.
+     * @param createInfo
+     *            The {@link PdfCreateInfo} with the file to print.
+     * @return The print job data.
+     * @throws IppConnectException
+     *             When IPP connection error.
+     */
+    JsonProxyPrintJob sendPdfToPrinter(AbstractProxyPrintReq request,
+            JsonProxyPrinter jsonPrinter, String user, PdfCreateInfo createInfo)
+            throws IppConnectException;
 
     /**
      * Prints one (1) copy of each job in a vanilla inbox job of the
@@ -521,8 +690,11 @@ public interface ProxyPrintService {
             throws ProxyPrintException;
 
     /**
-     * Print a Job Ticket.
+     * Prints a Job Ticket.
      *
+     * @param operator
+     *            The {@link User#getUserId()} with
+     *            {@link ACLRoleEnum#JOB_TICKET_OPERATOR}.
      * @param lockedUser
      *            The {@link User} who owns the Job Ticket, which should be
      *            locked.
@@ -533,15 +705,41 @@ public interface ProxyPrintService {
      * @param extPrinterManager
      *            The {@link ThirdPartyEnum} external print manager:
      *            {@code null} when native SavaPage.
-     * @return The number of printed pages.
+     * @return The committed {@link DocLog} instance related to the
+     *         {@link PrintOut}.
      * @throws IOException
      *             When IO error.
      * @throws IppConnectException
      *             When connection to CUPS fails.
      */
-    int proxyPrintJobTicket(User lockedUser, OutboxJobDto job,
-            File pdfFileToPrint, ThirdPartyEnum extPrinterManager)
+    DocLog proxyPrintJobTicket(String operator, User lockedUser,
+            OutboxJobDto job, File pdfFileToPrint,
+            ThirdPartyEnum extPrinterManager)
             throws IOException, IppConnectException;
+
+    /**
+     * Settles a Job Ticket without printing it.
+     *
+     * @param operator
+     *            The {@link User#getUserId()} with
+     *            {@link ACLRoleEnum#JOB_TICKET_OPERATOR}.
+     * @param lockedUser
+     *            The {@link User} who owns the Job Ticket, which should be
+     *            locked.
+     * @param job
+     *            The {@link OutboxJobDto} Job Ticket.
+     * @param pdfFileNotToPrint
+     *            The PDF file <b>not</b> to print.
+     * @param extPrinterManager
+     *            The {@link ThirdPartyEnum} external print manager:
+     *            {@code null} when native SavaPage.
+     * @return The number of printed pages.
+     * @throws IOException
+     *             When IO error.
+     */
+    int settleJobTicket(String operator, User lockedUser, OutboxJobDto job,
+            File pdfFileNotToPrint, ThirdPartyEnum extPrinterManager)
+            throws IOException;
 
     /**
      * Sends Print Job to the CUPS Printer, and updates {@link User},
@@ -573,7 +771,9 @@ public interface ProxyPrintService {
      *            used.
      *
      * @throws IppConnectException
+     *             When a connection error occurs.
      * @throws IppSyntaxException
+     *             When a syntax error.
      */
     void startSubscription(String requestingUserName)
             throws IppConnectException, IppSyntaxException;
@@ -586,7 +786,9 @@ public interface ProxyPrintService {
      *            The requesting user. If {@code null} the current CUPS user is
      *            used.
      * @throws IppConnectException
+     *             When a connection error occurs.
      * @throws IppSyntaxException
+     *             When a syntax error.
      */
     void stopSubscription(String requestingUserName)
             throws IppConnectException, IppSyntaxException;
@@ -773,4 +975,45 @@ public interface ProxyPrintService {
     AbstractJsonRpcMessage readSnmp(ParamsPrinterSnmp params)
             throws SnmpConnectException;
 
+    /**
+     * Cancels a print job.
+     *
+     * @param printOut
+     *            The {@link PrintOut} object.
+     * @return {@code true} when successfully cancelled.
+     * @throws IppConnectException
+     *             When an connection error occurs.
+     */
+    boolean cancelPrintJob(PrintOut printOut) throws IppConnectException;
+
+    /**
+     * Creates a {@link ProxyPrintDocReq} for an {@link OutboxJobDto}.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param job
+     *            The {@link OutboxJobDto}.
+     * @param printMode
+     *            The {@link PrintModeEnum}.
+     * @return The {@link ProxyPrintDocReq}.
+     */
+    ProxyPrintDocReq createProxyPrintDocReq(User user, OutboxJobDto job,
+            PrintModeEnum printMode);
+
+    /**
+     * Validates IPP choices according to the custom cost rules of the proxy
+     * printer. When valid, {@code null} is returned. Otherwise, a localized
+     * message is returned. When proxy printer does not have custom rules,
+     * {@code null} is returned.
+     *
+     * @param proxyPrinter
+     *            The proxy printer holding the custom rules.
+     * @param ippOptions
+     *            The IPP attribute key/choice pairs.
+     * @param locale
+     *            The locale for the UI message.
+     * @return The message string, or {@code null} when choices are valid.
+     */
+    String validateCustomCostRules(JsonProxyPrinter proxyPrinter,
+            Map<String, String> ippOptions, Locale locale);
 }

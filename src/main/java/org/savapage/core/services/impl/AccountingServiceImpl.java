@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -28,9 +28,14 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Currency;
 import java.util.Date;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map.Entry;
+import java.util.SortedMap;
+import java.util.TreeMap;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
@@ -60,6 +65,7 @@ import org.savapage.core.dto.PosDepositReceiptDto;
 import org.savapage.core.dto.SharedAccountDisplayInfoDto;
 import org.savapage.core.dto.UserAccountingDto;
 import org.savapage.core.dto.UserCreditTransferDto;
+import org.savapage.core.dto.UserGroupDto;
 import org.savapage.core.dto.UserPaymentGatewayDto;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
@@ -67,10 +73,12 @@ import org.savapage.core.jpa.AccountTrx;
 import org.savapage.core.jpa.AccountVoucher;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.PosPurchase;
+import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
 import org.savapage.core.jpa.UserGroup;
+import org.savapage.core.jpa.UserGroupAccount;
 import org.savapage.core.json.rpc.AbstractJsonRpcMethodResponse;
 import org.savapage.core.json.rpc.JsonRpcError.Code;
 import org.savapage.core.json.rpc.JsonRpcMethodError;
@@ -85,6 +93,7 @@ import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.AccountTrxInfo;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
+import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ProxyPrintCostParms;
 import org.savapage.core.util.BigDecimalUtil;
 import org.savapage.core.util.Messages;
@@ -645,9 +654,42 @@ public final class AccountingServiceImpl extends AbstractService
     }
 
     @Override
-    public void createAccountTrx(final Account account, final DocLog docLog,
-            final AccountTrxTypeEnum trxType) {
-        createAccountTrx(account, docLog, trxType, 1, 1, null);
+    public void createAccountTrx(final Account account,
+            final PrintOut printOut) {
+
+        final DocLog docLog = printOut.getDocOut().getDocLog();
+        final int weight = printOut.getNumberOfCopies().intValue();
+
+        createAccountTrx(account, docLog, AccountTrxTypeEnum.PRINT_OUT, weight,
+                weight, null);
+    }
+
+    @Override
+    public void chargeAccountTrxAmount(final AccountTrx trx,
+            final BigDecimal trxAmount, final DocLog trxDocLog) {
+
+        final Account account = trx.getAccount();
+
+        /*
+         * Update Account.
+         */
+        account.setBalance(account.getBalance().subtract(trxAmount));
+        accountDAO().update(account);
+
+        /*
+         * Update AccountTrx.
+         */
+        trx.setAmount(trxAmount.negate());
+        trx.setBalance(account.getBalance());
+
+        trx.setTransactedBy(ServiceContext.getActor());
+        trx.setTransactionDate(ServiceContext.getTransactionDate());
+
+        if (trxDocLog != null) {
+            trx.setDocLog(trxDocLog);
+        }
+
+        accountTrxDAO().update(trx);
     }
 
     @Override
@@ -689,6 +731,12 @@ public final class AccountingServiceImpl extends AbstractService
      * Creates an {@link AccountTrx} of {@link AccountTrx.AccountTrxTypeEnum},
      * updates the {@link Account} and adds the {@link AccountTrx} to the
      * {@link DocLog}.
+     * <p>
+     * Note: when {@link DocLog#getCostOriginal()} equals
+     * {@link BigDecimal#ZERO}, this is a so-called "shadow" transaction, whose
+     * amount is set after the transaction is fulfilled (e.g. when proxy
+     * printing is reported as completed).
+     * </p>
      *
      * @param account
      *            The {@link Account} to update.
@@ -697,10 +745,10 @@ public final class AccountingServiceImpl extends AbstractService
      * @param trxType
      *            The {@link AccountTrxTypeEnum} of the {@link AccountTrx}.
      * @param weightTotal
-     *            The total of all weights.
+     *            The total of all weights in the transaction set.
      * @param weight
-     *            The mathematical weight of the transaction in the context of a
-     *            transaction set.
+     *            The mathematical weight of the to be created transaction in
+     *            the context of a transaction set.
      * @param extDetails
      *            Free format details from external source.
      */
@@ -712,24 +760,37 @@ public final class AccountingServiceImpl extends AbstractService
         final Date trxDate = ServiceContext.getTransactionDate();
 
         /*
-         * Weighted amount.
+         * The total transaction amount.
          */
         BigDecimal trxAmount = docLog.getCostOriginal().negate();
 
-        if (weight != weightTotal) {
+        /*
+         * Amount is zero for a so-called "shadow" transaction. The zero amount
+         * is updated later on with the "real" value after the transaction is
+         * fulfilled (e.g. when proxy printing is completed).
+         */
+        final boolean isZeroAmount = trxAmount.equals(BigDecimal.ZERO);
+
+        /*
+         * The weighted amount for this account.
+         */
+        if (!isZeroAmount && weight != weightTotal) {
             trxAmount = calcWeightedAmount(trxAmount, weightTotal, weight,
                     ConfigManager.getFinancialDecimalsInDatabase());
         }
 
         /*
-         * Update account.
+         * Update account balance.
          */
-        account.setBalance(account.getBalance().add(trxAmount));
+        if (!isZeroAmount) {
 
-        account.setModifiedBy(actor);
-        account.setModifiedDate(trxDate);
+            account.setBalance(account.getBalance().add(trxAmount));
 
-        accountDAO().update(account);
+            account.setModifiedBy(actor);
+            account.setModifiedDate(trxDate);
+
+            accountDAO().update(account);
+        }
 
         /*
          * Create transaction
@@ -766,13 +827,13 @@ public final class AccountingServiceImpl extends AbstractService
     }
 
     /**
-     * Calculates the cost of a priont job.
+     * Calculates the media cost of a print job.
      * <p>
-     * The pageCostTwoSided is applied to pages that are print on both sides of
-     * a sheet. If a job has an odd number of pages, the pageCostTwoSided is not
-     * applied to the last page. For example, if a 3 page document is printed as
-     * duplex, the pageCostTwoSided is applied to the first 2 pages: the last
-     * page has pageCostOneSided.
+     * The pageCostTwoSided is applied to pages that are printed on both sides
+     * of a sheet. If a job has an odd number of pages, the pageCostTwoSided is
+     * not applied to the last page. For example, if a 3 page document is
+     * printed as duplex, the pageCostTwoSided is applied to the first 2 pages:
+     * the last page has pageCostOneSided.
      * </p>
      *
      * @param nPages
@@ -791,7 +852,7 @@ public final class AccountingServiceImpl extends AbstractService
      *            The discount percentage. 10% is passed as 0.10
      * @return The {@link BigDecimal}.
      */
-    public static BigDecimal calcPrintJobCost(final int nPages,
+    public static BigDecimal calcProxyPrintCostMedia(final int nPages,
             final int nPagesPerSide, final int nCopies, final boolean duplex,
             final BigDecimal pageCostOneSided,
             final BigDecimal pageCostTwoSided, final BigDecimal discountPerc) {
@@ -814,9 +875,15 @@ public final class AccountingServiceImpl extends AbstractService
             pagesOneSided = new BigDecimal(nSides);
         }
 
-        return pageCostOneSided.multiply(pagesOneSided).multiply(copies)
-                .add(pageCostTwoSided.multiply(pagesTwoSided).multiply(copies))
-                .multiply(BigDecimal.ONE.subtract(discountPerc));
+        BigDecimal cost =
+                pageCostOneSided.multiply(pagesOneSided).multiply(copies);
+
+        if (pageCostTwoSided != null) {
+            cost = cost.add(
+                    pageCostTwoSided.multiply(pagesTwoSided).multiply(copies));
+        }
+
+        return cost.multiply(BigDecimal.ONE.subtract(discountPerc));
     }
 
     /**
@@ -864,7 +931,7 @@ public final class AccountingServiceImpl extends AbstractService
     }
 
     @Override
-    public BigDecimal calcProxyPrintCost(final Printer printer,
+    public ProxyPrintCostDto calcProxyPrintCost(final Printer printer,
             final ProxyPrintCostParms costParms) {
 
         BigDecimal pageCostOneSided = BigDecimal.ZERO;
@@ -873,7 +940,13 @@ public final class AccountingServiceImpl extends AbstractService
         final IppMediaSourceCostDto mediaSourceCost =
                 costParms.getMediaSourceCost();
 
-        if (mediaSourceCost != null && !mediaSourceCost.isManualSource()) {
+        if (costParms.getCustomCostMediaSide() != null) {
+
+            pageCostOneSided = costParms.getCustomCostMediaSide();
+            pageCostTwoSided = costParms.getCustomCostMediaSideDuplex();
+
+        } else if (mediaSourceCost != null
+                && !mediaSourceCost.isManualSource()) {
 
             final MediaCostDto pageCost =
                     mediaSourceCost.getMedia().getPageCost();
@@ -928,10 +1001,129 @@ public final class AccountingServiceImpl extends AbstractService
             discountPerc = BigDecimal.ZERO;
         }
 
-        return calcPrintJobCost(costParms.getNumberOfPages(),
-                costParms.getPagesPerSide(), costParms.getNumberOfCopies(),
-                costParms.isDuplex(), pageCostOneSided, pageCostTwoSided,
-                discountPerc);
+        //
+        final List<Integer> logicalNumberOfPages;
+
+        if (costParms.getLogicalNumberOfPages() == null) {
+            logicalNumberOfPages = new ArrayList<>();
+            logicalNumberOfPages
+                    .add(Integer.valueOf(costParms.getNumberOfPages()));
+        } else {
+            logicalNumberOfPages = costParms.getLogicalNumberOfPages();
+        }
+
+        final ProxyPrintCostDto costResult = new ProxyPrintCostDto();
+
+        /*
+         * Media cost.
+         */
+        BigDecimal costMedia = BigDecimal.ZERO;
+
+        // The number of cover pages, that are not charged as media.
+        int coverPagesCounter = costParms.getCustomCoverPrintPages();
+
+        for (final Integer numberOfPages : logicalNumberOfPages) {
+
+            final Integer numberOfPagesCost;
+
+            if (coverPagesCounter > 0) {
+
+                int pagesForCost = numberOfPages.intValue();
+
+                if (pagesForCost < coverPagesCounter) {
+                    coverPagesCounter -= pagesForCost;
+                    numberOfPagesCost = null;
+                } else {
+                    pagesForCost -= coverPagesCounter;
+                    numberOfPagesCost = Integer.valueOf(pagesForCost);
+                    coverPagesCounter = 0;
+                }
+
+            } else {
+                numberOfPagesCost = numberOfPages;
+            }
+
+            if (numberOfPagesCost != null) {
+                costMedia = costMedia.add(calcProxyPrintCostMedia(
+                        numberOfPagesCost, costParms.getPagesPerSide(),
+                        costParms.getNumberOfCopies(), costParms.isDuplex(),
+                        pageCostOneSided, pageCostTwoSided, discountPerc));
+            }
+        }
+
+        costResult.setCostMedia(costMedia);
+
+        /*
+         * Copy cost.
+         */
+        if (costParms.getCustomCostCopy() != null) {
+            costResult.setCostCopy(costParms.getCustomCostCopy().multiply(
+                    BigDecimal.valueOf(costParms.getNumberOfCopies())));
+        }
+
+        /*
+         * Cover cost.
+         */
+        final BigDecimal costCover = costParms.getCustomCostCoverPrint();
+
+        if (costCover != null) {
+
+            BigDecimal costCopy = costResult.getCostCopy();
+
+            if (costCopy == null) {
+                costCopy = costCover;
+            } else {
+                costCopy = costCopy.add(costCover);
+            }
+
+            costResult.setCostCopy(costCopy);
+        }
+
+        return costResult;
+    }
+
+    @Override
+    public ProxyPrintCostDto calcProxyPrintCost(final Locale locale,
+            final String currencySymbol, final User user, final Printer printer,
+            final ProxyPrintCostParms costParms,
+            final ProxyPrintJobChunkInfo jobChunkInfo)
+            throws ProxyPrintException {
+
+        BigDecimal totalCostMedia = BigDecimal.ZERO;
+        BigDecimal totalCostCopy = BigDecimal.ZERO;
+
+        /*
+         * Traverse the chunks and calculate.
+         */
+        for (final ProxyPrintJobChunk chunk : jobChunkInfo.getChunks()) {
+
+            costParms.setNumberOfPages(chunk.getNumberOfPages());
+            costParms.setLogicalNumberOfPages(chunk.getLogicalJobPages());
+            costParms.setMediaSourceCost(chunk.getAssignedMediaSource());
+
+            costParms.setIppMediaOption(
+                    chunk.getAssignedMedia().getIppKeyword());
+
+            costParms.calcCustomCost();
+
+            final ProxyPrintCostDto chunkCostResult =
+                    this.calcProxyPrintCost(printer, costParms);
+
+            chunk.setCostResult(chunkCostResult);
+
+            totalCostCopy = totalCostCopy.add(chunkCostResult.getCostCopy());
+            totalCostMedia = totalCostMedia.add(chunkCostResult.getCostMedia());
+        }
+
+        final ProxyPrintCostDto costResult = new ProxyPrintCostDto();
+
+        costResult.setCostCopy(totalCostCopy);
+        costResult.setCostMedia(totalCostMedia);
+
+        validateProxyPrintUserCost(user, costResult.getCostTotal(), locale,
+                currencySymbol);
+
+        return costResult;
     }
 
     /**
@@ -1020,38 +1212,6 @@ public final class AccountingServiceImpl extends AbstractService
     }
 
     @Override
-    public BigDecimal calcProxyPrintCost(final Locale locale,
-            final String currencySymbol, final User user, final Printer printer,
-            final ProxyPrintCostParms costParms,
-            final ProxyPrintJobChunkInfo jobChunkInfo)
-            throws ProxyPrintException {
-
-        BigDecimal totalCost = BigDecimal.ZERO;
-
-        /*
-         * Traverse the chunks and calculate.
-         */
-        for (final ProxyPrintJobChunk chunk : jobChunkInfo.getChunks()) {
-
-            costParms.setNumberOfPages(chunk.getNumberOfPages());
-            costParms.setIppMediaOption(
-                    chunk.getAssignedMedia().getIppKeyword());
-            costParms.setMediaSourceCost(chunk.getAssignedMediaSource());
-
-            final BigDecimal chunkCost =
-                    this.calcProxyPrintCost(printer, costParms);
-
-            chunk.setCost(chunkCost);
-
-            totalCost = totalCost.add(chunkCost);
-        }
-
-        validateProxyPrintUserCost(user, totalCost, locale, currencySymbol);
-
-        return totalCost;
-    }
-
-    @Override
     public String getFormattedUserBalance(final User user, final Locale locale,
             final String currencySymbol) {
 
@@ -1078,7 +1238,6 @@ public final class AccountingServiceImpl extends AbstractService
         return formatUserBalance(
                 getActiveUserAccount(userId, AccountTypeEnum.USER), locale,
                 currencySymbol);
-
     }
 
     /**
@@ -1087,8 +1246,10 @@ public final class AccountingServiceImpl extends AbstractService
      * @param userAccount
      *            The {@link UserAccount}.
      * @param locale
+     *            The {@link Locale}.
      * @param currencySymbol
-     * @return
+     *            The currency symbol.
+     * @return The formatted balance.
      */
     private String formatUserBalance(final UserAccount userAccount,
             final Locale locale, final String currencySymbol) {
@@ -1272,12 +1433,30 @@ public final class AccountingServiceImpl extends AbstractService
 
         dto.setNotes(account.getNotes());
         dto.setDeleted(account.getDeleted());
+        dto.setDisabled(account.getDisabled());
+
+        /*
+         * User Group Access
+         */
+        final ArrayList<UserGroupDto> userGroupsDto = new ArrayList<>();
+        dto.setUserGroupAccess(userGroupsDto);
+
+        if (account.getMemberGroups() != null) {
+
+            for (final UserGroupAccount group : account.getMemberGroups()) {
+
+                final UserGroupDto groupDto = new UserGroupDto();
+                groupDto.setGroupName(group.getUserGroup().getGroupName());
+                userGroupsDto.add(groupDto);
+            }
+        }
 
         return dto;
     }
 
     @Override
     public AbstractJsonRpcMethodResponse
+
             lazyUpdateSharedAccount(final SharedAccountDisplayInfoDto dto) {
 
         /*
@@ -1398,6 +1577,7 @@ public final class AccountingServiceImpl extends AbstractService
         account.setParent(parent);
         account.setNotes(dto.getNotes());
         account.setDeleted(dto.getDeleted());
+        account.setDisabled(BooleanUtils.isTrue(dto.getDisabled()));
 
         final Locale dtoLocale;
 
@@ -1418,6 +1598,7 @@ public final class AccountingServiceImpl extends AbstractService
             return createErrorMsg("msg-amount-error", balance);
         }
 
+        //
         if (newAccount) {
             account.setBalance(balanceNew);
             accountDAO().create(account);
@@ -1426,7 +1607,179 @@ public final class AccountingServiceImpl extends AbstractService
             accountDAO().update(account);
         }
 
+        /*
+         * UserGroup access.
+         */
+        final List<UserGroupDto> userGroupList = dto.getUserGroupAccess();
+
+        if (userGroupList != null) {
+
+            JsonRpcMethodError error =
+                    setUserGroupAccess(account, userGroupList);
+
+            if (error != null) {
+                return error;
+            }
+        }
+
         return JsonRpcMethodResult.createOkResult();
+    }
+
+    /**
+     * Sets {@link UserGroup} access at an Account (creates new
+     * {@link UserGroupAccount} objects and removes obsolete ones).
+     *
+     * @param account
+     *            The account.
+     * @param userGroupList
+     *            The access list to set.
+     * @return {@code null} when no error.
+     */
+    private JsonRpcMethodError setUserGroupAccess(final Account account,
+            final List<UserGroupDto> userGroupList) {
+        /*
+         * Create sorted lists for balanced line.
+         */
+        final SortedMap<String, UserGroupDto> sortedMemberGroupsDto =
+                new TreeMap<>();
+
+        for (final UserGroupDto dto : userGroupList) {
+            sortedMemberGroupsDto.put(dto.getGroupName().trim(), dto);
+        }
+
+        // Get (lazy initialize) the current member groups list.
+        List<UserGroupAccount> memberGroups = account.getMemberGroups();
+
+        if (memberGroups == null) {
+            memberGroups = new ArrayList<>();
+            account.setMemberGroups(memberGroups);
+        }
+
+        // Sorted map of current UserGroup members.
+        final SortedMap<String, UserGroupAccount> sortedMemberGroups =
+                new TreeMap<>();
+
+        for (final UserGroupAccount userGroupAccount : memberGroups) {
+            sortedMemberGroups.put(
+                    userGroupAccount.getUserGroup().getGroupName(),
+                    userGroupAccount);
+        }
+        /*
+         * Balanced line.
+         */
+        final Iterator<Entry<String, UserGroupAccount>> iterMemberGroups =
+                sortedMemberGroups.entrySet().iterator();
+
+        final Iterator<Entry<String, UserGroupDto>> iterMemberGroupsDto =
+                sortedMemberGroupsDto.entrySet().iterator();
+
+        boolean isUpdated = false;
+
+        UserGroupDto userGroupDtoWlk = null;
+        UserGroupAccount userGroupAccountWlk = null;
+
+        if (iterMemberGroups.hasNext()) {
+            userGroupAccountWlk = iterMemberGroups.next().getValue();
+        }
+
+        if (iterMemberGroupsDto.hasNext()) {
+            userGroupDtoWlk = iterMemberGroupsDto.next().getValue();
+        }
+
+        // Balanced line: process.
+        while (userGroupAccountWlk != null || userGroupDtoWlk != null) {
+
+            boolean readNextUserGroupAccount = false;
+            boolean readNextUserGroupDto = false;
+
+            String groupNameToAdd = null;
+
+            if (userGroupDtoWlk != null && userGroupAccountWlk != null) {
+
+                final String keyUserGroup =
+                        userGroupAccountWlk.getUserGroup().getGroupName();
+
+                final String keyDto = userGroupDtoWlk.getGroupName();
+
+                final int compare = keyUserGroup.compareTo(keyDto);
+
+                if (compare < 0) {
+                    // keyUserGroup < keyDto : Remove UserGroupAccount.
+                    userGroupAccountDAO().delete(userGroupAccountWlk);
+                    memberGroups.remove(userGroupAccountWlk);
+                    isUpdated = true;
+                    readNextUserGroupAccount = true;
+
+                } else if (compare > 0) {
+                    // keyUserGroup > keyDto : Add UserGroup from dto
+                    groupNameToAdd = keyDto;
+                    readNextUserGroupDto = true;
+
+                } else {
+                    // keyUserGroup == keyDto : no update.
+                    readNextUserGroupDto = true;
+                    readNextUserGroupAccount = true;
+                }
+
+            } else if (userGroupDtoWlk != null) {
+                // Add UserGroupAccount.
+                groupNameToAdd = userGroupDtoWlk.getGroupName();
+                readNextUserGroupDto = true;
+
+            } else {
+                // Remove UserGroupAccount.
+                userGroupAccountDAO().delete(userGroupAccountWlk);
+                memberGroups.remove(userGroupAccountWlk);
+                isUpdated = true;
+
+                readNextUserGroupAccount = true;
+            }
+            //
+            if (groupNameToAdd != null) {
+                final UserGroupAccount userGroupAccount =
+                        new UserGroupAccount();
+
+                final UserGroup userGroup =
+                        userGroupDAO().findByName(groupNameToAdd);
+
+                if (userGroup == null) {
+                    return createError("msg-user-group-name-unknown",
+                            groupNameToAdd);
+                }
+
+                userGroupAccount.setAccount(account);
+                userGroupAccount.setUserGroup(userGroup);
+
+                userGroupAccount.setCreatedBy(ServiceContext.getActor());
+                userGroupAccount
+                        .setCreatedDate(ServiceContext.getTransactionDate());
+
+                userGroupAccountDAO().create(userGroupAccount);
+                memberGroups.add(userGroupAccount);
+
+                isUpdated = true;
+            }
+            /*
+             * Next read(s).
+             */
+            if (readNextUserGroupAccount) {
+                userGroupAccountWlk = null;
+                if (iterMemberGroups.hasNext()) {
+                    userGroupAccountWlk = iterMemberGroups.next().getValue();
+                }
+            }
+            if (readNextUserGroupDto) {
+                userGroupDtoWlk = null;
+                if (iterMemberGroupsDto.hasNext()) {
+                    userGroupDtoWlk = iterMemberGroupsDto.next().getValue();
+                }
+            }
+        } // end-while
+
+        if (isUpdated) {
+            accountDAO().update(account);
+        }
+        return null;
     }
 
     @Override
@@ -2142,15 +2495,13 @@ public final class AccountingServiceImpl extends AbstractService
             if (minimalTransfer != null
                     && transferAmount.compareTo(minimalTransfer) < 0) {
 
-                return JsonRpcMethodError
-                        .createBasicError(Code.INVALID_PARAMS,
-                                localize("msg-amount-must-be-gt-eq",
-                                        BigDecimalUtil.localize(minimalTransfer,
-                                                userBalanceDecimals,
-                                                ServiceContext.getLocale(),
-                                                ServiceContext
-                                                        .getAppCurrencySymbol(),
-                                                true)));
+                return JsonRpcMethodError.createBasicError(Code.INVALID_PARAMS,
+                        localize("msg-amount-must-be-gt-eq",
+                                BigDecimalUtil.localize(minimalTransfer,
+                                        userBalanceDecimals,
+                                        ServiceContext.getLocale(),
+                                        ServiceContext.getAppCurrencySymbol(),
+                                        true)));
             }
 
             final BigDecimal maximalTransfer =
@@ -2160,15 +2511,13 @@ public final class AccountingServiceImpl extends AbstractService
             if (maximalTransfer != null
                     && transferAmount.compareTo(maximalTransfer) > 0) {
 
-                return JsonRpcMethodError
-                        .createBasicError(Code.INVALID_PARAMS,
-                                localize("msg-amount-must-be-lt-eq",
-                                        BigDecimalUtil.localize(maximalTransfer,
-                                                userBalanceDecimals,
-                                                ServiceContext.getLocale(),
-                                                ServiceContext
-                                                        .getAppCurrencySymbol(),
-                                                true)));
+                return JsonRpcMethodError.createBasicError(Code.INVALID_PARAMS,
+                        localize("msg-amount-must-be-lt-eq",
+                                BigDecimalUtil.localize(maximalTransfer,
+                                        userBalanceDecimals,
+                                        ServiceContext.getLocale(),
+                                        ServiceContext.getAppCurrencySymbol(),
+                                        true)));
             }
         } catch (ParseException e) {
             throw new SpException(e.getMessage(), e);

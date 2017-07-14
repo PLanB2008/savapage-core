@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,14 +14,13 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.services;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -43,13 +42,14 @@ import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.PrinterAttr;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAttr;
+import org.savapage.core.pdf.PdfCreateInfo;
 import org.savapage.core.print.proxy.ProxyPrintJobStatusMonitor;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public interface DocLogService {
@@ -103,6 +103,32 @@ public interface DocLogService {
      *            Information about the account transactions to be created.
      */
     void logDocOut(User lockedUser, DocOut docOut,
+            AccountTrxInfoSet accountTrxInfoSet);
+
+    /**
+     * Logs the {@link DocOut} container with the {@link PrintOut} object, WITH
+     * accounting info.
+     * <p>
+     * <b>IMPORTANT</b>: This method has it <u>own transaction scopes</u>. Any
+     * open transaction is used: the end-result is a closed transaction.
+     * <ul>
+     * <li>The {@link DocLog} container is persisted in the database.</li>
+     * <li>Document statistics are updated in the database for
+     * {@link ConfigProperty} (global system), {@link User}, {@link UserAttr},
+     * {@link Printer} and {@link PrinterAttr}.</li>
+     * <li>{@link AccountTrx} objects are created when costs are GT zero.</li>
+     * </ul>
+     * </p>
+     *
+     * @param lockedUser
+     *            The {@link User} instance, which could be locked by the
+     *            caller. If not, the User wil be locked ad-hoc.
+     * @param printOut
+     *            The {@link PrintOut} instance with the {@link DocOut} object.
+     * @param accountTrxInfoSet
+     *            Information about the account transactions to be created.
+     */
+    void settlePrintOut(User lockedUser, PrintOut printOut,
             AccountTrxInfoSet accountTrxInfoSet);
 
     /**
@@ -164,7 +190,7 @@ public interface DocLogService {
 
     /**
      * Gets the input {@link DocLog} from an External Supplier with a specific
-     * {@link ExternalSupplierStatusEnum}.
+     * {@link ExternalSupplierStatusEnum} and ID.
      *
      * @param supplier
      *            The supplier.
@@ -195,8 +221,8 @@ public interface DocLogService {
      * @param docLogCollect
      *            Collects data for the DocOut object using the generated PDF
      *            and the uuid page counts.
-     * @param pdfFile
-     *            The PDF output file.
+     * @param createInfo
+     *            The {@link PdfCreateInfo}.
      * @param uuidPageCount
      *            A {@link Map} with {@link DocLog} UUID keys of {@link DocIn}
      *            documents, with number of pages as value. Note:
@@ -204,8 +230,22 @@ public interface DocLogService {
      * @throws IOException
      *             When error reading the pdfFile (file size).
      */
-    void collectData4DocOut(User user, DocLog docLogCollect, final File pdfFile,
+    void collectData4DocOut(User user, DocLog docLogCollect,
+            PdfCreateInfo createInfo,
             LinkedHashMap<String, Integer> uuidPageCount) throws IOException;
+
+    /**
+     * Collects data for the DocOut object of a Copy Job Ticket.
+     *
+     * @param user
+     *            The {@link User} to collect the data for.
+     * @param docLogCollect
+     *            Collects data for the DocOut object.
+     * @param numberOfPages
+     *            The number of pages of the orginal document.
+     */
+    void collectData4DocOutCopyJob(final User user, final DocLog docLogCollect,
+            final int numberOfPages);
 
     /**
      *

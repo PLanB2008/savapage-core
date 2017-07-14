@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -26,6 +26,9 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Date;
 
+import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
+
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
@@ -35,8 +38,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  *
- * @author Datraverse B.V.
- *
+ * @author Rijk Ravestein
  */
 @JsonInclude(Include.NON_NULL)
 public final class InboxInfoDto {
@@ -44,16 +46,36 @@ public final class InboxInfoDto {
     /**
      *
      */
-    public static class InboxJob {
+    public final static class InboxJob {
 
         private String file;
         private Long createdTime;
         private String title;
         private Integer pages;
-        private String rotate;
+
         private Boolean drm;
         private String media;
 
+        /**
+         * {@code true} if the PDF mediabox orientation of the PDF inbox
+         * document is landscape.
+         */
+        private Boolean landscape;
+
+        /**
+         * The PDF rotation the PDF inbox document.
+         */
+        private Integer rotation;
+
+        /**
+         * The rotation on the PDF inbox document set by the User.
+         */
+        private String rotate;
+
+        /**
+         *
+         * @return the base file name of the PDF document.
+         */
         public String getFile() {
             return file;
         }
@@ -76,14 +98,6 @@ public final class InboxInfoDto {
 
         public void setTitle(String title) {
             this.title = title;
-        }
-
-        public String getRotate() {
-            return rotate;
-        }
-
-        public void setRotate(String rotate) {
-            this.rotate = rotate;
         }
 
         public Boolean getDrm() {
@@ -131,6 +145,104 @@ public final class InboxInfoDto {
             this.media = media;
         }
 
+        /**
+         *
+         * @return {@code true} if the PDF mediabox orientation of the PDF inbox
+         *         document is landscape.
+         */
+        public Boolean getLandscape() {
+            return landscape;
+        }
+
+        /**
+         *
+         * @param landscape
+         *            {@code true} if the PDF mediabox orientation of the PDF
+         *            inbox document is landscape.
+         */
+        public void setLandscape(final Boolean landscape) {
+            this.landscape = landscape;
+        }
+
+        /**
+         *
+         * @return The PDF rotation the PDF inbox document.
+         */
+        public Integer getRotation() {
+            return rotation;
+        }
+
+        /**
+         *
+         * @param rotation
+         *            The PDF rotation the PDF inbox document.
+         */
+        public void setRotation(Integer rotation) {
+            this.rotation = rotation;
+        }
+
+        /**
+         *
+         * @return The rotation on the PDF inbox document set by the User.
+         */
+        public String getRotate() {
+            return rotate;
+        }
+
+        /**
+         *
+         * @param rotate
+         *            The rotation on the PDF inbox document set by the User.
+         */
+        public void setRotate(final String rotate) {
+            this.rotate = rotate;
+        }
+
+        /**
+         *
+         * @return {@code true} when job must be shown in landscape orientation.
+         */
+        @JsonIgnore
+        public boolean showLandscape() {
+
+            final boolean showLandscape;
+
+            if (this.getLandscape() == null) {
+                showLandscape = false;
+            } else {
+                final boolean isRotate = !StringUtils.isBlank(this.getRotate())
+                        && !this.getRotate().equals("0");
+                if (this.getLandscape().booleanValue()) {
+                    showLandscape = !isRotate;
+                } else {
+                    showLandscape = isRotate;
+                }
+            }
+            return showLandscape;
+        }
+
+        /**
+         *
+         * @return The {@link PdfOrientationInfo} of this inbox job.
+         */
+        @JsonIgnore
+        public PdfOrientationInfo createOrientationInfo() {
+            final PdfOrientationInfo pdfOrientation = new PdfOrientationInfo();
+            pdfOrientation
+                    .setLandscape(BooleanUtils.isTrue(this.getLandscape()));
+
+            pdfOrientation.setRotation(this.getRotation());
+
+            final Integer rotateWrk;
+            if (this.getRotate() == null) {
+                rotateWrk = Integer.valueOf(0);
+            } else {
+                rotateWrk = Integer.parseInt(this.getRotate());
+            }
+            pdfOrientation.setRotate(rotateWrk);
+
+            return pdfOrientation;
+        }
     }
 
     /**
@@ -235,6 +347,39 @@ public final class InboxInfoDto {
      */
     public void setLastPreviewTime(Long lastPreviewTime) {
         this.lastPreviewTime = lastPreviewTime;
+    }
+
+    /**
+     *
+     * @return {@code true} when one of the job pages has landscape orientation.
+     */
+    @JsonIgnore
+    public boolean hasLandscape() {
+        for (final InboxJobRange jobRange : this.getPages()) {
+            final int iJob = jobRange.getJob().intValue();
+            final InboxJob inboxJob = this.getJobs().get(iJob);
+            if (inboxJob.showLandscape()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     *
+     * @return The {@link PdfOrientationInfo} of the first page encountered.
+     */
+    @JsonIgnore
+    public PdfOrientationInfo getFirstPdfOrientation() {
+
+        for (final InboxJobRange jobRange : this.getPages()) {
+
+            final int iJob = jobRange.getJob().intValue();
+            final InboxJob inboxJob = this.getJobs().get(iJob);
+
+            return inboxJob.createOrientationInfo();
+        }
+        return null;
     }
 
     /**

@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,19 +14,23 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.dto;
 
+import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
+import org.savapage.core.print.proxy.JsonProxyPrinterOpt;
+import org.savapage.core.print.proxy.JsonProxyPrinterOptChoice;
+
 /**
  *
  * @author Rijk Ravestein
  *
  */
-public class RedirectPrinterDto extends AbstractDto {
+public final class RedirectPrinterDto extends AbstractDto {
 
     /**
      * The database key of the printer.
@@ -43,11 +47,62 @@ public class RedirectPrinterDto extends AbstractDto {
      */
     private boolean preferred;
 
+    /**
+     *
+     */
+    private String deviceUri;
+
+    /**
+     * The localized media-type choice. {@code null} when no media-type chosen.
+     */
+    private JsonProxyPrinterOptChoice mediaTypeOptChoice;
+
+    /**
+     * The {@link IppDictJobTemplateAttr#ATTR_MEDIA_SOURCE} option of the
+     * printer.
+     */
+    private JsonProxyPrinterOpt mediaSourceOpt;
+
+    /**
+     * The default media-source choice. When {@code null}, no default is
+     * available.
+     */
+    private JsonProxyPrinterOptChoice mediaSourceOptChoice;
+
+    /**
+     * The {@link IppDictJobTemplateAttr#ATTR_OUTPUT_BIN} option of the printer.
+     * {@code null} when not present.
+     */
+    private JsonProxyPrinterOpt outputBinOpt;
+
+    /**
+     * The default output-bin choice. When {@code null}, no default is
+     * available.
+     */
+    private JsonProxyPrinterOptChoice outputBinOptChoice;
+
+    /**
+     * The
+     * {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET}
+     * option of the printer. {@code null} when not present.
+     */
+    private JsonProxyPrinterOpt jogOffsetOpt;
+
+    /**
+     * The default jog-offset choice. When {@code null}, no default is
+     * available.
+     */
+    private JsonProxyPrinterOptChoice jogOffsetOptChoice;
+
+    /**
+     *
+     * @return
+     */
     public Long getId() {
         return id;
     }
 
-    public void setId(Long id) {
+    public void setId(final Long id) {
         this.id = id;
     }
 
@@ -55,7 +110,7 @@ public class RedirectPrinterDto extends AbstractDto {
         return name;
     }
 
-    public void setName(String name) {
+    public void setName(final String name) {
         this.name = name;
     }
 
@@ -63,8 +118,140 @@ public class RedirectPrinterDto extends AbstractDto {
         return preferred;
     }
 
-    public void setPreferred(boolean preferred) {
+    public void setPreferred(final boolean preferred) {
         this.preferred = preferred;
+    }
+
+    public String getDeviceUri() {
+        return deviceUri;
+    }
+
+    public void setDeviceUri(final String deviceUri) {
+        this.deviceUri = deviceUri;
+    }
+
+    /**
+     * @return The localized media-type choice. {@code null} when no media-type
+     *         chosen.
+     */
+    public JsonProxyPrinterOptChoice getMediaTypeOptChoice() {
+        return mediaTypeOptChoice;
+    }
+
+    /**
+     * @param optChoice
+     *            The localized media-type choice. {@code null} when no
+     *            media-type chosen.
+     */
+    public void
+            setMediaTypeOptChoice(final JsonProxyPrinterOptChoice optChoice) {
+        this.mediaTypeOptChoice = optChoice;
+    }
+
+    /**
+     * @return The {@link IppDictJobTemplateAttr#ATTR_MEDIA_SOURCE} option.
+     */
+    public JsonProxyPrinterOpt getMediaSourceOpt() {
+        return mediaSourceOpt;
+    }
+
+    /**
+     * @param mediaSource
+     *            The {@link IppDictJobTemplateAttr#ATTR_MEDIA_SOURCE} option.
+     */
+    public void setMediaSourceOpt(final JsonProxyPrinterOpt mediaSource) {
+        this.mediaSourceOpt = mediaSource;
+    }
+
+    /**
+     * @return The default media-source choice. When {@code null}, no default is
+     *         available.
+     */
+    public JsonProxyPrinterOptChoice getMediaSourceOptChoice() {
+        return mediaSourceOptChoice;
+    }
+
+    /**
+     * @param mediaSourceOptChoice
+     *            The default media-source choice. When {@code null}, no default
+     *            is available.
+     */
+    public void setMediaSourceOptChoice(
+            JsonProxyPrinterOptChoice mediaSourceOptChoice) {
+        this.mediaSourceOptChoice = mediaSourceOptChoice;
+    }
+
+    /**
+     * @return The {@link IppDictJobTemplateAttr#ATTR_OUTPUT_BIN} option of the
+     *         printer. {@code null} when not present.
+     */
+    public JsonProxyPrinterOpt getOutputBinOpt() {
+        return outputBinOpt;
+    }
+
+    /**
+     * @param outputBinOpt
+     *            The {@link IppDictJobTemplateAttr#ATTR_OUTPUT_BIN} option of
+     *            the printer. {@code null} when not present.
+     */
+    public void setOutputBinOpt(JsonProxyPrinterOpt outputBinOpt) {
+        this.outputBinOpt = outputBinOpt;
+    }
+
+    /**
+     * @return The default output-bin choice. When {@code null}, no default is
+     *         available.
+     */
+    public JsonProxyPrinterOptChoice getOutputBinOptChoice() {
+        return outputBinOptChoice;
+    }
+
+    /**
+     * @param outputBinOptChoice
+     *            The default output-bin choice. When {@code null}, no default
+     *            is available.
+     */
+    public void setOutputBinOptChoice(
+            JsonProxyPrinterOptChoice outputBinOptChoice) {
+        this.outputBinOptChoice = outputBinOptChoice;
+    }
+
+    /**
+     * @return The
+     *         {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET}
+     *         option of the printer. {@code null} when not present.
+     *
+     */
+    public JsonProxyPrinterOpt getJogOffsetOpt() {
+        return jogOffsetOpt;
+    }
+
+    /**
+     * @param jogOffsetOpt
+     *            The
+     *            {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET}
+     *            option of the printer. {@code null} when not present.
+     */
+    public void setJogOffsetOpt(JsonProxyPrinterOpt jogOffsetOpt) {
+        this.jogOffsetOpt = jogOffsetOpt;
+    }
+
+    /**
+     * @return The default jog-offset choice. When {@code null}, no default is
+     *         available.
+     *
+     */
+    public JsonProxyPrinterOptChoice getJogOffsetOptChoice() {
+        return jogOffsetOptChoice;
+    }
+
+    /**
+     * @param choice
+     *            The default jog-offset choice. When {@code null}, no default
+     *            is available.
+     */
+    public void setJogOffsetOptChoice(JsonProxyPrinterOptChoice choice) {
+        this.jogOffsetOptChoice = choice;
     }
 
 }

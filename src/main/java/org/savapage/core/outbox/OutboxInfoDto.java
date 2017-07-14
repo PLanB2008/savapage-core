@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -29,12 +29,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.dto.AbstractDto;
-import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
-import org.savapage.core.ipp.attribute.syntax.IppKeyword;
+import org.savapage.core.inbox.PdfOrientationInfo;
+import org.savapage.core.ipp.IppJobStateEnum;
+import org.savapage.core.ipp.helpers.IppOptionMap;
+import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.services.helpers.AccountTrxInfo;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
+import org.savapage.core.services.helpers.ProxyPrintCostDto;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -201,79 +205,28 @@ public final class OutboxInfoDto extends AbstractDto {
     }
 
     /**
-     *
-     */
+    *
+    */
     @JsonInclude(Include.NON_NULL)
-    public static final class OutboxJobDto {
+    public static class OutboxJobBaseDto {
 
-        /**
-         * Is {@code null} when in User outbox.
-         */
-        private Long userId;
-
-        private ExternalSupplierInfo externalSupplierInfo;
-
-        private String file;
-        private String printerName;
+        private String ticketNumber;
         private String jobName;
-        private int copies;
-        private int pages;
-        private int sheets;
-        private boolean removeGraphics;
+        private String comment;
+
         private boolean drm;
         private boolean ecoPrint;
         private boolean collate;
-        private BigDecimal cost;
-        private long submitTime;
-        private long expiryTime;
-        private Boolean fitToPage;
-        private Map<String, String> optionValues;
-        private String comment;
 
-        private LocaleInfo localeInfo;
+        private int copies;
+        private int pages;
 
-        /**
-         * Note: {@link LinkedHashMap} is insertion ordered.
-         */
-        private LinkedHashMap<String, Integer> uuidPageCount;
-
-        /**
-         *
-         */
-        private OutboxAccountTrxInfoSet accountTransactions;
-
-        //
-        public Long getUserId() {
-            return userId;
+        public String getTicketNumber() {
+            return ticketNumber;
         }
 
-        public void setUserId(Long userId) {
-            this.userId = userId;
-        }
-
-        public ExternalSupplierInfo getExternalSupplierInfo() {
-            return externalSupplierInfo;
-        }
-
-        public void setExternalSupplierInfo(
-                ExternalSupplierInfo externalSupplierInfo) {
-            this.externalSupplierInfo = externalSupplierInfo;
-        }
-
-        public String getFile() {
-            return file;
-        }
-
-        public void setFile(String file) {
-            this.file = file;
-        }
-
-        public String getPrinterName() {
-            return printerName;
-        }
-
-        public void setPrinterName(String printerName) {
-            this.printerName = printerName;
+        public void setTicketNumber(String ticketNumber) {
+            this.ticketNumber = ticketNumber;
         }
 
         public String getJobName() {
@@ -300,22 +253,6 @@ public final class OutboxInfoDto extends AbstractDto {
             this.pages = pages;
         }
 
-        public int getSheets() {
-            return sheets;
-        }
-
-        public void setSheets(int sheets) {
-            this.sheets = sheets;
-        }
-
-        public boolean isRemoveGraphics() {
-            return removeGraphics;
-        }
-
-        public void setRemoveGraphics(boolean removeGraphics) {
-            this.removeGraphics = removeGraphics;
-        }
-
         public boolean isDrm() {
             return drm;
         }
@@ -340,12 +277,199 @@ public final class OutboxInfoDto extends AbstractDto {
             this.collate = collate;
         }
 
-        public BigDecimal getCost() {
-            return cost;
+        public String getComment() {
+            return comment;
         }
 
-        public void setCost(BigDecimal cost) {
-            this.cost = cost;
+        public void setComment(String comment) {
+            this.comment = comment;
+        }
+
+    }
+
+    /**
+     *
+     */
+    @JsonInclude(Include.NON_NULL)
+    public static final class OutboxJobDto extends OutboxJobBaseDto {
+
+        /**
+         * The primary database key of the {@link User}. Is {@code null} when in
+         * User outbox.
+         */
+        private Long userId;
+
+        /**
+         * The primary database key of the {@link PrintOut}. Is {@code null}
+         * when in User outbox.
+         */
+        private Long printOutId;
+
+        /**
+         *
+         */
+        @JsonIgnore
+        private IppJobStateEnum ippJobState;
+
+        /**
+         * .
+         */
+        private ExternalSupplierInfo externalSupplierInfo;
+
+        private String file;
+
+        /**
+         * The name of the main printer, which can be the printer for the
+         * Hold Job or the Job Ticket printer.
+         */
+        private String printer;
+
+        /**
+         * Name of the redirect printer. If {@code null} ticket is not printed
+         * yet.
+         */
+        private String printerRedirect;
+
+        /**
+         * The total number of blank filler pages appended between logical
+         * sub-jobs (proxy print only).
+         */
+        private int fillerPages;
+
+        private int sheets;
+        private boolean removeGraphics;
+        private ProxyPrintCostDto costResult;
+        private long submitTime;
+        private long expiryTime;
+        private Boolean fitToPage;
+
+        /**
+         * {@code true} when one of the job pages has landscape orientation.
+         * {@code null} when unknown.
+         */
+        private Boolean landscape;
+
+        /**
+         * The PDF orientation of the first page to be proxy printed.
+         */
+        private PdfOrientationInfo pdfOrientation;
+
+        private Map<String, String> optionValues;
+
+        private LocaleInfo localeInfo;
+
+        /**
+         * Note: {@link LinkedHashMap} is insertion ordered.
+         */
+        private LinkedHashMap<String, Integer> uuidPageCount;
+
+        /**
+         *
+         */
+        private OutboxAccountTrxInfoSet accountTransactions;
+
+        /**
+         * Constructor.
+         */
+        public OutboxJobDto() {
+            this.costResult = new ProxyPrintCostDto();
+        }
+
+        //
+        public Long getUserId() {
+            return userId;
+        }
+
+        public void setUserId(Long userId) {
+            this.userId = userId;
+        }
+
+        public Long getPrintOutId() {
+            return printOutId;
+        }
+
+        public void setPrintOutId(Long printOutId) {
+            this.printOutId = printOutId;
+        }
+
+        @JsonIgnore
+        public IppJobStateEnum getIppJobState() {
+            return ippJobState;
+        }
+
+        @JsonIgnore
+        public void setIppJobState(IppJobStateEnum ippJobState) {
+            this.ippJobState = ippJobState;
+        }
+
+        public ExternalSupplierInfo getExternalSupplierInfo() {
+            return externalSupplierInfo;
+        }
+
+        public void setExternalSupplierInfo(
+                ExternalSupplierInfo externalSupplierInfo) {
+            this.externalSupplierInfo = externalSupplierInfo;
+        }
+
+        public String getFile() {
+            return file;
+        }
+
+        public void setFile(String file) {
+            this.file = file;
+        }
+
+        public String getPrinter() {
+            return printer;
+        }
+
+        public void setPrinter(String printerName) {
+            this.printer = printerName;
+        }
+
+        public String getPrinterRedirect() {
+            return printerRedirect;
+        }
+
+        public void setPrinterRedirect(String printerName) {
+            this.printerRedirect = printerName;
+        }
+
+        public int getFillerPages() {
+            return fillerPages;
+        }
+
+        public void setFillerPages(int fillerPages) {
+            this.fillerPages = fillerPages;
+        }
+
+        public int getSheets() {
+            return sheets;
+        }
+
+        public void setSheets(int sheets) {
+            this.sheets = sheets;
+        }
+
+        public boolean isRemoveGraphics() {
+            return removeGraphics;
+        }
+
+        public void setRemoveGraphics(boolean removeGraphics) {
+            this.removeGraphics = removeGraphics;
+        }
+
+        public ProxyPrintCostDto getCostResult() {
+            return costResult;
+        }
+
+        public void setCostResult(ProxyPrintCostDto costResult) {
+            this.costResult = costResult;
+        }
+
+        @JsonIgnore
+        public BigDecimal getCostTotal() {
+            return this.costResult.getCostTotal();
         }
 
         public LocaleInfo getLocaleInfo() {
@@ -399,20 +523,44 @@ public final class OutboxInfoDto extends AbstractDto {
             this.fitToPage = fitToPage;
         }
 
+        /**
+         * @return {@code true} when one of the job pages has landscape
+         *         orientation. {@code null} when unknown.
+         */
+        public Boolean getLandscape() {
+            return landscape;
+        }
+
+        /**
+         * @param landscape
+         *            {@code true} when one of the job pages has landscape
+         *            orientation. {@code null} when unknown.
+         */
+        public void setLandscape(Boolean landscape) {
+            this.landscape = landscape;
+        }
+
+        /**
+         * @return The PDF orientation of the first page to be proxy printed.
+         */
+        public PdfOrientationInfo getPdfOrientation() {
+            return pdfOrientation;
+        }
+
+        /**
+         * @param pdfOrientation
+         *            The PDF orientation of the first page to be proxy printed.
+         */
+        public void setPdfOrientation(PdfOrientationInfo pdfOrientation) {
+            this.pdfOrientation = pdfOrientation;
+        }
+
         public Map<String, String> getOptionValues() {
             return optionValues;
         }
 
         public void setOptionValues(Map<String, String> optionValues) {
             this.optionValues = optionValues;
-        }
-
-        public String getComment() {
-            return comment;
-        }
-
-        public void setComment(String comment) {
-            this.comment = comment;
         }
 
         /**
@@ -452,42 +600,39 @@ public final class OutboxInfoDto extends AbstractDto {
         }
 
         /**
+         * Creates an {@link IppOptionMap} wrapping the {@link #optionValues}.
          *
-         * @return {@code true} if this is a color job.
+         * @return The {@link IppOptionMap}.
          */
         @JsonIgnore
-        public boolean isColorJob() {
-            return isOptionPresent(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE,
-                    IppKeyword.PRINT_COLOR_MODE_COLOR);
+        public IppOptionMap createIppOptionMap() {
+            return new IppOptionMap(this.getOptionValues());
+        }
+
+        /**
+         * @return {@code true} when this is a Copy Job Ticket.
+         */
+        @JsonIgnore
+        public boolean isCopyJobTicket() {
+            return isJobTicket() && this.uuidPageCount == null;
+        }
+
+        /**
+         * @return {@code true} when this is a Job Ticket.
+         */
+        @JsonIgnore
+        public boolean isJobTicket() {
+            return StringUtils.isNotBlank(this.getTicketNumber());
         }
 
         /**
          *
-         * @return {@code true} if this is a duplex job.
+         * @return {@code true} when this is a Delegated Print Job Ticket.
          */
         @JsonIgnore
-        public boolean isDuplexJob() {
-            return isOptionPresent(IppDictJobTemplateAttr.ATTR_SIDES,
-                    IppKeyword.SIDES_TWO_SIDED_LONG_EDGE)
-                    || isOptionPresent(IppDictJobTemplateAttr.ATTR_SIDES,
-                            IppKeyword.SIDES_TWO_SIDED_SHORT_EDGE);
+        public boolean isDelegatedPrint() {
+            return this.accountTransactions != null;
         }
-
-        /**
-         * Checks if option value is present.
-         *
-         * @param key
-         *            The option key.
-         * @param value
-         *            The option value;
-         * @return {@code true} if option value is present.
-         */
-        @JsonIgnore
-        public boolean isOptionPresent(final String key, final String value) {
-            final String found = this.optionValues.get(key);
-            return found != null && found.equals(value);
-        }
-
     }
 
     /**
@@ -560,9 +705,9 @@ public final class OutboxInfoDto extends AbstractDto {
      * @throws IOException
      */
     public String prettyPrinted() throws IOException {
-        JsonFactory jsonFactory = new JsonFactory();
-        StringWriter sw = new StringWriter();
-        JsonGenerator jg = jsonFactory.createJsonGenerator(sw);
+        final JsonFactory jsonFactory = new JsonFactory();
+        final StringWriter sw = new StringWriter();
+        final JsonGenerator jg = jsonFactory.createJsonGenerator(sw);
         jg.useDefaultPrettyPrinter();
         getMapper().writeValue(jg, this);
         return sw.toString();

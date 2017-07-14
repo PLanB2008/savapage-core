@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -23,6 +23,7 @@ package org.savapage.core.config;
 
 import java.math.BigDecimal;
 import java.text.MessageFormat;
+import java.util.Locale;
 import java.util.Properties;
 import java.util.Set;
 
@@ -49,6 +50,7 @@ import org.savapage.core.dao.enums.DeviceTypeEnum;
 import org.savapage.core.dao.enums.ReservedIppQueueEnum;
 import org.savapage.core.dao.impl.DaoBatchCommitterImpl;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
+import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.PrinterGroup;
 import org.savapage.core.services.helpers.InboxSelectScopeEnum;
 import org.savapage.core.services.helpers.UserAuth;
@@ -66,12 +68,6 @@ public interface IConfigProp {
      * database for SavaPage Financial.
      */
     int MAX_FINANCIAL_DECIMALS_IN_DB = 6;
-
-    /**
-     * .
-     */
-    String DEFAULT_COMMUNITY_HELPDESK_URL =
-            "https://secure.datraverse.nl/helpdesk/";
 
     /**
      * .
@@ -116,99 +112,106 @@ public interface IConfigProp {
     String DEFAULT_BATCH_COMMIT_CHUNK_SIZE = "100";
 
     /**
+     * Default number of rows in the result set for exporting tables for
+     * database backup.
+     */
+    String DEFAULT_EXPORT_QUERY_MAX_RESULTS = "1000";
+
+    /**
      *
      */
     InternalFontFamilyEnum DEFAULT_INTERNAL_FONT_FAMILY =
             InternalFontFamilyEnum.DEFAULT;
 
-    final String V_YES = "Y";
-    final String V_NO = "N";
+    String V_YES = "Y";
+    String V_NO = "N";
 
-    final String V_ZERO = "0";
+    String V_ZERO = "0";
 
     /**
      * Null value for numerics.
      */
-    final String V_NULL = "-1";
+    String V_NULL = "-1";
 
-    final String AUTH_METHOD_V_LDAP = "ldap";
-    final String AUTH_METHOD_V_UNIX = "unix";
-    final String AUTH_METHOD_V_NONE = "none";
+    String AUTH_METHOD_V_LDAP = "ldap";
+    String AUTH_METHOD_V_UNIX = "unix";
+    String AUTH_METHOD_V_NONE = "none";
 
-    final String AUTH_MODE_V_NAME = UserAuth.MODE_NAME;
-    final String AUTH_MODE_V_ID = UserAuth.MODE_ID;
-    final String AUTH_MODE_V_CARD_LOCAL = UserAuth.MODE_CARD_LOCAL;
-    final String AUTH_MODE_V_CARD_IP = UserAuth.MODE_CARD_IP;
+    String AUTH_MODE_V_NAME = UserAuth.MODE_NAME;
+    String AUTH_MODE_V_ID = UserAuth.MODE_ID;
+    String AUTH_MODE_V_CARD_LOCAL = UserAuth.MODE_CARD_LOCAL;
+    String AUTH_MODE_V_CARD_IP = UserAuth.MODE_CARD_IP;
+    String AUTH_MODE_V_YUBIKEY = UserAuth.MODE_YUBIKEY;
 
-    final String LDAP_TYPE_V_APPLE = "APPLE_OPENDIR";
-    final String LDAP_TYPE_V_OPEN_LDAP = "OPEN_LDAP";
-    final String LDAP_TYPE_V_E_DIR = "NOVELL_EDIRECTORY";
-    final String LDAP_TYPE_V_ACTIV = "ACTIVE_DIRECTORY";
+    String LDAP_TYPE_V_APPLE = "APPLE_OPENDIR";
+    String LDAP_TYPE_V_OPEN_LDAP = "OPEN_LDAP";
+    String LDAP_TYPE_V_E_DIR = "NOVELL_EDIRECTORY";
+    String LDAP_TYPE_V_ACTIV = "ACTIVE_DIRECTORY";
 
-    final String PAPERSIZE_V_SYSTEM = "";
-    final String PAPERSIZE_V_A4 = MediaSizeName.ISO_A4.toString();
-    final String PAPERSIZE_V_LETTER = MediaSizeName.NA_LETTER.toString();
+    String PAPERSIZE_V_SYSTEM = "";
+    String PAPERSIZE_V_A4 = MediaSizeName.ISO_A4.toString();
+    String PAPERSIZE_V_LETTER = MediaSizeName.NA_LETTER.toString();
 
     /**
      *
      */
-    final String SMTP_SECURITY_V_NONE = "";
+    String SMTP_SECURITY_V_NONE = "";
 
     /**
      * Set to Y to enable STARTTLS, or N to disable it. STARTTLS is for
      * connecting to an SMTP server port using a plain (non-encrypted)
      * connection, then elevating to an encrypted connection on the same port.
      */
-    final String SMTP_SECURITY_V_STARTTLS = "starttls";
+    String SMTP_SECURITY_V_STARTTLS = "starttls";
     /**
      *
      */
-    final String SMTP_SECURITY_V_SSL = "ssl";
-
-    /**
-     *
-     */
-    final String IMAP_SECURITY_V_NONE = "";
+    String SMTP_SECURITY_V_SSL = "ssl";
 
     /**
      *
      */
-    final String IMAP_SECURITY_V_STARTTLS = "starttls";
+    String IMAP_SECURITY_V_NONE = "";
 
     /**
      *
      */
-    final String IMAP_SECURITY_V_SSL = "ssl";
+    String IMAP_SECURITY_V_STARTTLS = "starttls";
 
     /**
      *
      */
-    final Integer IMAP_CONNECTION_TIMEOUT_V_DEFAULT = 10000;
-    final Integer IMAP_TIMEOUT_V_DEFAULT = 10000;
-
-    final Long IMAP_MAX_FILE_MB_V_DEFAULT = 5L;
-    final Integer IMAP_MAX_FILES_V_DEFAULT = 1;
+    String IMAP_SECURITY_V_SSL = "ssl";
 
     /**
      *
      */
-    final Long WEBPRINT_MAX_FILE_MB_V_DEFAULT = 5L;
+    Integer IMAP_CONNECTION_TIMEOUT_V_DEFAULT = 10000;
+    Integer IMAP_TIMEOUT_V_DEFAULT = 10000;
+
+    Long IMAP_MAX_FILE_MB_V_DEFAULT = 5L;
+    Integer IMAP_MAX_FILES_V_DEFAULT = 1;
 
     /**
      *
      */
-    final Integer WEBAPP_MAX_IDLE_SECS_V_NONE = 0;
-
-    final String CARD_NUMBER_FORMAT_V_DEC = "DEC";
-    final String CARD_NUMBER_FORMAT_V_HEX = "HEX";
-
-    final String CARD_NUMBER_FIRSTBYTE_V_LSB = "LSB";
-    final String CARD_NUMBER_FIRSTBYTE_V_MSB = "MSB";
+    Long WEBPRINT_MAX_FILE_MB_V_DEFAULT = 10L;
 
     /**
      *
      */
-    final Integer NUMBER_V_NONE = 0;
+    Integer WEBAPP_MAX_IDLE_SECS_V_NONE = 0;
+
+    String CARD_NUMBER_FORMAT_V_DEC = "DEC";
+    String CARD_NUMBER_FORMAT_V_HEX = "HEX";
+
+    String CARD_NUMBER_FIRSTBYTE_V_LSB = "LSB";
+    String CARD_NUMBER_FIRSTBYTE_V_MSB = "MSB";
+
+    /**
+     *
+     */
+    Integer NUMBER_V_NONE = 0;
 
     /**
      * .
@@ -249,6 +252,12 @@ public interface IConfigProp {
          * See {@link DaoBatchCommitterImpl}.
          */
         DB_BATCH_COMMIT_CHUNK_SIZE("db.batch.commit-chunk-size", NUMBER_VALIDATOR, DEFAULT_BATCH_COMMIT_CHUNK_SIZE),
+
+        /**
+         * The number of rows in the result set for exporting tables to a
+         * database backup.
+         */
+        DB_EXPORT_QUERY_MAX_RESULTS("db.export.query-max-results", NUMBER_VALIDATOR, DEFAULT_EXPORT_QUERY_MAX_RESULTS),
 
         /**
          *
@@ -390,6 +399,26 @@ public interface IConfigProp {
         AUTH_MODE_CARD_LOCAL("auth-mode.card-local", BOOLEAN_VALIDATOR, V_NO),
 
         /**
+        *
+        */
+        AUTH_MODE_YUBIKEY("auth-mode.yubikey", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
+        *
+        */
+        AUTH_MODE_YUBIKEY_SHOW("auth-mode.yubikey.show", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         * .
+         */
+        AUTH_MODE_YUBIKEY_API_CLIENT_ID("auth-mode.yubikey.api.client-id"),
+
+        /**
+         * .
+         */
+        AUTH_MODE_YUBIKEY_API_SECRET_KEY("auth-mode.yubikey.api.secret-key"),
+
+        /**
          *
          */
         AUTH_MODE_CARD_PIN_REQUIRED("auth-mode.card.pin-required", BOOLEAN_VALIDATOR, V_YES),
@@ -412,12 +441,18 @@ public interface IConfigProp {
         /**
          *
          */
-        AUTH_MODE_DEFAULT("auth-mode-default", null, AUTH_MODE_V_NAME, new String[] { AUTH_MODE_V_NAME, AUTH_MODE_V_ID, AUTH_MODE_V_CARD_LOCAL }),
+        AUTH_MODE_DEFAULT("auth-mode-default", null, AUTH_MODE_V_NAME, new String[] {
+                //
+                AUTH_MODE_V_NAME, AUTH_MODE_V_ID, AUTH_MODE_V_CARD_LOCAL,
+                //
+                AUTH_MODE_V_YUBIKEY }),
 
         /**
          * Authentication method.
          */
-        AUTH_METHOD("auth.method", null, AUTH_METHOD_V_NONE, new String[] { AUTH_METHOD_V_NONE, AUTH_METHOD_V_UNIX, AUTH_METHOD_V_LDAP }),
+        AUTH_METHOD("auth.method", null, AUTH_METHOD_V_NONE, new String[] {
+                //
+                AUTH_METHOD_V_NONE, AUTH_METHOD_V_UNIX, AUTH_METHOD_V_LDAP }),
 
         /**
          *
@@ -635,17 +670,6 @@ public interface IConfigProp {
         IPP_INTERNET_PRINTER_URI_BASE("ipp.internet-printer.uri-base", URI_VALIDATOR_OPT, ""),
 
         /**
-         * Printer name for JobTicket printing.
-         */
-        JOBTICKET_PROXY_PRINTER("jobticket.proxy-printer"),
-
-        /**
-         * Printer Group with compatible redirect printers for JobTicket
-         * Printer.
-         */
-        JOBTICKET_PROXY_PRINTER_GROUP("jobticket.proxy-printer-group"),
-
-        /**
          * See this <a href=
          * "http://docs.oracle.com/javase/jndi/tutorial/ldap/search/batch.html"
          * >explanation</a> and this <a href=
@@ -807,11 +831,6 @@ public interface IConfigProp {
          * the start date of the visiting period.
          */
         COMMUNITY_VISITOR_START_DATE("community.visitor.start-date"),
-
-        /**
-         *
-         */
-        COMMUNITY_HELPDESK_URL("community.helpdesk.url", URL_VALIDATOR, DEFAULT_COMMUNITY_HELPDESK_URL),
 
         /**
          * Is PaperCut integration enabled?
@@ -1161,6 +1180,69 @@ public interface IConfigProp {
         SMARTSCHOOL_SOAP_PRINT_POLL_SESSION_DURATION_SECS("smartschool.soap.print.poll.session.duration-secs", NUMBER_VALIDATOR, "3600"),
 
         /**
+         * .
+         */
+        SOFFICE_ENABLE("soffice.enable", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
+         * The LibreOffice home location. When empty, a probe to likely
+         * candidates is performed to retrieve the location.
+         */
+        SOFFICE_HOME("soffice.home"),
+
+        /**
+         * A temporary profile directory is created for each UNO connection
+         * process with its own defaults settings. With this config item you can
+         * provide a profile directory containing customized settings instead.
+         * This template directory will be copied to the temporary profile.
+         */
+        SOFFICE_PROFILE_TEMPLATE_DIR("soffice.profile.template-dir"),
+
+        /**
+         * A comma/space separated list of TCP/IP ports to localhost LibreOffice
+         * (UNO) connection instances to be launched by SavaPage.
+         */
+        SOFFICE_CONNECTION_PORTS("soffice.connection.ports", "2002,2003"),
+
+        /**
+         * The number of executed tasks after which the UNO connection is
+         * restarted. When {@code 0} (zero) the process is <i>never</i>
+         * restarted.
+         */
+        SOFFICE_CONNECTION_RESTART_TASK_COUNT("soffice.connection.restart-task-count", NUMBER_VALIDATOR, "200"),
+
+        /**
+         * Wait time (milliseconds) for a UNO connection to become available for
+         * task execution.
+         */
+        SOFFICE_TASK_QUEUE_TIMEOUT_MSEC("soffice.task.queue-timeout-msec", NUMBER_VALIDATOR, "10000"),
+
+        /**
+         * Wait time (milliseconds) for a conversion task to complete.
+         */
+        SOFFICE_TASK_EXEC_TIMEOUT_MSEC("soffice.task.exec-timeout-msec", NUMBER_VALIDATOR, "20000"),
+
+        /**
+         * Retry interval (milliseconds) for host process to respond.
+         */
+        SOFFICE_RESPOND_RETRY_MSEC("soffice.respond.retry-msec", NUMBER_VALIDATOR, "250"),
+
+        /**
+         * Wait time (milliseconds) for host process to respond (after retries).
+         */
+        SOFFICE_RESPOND_TIMEOUT_MSEC("soffice.respond.timeout-msec", NUMBER_VALIDATOR, "30000"),
+
+        /**
+         * Retry interval (milliseconds) for host process to start.
+         */
+        SOFFICE_START_RETRY_MSEC("soffice.start.retry-msec", NUMBER_VALIDATOR, "1000"),
+
+        /**
+         * Wait time (milliseconds) for host process to start (after retries).
+         */
+        SOFFICE_START_TIMEOUT_MSEC("soffice.start.timeout-msec", NUMBER_VALIDATOR, "120000"),
+
+        /**
          *
          */
         REPORTS_PDF_INTERNAL_FONT_FAMILY("reports.pdf.font-family", INTERNAL_FONT_FAMILY_VALIDATOR, DEFAULT_INTERNAL_FONT_FAMILY.toString()),
@@ -1264,6 +1346,18 @@ public interface IConfigProp {
         MAIL_REPLY_TO_NAME("mail.reply.to.name", "DO NOT REPLY"),
 
         /**
+         * The path of the custom template files, relative to
+         * {@link ConfigManager#SERVER_REL_PATH_CUSTOM_TEMPLATE}.
+         */
+        CUSTOM_TEMPLATE_HOME("custom.template.home"),
+
+        /**
+         * The path of the custom Email template files, relative to
+         * {@link ConfigManager#SERVER_REL_PATH_CUSTOM_TEMPLATE}.
+         */
+        CUSTOM_TEMPLATE_HOME_MAIL("custom.template.home.mail"),
+
+        /**
          *
          */
         PRINT_IN_ALLOW_ENCRYPTED_PDF("print-in.allow-encrypted-pdf", BOOLEAN_VALIDATOR, V_YES),
@@ -1276,9 +1370,50 @@ public interface IConfigProp {
         PRINT_IN_JOB_EXPIRY_MINS("print-in.job-expiry.mins", NUMBER_VALIDATOR, V_ZERO),
 
         /**
+         * Enable Copy Job option for Job Ticket (boolean). When {@code true} a
+         * job ticket for a copy job can be created.
+         */
+        JOBTICKET_COPIER_ENABLE("jobticket.copier.enable", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
+         * Enable "delivery time" option for Job Ticket (boolean).
+         */
+        JOBTICKET_DELIVERY_DATETIME_ENABLE("jobticket.delivery-datetime.enable", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         * Enable notification by email to owner of job ticket when ticket is
+         * completed (Boolean).
+         */
+        JOBTICKET_NOTIFY_EMAIL_COMPLETED_ENABLE("jobticket.notify-email.completed.enable", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         * Enable notification by email to owner of job ticket when ticket is
+         * canceled (Boolean).
+         */
+        JOBTICKET_NOTIFY_EMAIL_CANCELED_ENABLE("jobticket.notify-email.canceled.enable", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
          * Enable Delegated Print (boolean).
          */
         PROXY_PRINT_DELEGATE_ENABLE("proxy-print.delegate.enable", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
+         * Enable delegated print account type {@link AccountTypeEnum#GROUP}
+         * (boolean).
+         */
+        PROXY_PRINT_DELEGATE_ACCOUNT_GROUP_ENABLE("proxy-print.delegate.account.group.enable", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         * Enable delegated print account type {@link AccountTypeEnum#USER}
+         * (boolean).
+         */
+        PROXY_PRINT_DELEGATE_ACCOUNT_USER_ENABLE("proxy-print.delegate.account.user.enable", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         * Enable delegated print account type {@link AccountTypeEnum#SHARED}
+         * (boolean).
+         */
+        PROXY_PRINT_DELEGATE_ACCOUNT_SHARED_ENABLE("proxy-print.delegate.account.shared.enable", BOOLEAN_VALIDATOR, V_YES),
 
         /**
          * Enable Delegated Print integration with PaperCut (boolean).
@@ -1346,6 +1481,11 @@ public interface IConfigProp {
          * {@link PrinterGroup#getGroupName()}
          */
         PROXY_PRINT_NON_SECURE_PRINTER_GROUP("proxy-print.non-secure-printer-group"),
+
+        /**
+         * Enable "remove graphics" option for Proxy Print (boolean).
+         */
+        PROXY_PRINT_REMOVE_GRAPHICS_ENABLE("proxy-print.remove-graphics.enable", BOOLEAN_VALIDATOR, V_YES),
 
         /**
          * CRON expression: 10 minutes past midnight.
@@ -1625,6 +1765,18 @@ public interface IConfigProp {
         USER_SOURCE_UPDATE_USER_DETAILS("user-source.update-user-details", BOOLEAN_VALIDATOR, V_YES),
 
         /**
+         * Client IP addresses (CIDR) that are allowed to use the User Client
+         * App (when void, all client addresses are allowed).
+         */
+        CLIAPP_IP_ADDRESSES_ALLOWED("cliapp.ip-addresses-allowed"),
+
+        /**
+         * Enable Client App authentication for clients that are denied for
+         * their IP address.
+         */
+        CLIAPP_AUTH_IP_ADDRESSES_DENIED_ENABLE("cliapp.auth.ip-addresses-denied.enable", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
          * (boolean) Trust the User Client App system account name as user
          * identification?
          */
@@ -1640,6 +1792,19 @@ public interface IConfigProp {
          * App (Boolean, default TRUE).
          */
         CLIAPP_AUTH_TRUST_WEBAPP_USER_AUTH("cliapp.auth.trust-webapp-user-auth", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         * The query string to be appended to the base URL when opening the User
+         * Web App in response to a print-in event. Do <i>not</i> prefix the
+         * value with a {@code '?'} or {@code '&'} character.
+         */
+        CLIAPP_PRINT_IN_URL_QUERY("cliapp.print-in.url-query"),
+
+        /**
+         * Action button text on print-in action dialog for opening User Web
+         * App.
+         */
+        CLIAPP_PRINT_IN_DIALOG_BUTTON_OPEN("cliapp.print-in.dialog.button-open"),
 
         /**
          * .
@@ -1729,6 +1894,32 @@ public interface IConfigProp {
         WEBAPP_USER_PROXY_PRINT_CLEAR_INBOX_SCOPE("webapp.user.proxy-print.clear-inbox.scope", new EnumValidator<>(InboxSelectScopeEnum.class), InboxSelectScopeEnum.ALL.toString()),
 
         /**
+         * User WebApp: clear selected printer (including options) after proxy
+         * printing.
+         */
+        WEBAPP_USER_PROXY_PRINT_CLEAR_PRINTER("webapp.user.proxy-print.clear-printer", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
+         * User WebApp: clear print delegate data after proxy printing.
+         */
+        WEBAPP_USER_PROXY_PRINT_CLEAR_DELEGATE("webapp.user.proxy-print.clear-delegate", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
+         * User WebApp: enable the "Print documents separately" option for proxy
+         * printing (Boolean). If {@code true} the option is enabled (shown).
+         */
+        WEBAPP_USER_PROXY_PRINT_SEPARATE_ENABLE("webapp.user.proxy-print.separate.enable", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
+         * User WebApp: the (default) "Print documents separately" option value
+         * for proxy printing when "All Documents" are selected (Boolean). If
+         * {@code true}, a separate proxy print job is created for each vanilla
+         * inbox document. If {@code false}, one (1) proxy print job is printed
+         * for a vanilla inbox.
+         */
+        WEBAPP_USER_PROXY_PRINT_SEPARATE("webapp.user.proxy-print.separate", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
          * User WebApp: must text of navigation buttons on main window be shown?
          */
         WEBAPP_USER_MAIN_NAV_BUTTON_TEXT("webapp.user.main.nav-button-text", new EnumValidator<>(OnOffEnum.class), OnOffEnum.AUTO.toString()),
@@ -1743,6 +1934,12 @@ public interface IConfigProp {
          * number from a Local Card Reader.
          */
         WEBAPP_CARD_LOCAL_KEYSTROKES_MAX_MSECS("webapp.card-local.keystrokes-max-msecs", NUMBER_VALIDATOR, "500"),
+
+        /**
+         * Time limit (milliseconds) to capture the keystrokes of the YubiKey
+         * OTP.
+         */
+        WEBAPP_YUBIKEY_KEYSTROKES_MAX_MSECS("webapp.yubikey.keystrokes-max-msecs", NUMBER_VALIDATOR, "1500"),
 
         /**
          * Time limit (seconds) for a user to associate a new Card to his
@@ -1831,10 +2028,17 @@ public interface IConfigProp {
         *
         */
         WEBAPP_HTML_POS_LOGIN(Key.WEBAPP_HTML_PFX + "pos.login"),
+
         /**
         *
         */
         WEBAPP_HTML_USER_LOGIN(Key.WEBAPP_HTML_PFX + "user.login"),
+
+        /**
+         * A comma/space separated list with {@link Locale#getLanguage()} codes
+         * that are available for users to choose for their Web App locale.
+         */
+        WEBAPP_LANGUAGE_AVAILABLE("webapp.language.available"),
 
         /**
          * .
@@ -1860,7 +2064,7 @@ public interface IConfigProp {
         /**
          * Inactivity timeout (minutes) for the admin web interface.
          */
-        WEB_LOGIN_ADMIN_SESSION_TIMOUT_MINS("web-login.admin.session-timeout-mins", NUMBER_VALIDATOR, "1440"),
+        WEB_LOGIN_ADMIN_SESSION_TIMEOUT_MINS("web-login.admin.session-timeout-mins", NUMBER_VALIDATOR, "1440"),
 
         /**
          * Inactivity timeout (minutes) for the user web interface.
@@ -1868,9 +2072,14 @@ public interface IConfigProp {
         WEB_LOGIN_USER_SESSION_TIMEOUT_MINS("web-login.user.session-timeout-mins", NUMBER_VALIDATOR, "60"),
 
         /**
-         *
+         * Enable Web Print.
          */
         WEB_PRINT_ENABLE("web-print.enable", BOOLEAN_VALIDATOR, V_NO),
+
+        /**
+         * Enable drag & drop zone for Web Print.
+         */
+        WEB_PRINT_DROPZONE_ENABLE("web-print.dropzone-enable", BOOLEAN_VALIDATOR, V_YES),
 
         /**
          *

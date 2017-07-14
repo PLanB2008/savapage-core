@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,14 +14,13 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.print.proxy;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -30,6 +29,7 @@ import javax.print.attribute.standard.MediaSizeName;
 import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.inbox.RangeAtom;
 import org.savapage.core.ipp.IppMediaSizeEnum;
+import org.savapage.core.services.helpers.ProxyPrintCostDto;
 
 /**
  *
@@ -42,14 +42,35 @@ public final class ProxyPrintJobChunk {
 
     private MediaSizeName mediaSizeName;
 
+    /**
+     * The IPP media-source used for printing.
+     */
+    private String ippMediaSource;
+
+    /**
+     * The assigned media-source for cost calculation.
+     */
     private IppMediaSourceCostDto assignedMediaSource;
     private IppMediaSizeEnum assignedMedia;
     private Boolean fitToPage;
     private boolean drm;
 
-    private BigDecimal cost;
+    /**
+     * .
+     */
+    private ProxyPrintCostDto costResult;
 
+    /**
+     *
+     */
     private String jobName;
+
+    /**
+     * The number of pages of logical sub-jobs. <b>Note</b>: Blank filler pages
+     * are <i>not</i> included in the count. When {@code null}, no logical
+     * sub-jobs are defined.
+     */
+    private List<Integer> logicalJobPages;
 
     /**
      *
@@ -79,10 +100,54 @@ public final class ProxyPrintJobChunk {
         return numberOfPages;
     }
 
+    /**
+     * @return The number of pages of logical sub-jobs. <b>Note</b>: Blank
+     *         filler pages are <i>not</i> included in the count. When
+     *         {@code null}, no logical sub-jobs are defined.
+     */
+    public List<Integer> getLogicalJobPages() {
+        return logicalJobPages;
+    }
+
+    /**
+     * @param logicalJobPages
+     *            The number of pages of logical sub-jobs. <b>Note</b>: Blank
+     *            filler pages are <i>not</i> included in the count. When
+     *            {@code null}, no logical sub-jobs are defined.
+     */
+    public void setLogicalJobPages(List<Integer> logicalJobPages) {
+        this.logicalJobPages = logicalJobPages;
+    }
+
+    /**
+     *
+     * @return The IPP media-source used for printing.
+     */
+    public String getIppMediaSource() {
+        return ippMediaSource;
+    }
+
+    /**
+     *
+     * @param ippMediaSource
+     *            The IPP media-source used for printing.
+     */
+    public void setIppMediaSource(String ippMediaSource) {
+        this.ippMediaSource = ippMediaSource;
+    }
+
+    /**
+     * @return The assigned media-source for cost calculation.
+     */
     public IppMediaSourceCostDto getAssignedMediaSource() {
         return assignedMediaSource;
     }
 
+    /**
+     *
+     * @param assignedMediaSource
+     *            The assigned media-source for cost calculation.
+     */
     public void
             setAssignedMediaSource(IppMediaSourceCostDto assignedMediaSource) {
         this.assignedMediaSource = assignedMediaSource;
@@ -112,12 +177,12 @@ public final class ProxyPrintJobChunk {
         this.drm = drm;
     }
 
-    public BigDecimal getCost() {
-        return cost;
+    public ProxyPrintCostDto getCostResult() {
+        return costResult;
     }
 
-    public void setCost(BigDecimal cost) {
-        this.cost = cost;
+    public void setCostResult(ProxyPrintCostDto costResult) {
+        this.costResult = costResult;
     }
 
     public String getJobName() {

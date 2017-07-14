@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -60,6 +60,9 @@ public final class JsonHelper {
      */
     private static JsonFactory jsonFactory = new JsonFactory();
 
+    /**
+     * Private constructor.
+     */
     private JsonHelper() {
 
     }
@@ -67,6 +70,8 @@ public final class JsonHelper {
     /**
      * Serializes an {@link EnumSet}.
      *
+     * @param <E>
+     *            The enum type.
      * @param enumSet
      *            The {@link EnumSet}.
      * @return The serialized JSON result.
@@ -85,6 +90,8 @@ public final class JsonHelper {
     /**
      * De-serializes an {@link EnumSet}.
      *
+     * @param <E>
+     *            The enum type.
      * @param enumClass
      *            The enum class.
      * @param json
@@ -130,8 +137,7 @@ public final class JsonHelper {
             createEnumBooleanMapOrNull(final Class<E> enumClass,
                     final String json) {
         try {
-            return mapper.readValue(json, new TypeReference<Map<E, Boolean>>() {
-            });
+            return createEnumBooleanMap(enumClass, json);
         } catch (Exception e) {
             return null;
         }
@@ -152,12 +158,13 @@ public final class JsonHelper {
      */
     public static <E extends Enum<E>> Map<E, Boolean> createEnumBooleanMap(
             final Class<E> enumClass, final String json) throws IOException {
-        try {
-            return mapper.readValue(json, new TypeReference<Map<E, Boolean>>() {
-            });
-        } catch (IllegalArgumentException e) {
-            throw new IOException(e.getMessage(), e);
-        }
+        /*
+         * NOTE: this trick to use an intermediary map is needed cause
+         * TypeReference<Map<E, Boolean>> throws ClassCastException exception on
+         * the enum key when traversing the map with entrySet.
+         */
+        final Map<String, Boolean> mapTemp = createStringBooleanMap(json);
+        return asEnumBooleanMap(enumClass, mapTemp);
     }
 
     /**
@@ -181,6 +188,26 @@ public final class JsonHelper {
     }
 
     /**
+     * De-serializes a {@link Map} with string key and boolean value.
+     *
+     * @param json
+     *            The serialized JSON string.
+     * @return The {@link Map} or {@code null} when JSON input is invalid.
+     * @throws IOException
+     *             When JSON syntax is invalid.
+     */
+    public static Map<String, Boolean> createStringBooleanMap(final String json)
+            throws IOException {
+        try {
+            return mapper.readValue(json,
+                    new TypeReference<Map<String, Boolean>>() {
+                    });
+        } catch (IllegalArgumentException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    /**
      * De-serializes a {@link Map} with string key and integer value.
      *
      * @param json
@@ -197,13 +224,50 @@ public final class JsonHelper {
     }
 
     /**
+     * De-serializes a {@link Map} with string key and string value.
+     *
+     * @param json
+     *            The serialized JSON string.
+     * @return The {@link Map} or {@code null} when JSON input is invalid.
+     * @throws IOException
+     *             When JSON syntax is invalid.
+     */
+    public static Map<String, String> createStringMap(final String json)
+            throws IOException {
+        try {
+            return mapper.readValue(json,
+                    new TypeReference<Map<String, String>>() {
+                    });
+        } catch (IllegalArgumentException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    /**
+     * De-serializes a {@link Map} with string key and string value.
+     *
+     * @param json
+     *            The serialized JSON string.
+     * @return The {@link Map} or {@code null} when JSON input is invalid.
+     */
+    public static Map<String, String> createStringMapOrNull(final String json) {
+        try {
+            return createStringMap(json);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Creates Enum - Integer map of intermediary string key map.
      *
      * @param <E>
      *            The enum type.
      * @param enumClass
      *            The enum class.
      * @param mapTemp
-     * @return
+     *            The intermediary map.
+     * @return The map.
      */
     private static <E extends Enum<E>> Map<E, Integer> asEnumIntegerMap(
             final Class<E> enumClass, final Map<String, Integer> mapTemp) {
@@ -211,6 +275,31 @@ public final class JsonHelper {
         final Map<E, Integer> map = new HashMap<>();
 
         for (final Entry<String, Integer> entry : mapTemp.entrySet()) {
+            if (EnumUtils.isValidEnum(enumClass, entry.getKey())) {
+                map.put(EnumUtils.getEnum(enumClass, entry.getKey()),
+                        entry.getValue());
+            }
+        }
+        return map;
+    }
+
+    /**
+     * Creates Enum - Boolean map of intermediary string key map.
+     *
+     * @param <E>
+     *            The enum type.
+     * @param enumClass
+     *            The enum class.
+     * @param mapTemp
+     *            The intermediary map.
+     * @return The map.
+     */
+    private static <E extends Enum<E>> Map<E, Boolean> asEnumBooleanMap(
+            final Class<E> enumClass, final Map<String, Boolean> mapTemp) {
+
+        final Map<E, Boolean> map = new HashMap<>();
+
+        for (final Entry<String, Boolean> entry : mapTemp.entrySet()) {
             if (EnumUtils.isValidEnum(enumClass, entry.getKey())) {
                 map.put(EnumUtils.getEnum(enumClass, entry.getKey()),
                         entry.getValue());
@@ -318,6 +407,21 @@ public final class JsonHelper {
     public static String stringifyObjectMap(final Map<String, Object> map)
             throws IOException {
         return StringUtils.deleteWhitespace(mapper.writeValueAsString(map));
+    }
+
+    /**
+     * Creates a JSON string from a {@link Map}. Note: whitespace in the string
+     * is preserved.
+     *
+     * @param map
+     *            The {@link Map}.
+     * @return The JSON String.
+     * @throws IOException
+     *             When serialization fails.
+     */
+    public static String objectMapAsString(final Map<String, Object> map)
+            throws IOException {
+        return mapper.writeValueAsString(map);
     }
 
     /**

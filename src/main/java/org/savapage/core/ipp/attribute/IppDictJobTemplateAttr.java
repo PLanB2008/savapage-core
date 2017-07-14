@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -127,6 +127,16 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
     public static final String ATTR_MEDIA_SIZE = "media-size";
 
     /**
+     * .
+     */
+    public static final String ATTR_MEDIA_COLOR = "media-color";
+
+    /**
+     * .
+     */
+    public static final String ATTR_MEDIA_TYPE = "media-type";
+
+    /**
      *
      */
     public static final String ATTR_MEDIA_SOURCE = "media-source";
@@ -134,6 +144,8 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
     public static final String ATTR_PRINTER_RESOLUTION = "printer-resolution";
 
     public static final String ATTR_PRINT_QUALITY = "print-quality";
+
+    public static final String ATTR_PRINT_SCALING = "print-scaling";
 
     /**
      * "This attribute specifies whether or not the media sheets of each copy of
@@ -207,6 +219,24 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
     public static final String CUPS_ATTR_PAGE_TOP = "page-top";
 
     /**
+     *
+     */
+    public static final String CUPS_ATTR_PAGE_SET = "page-set";
+
+    /**
+     * Rotates the page.
+     */
+    public static final String CUPS_ATTR_ORIENTATION_REQUESTED =
+            "orientation-requested";
+
+    /**
+     * N-Up printing places multiple document pages on a single printed page.
+     * The "number-up-layout" option chooses the layout of the pages on each
+     * output page.
+     */
+    public static final String CUPS_ATTR_NUMBER_UP_LAYOUT = "number-up-layout";
+
+    /**
      * PWG5100.13: The RECOMMENDED "media-bottom-margin" member attribute
      * defines the Printer's physical bottom margin in hundredths of millimeters
      * from the bottom edge, without respect to the value of the
@@ -248,10 +278,89 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
     public static final String ATTR_OUTPUT_BIN = "output-bin";
 
     /**
+    *
+    */
+    public static final String ORG_SAVAPAGE_ATTR_LANDSCAPE =
+            ORG_SAVAPAGE_ATTR_PFX + "landscape";
+
+    /**
+     * .
+     */
+    public static final String ORG_SAVAPAGE_ATTR_COVER_TYPE =
+            ORG_SAVAPAGE_ATTR_PFX + "cover-type";
+
+    /**
      * The prefix for Custom SavaPage IPP Job template finishings attributes.
      */
     public static final String ORG_SAVAPAGE_ATTR_PFX_FINISHINGS =
             ORG_SAVAPAGE_ATTR_PFX + "finishings-";
+
+    /**
+     * Custom SavaPage IPP Job template finishing attribute for external
+     * operator action.
+     */
+    public static final String ORG_SAVAPAGE_ATTR_FINISHINGS_EXT =
+            ORG_SAVAPAGE_ATTR_PFX_FINISHINGS + "ext";
+
+    /**
+     * The Job Ticket media attributes related to {@link #ATTR_MEDIA}.
+     */
+    public static final String[] JOBTICKET_ATTR_MEDIA =
+            new String[] { ATTR_MEDIA_COLOR, ATTR_MEDIA_TYPE };
+
+    /**
+     * The Job Ticket media attributes related to
+     * {@link IppKeyword#MEDIA_TYPE_PAPER}.
+     */
+    public static final String[] JOBTICKET_ATTR_MEDIA_TYPE_PAPER =
+            new String[] { ATTR_MEDIA_COLOR };
+
+    /**
+     * .
+     */
+    public static final String[] JOBTICKET_ATTR_COPY =
+            new String[] { ORG_SAVAPAGE_ATTR_COVER_TYPE };
+
+    /**
+     * .
+     */
+    public static final String[] JOBTICKET_ATTR_FINISHINGS_EXT =
+            new String[] { ORG_SAVAPAGE_ATTR_FINISHINGS_EXT };
+
+    /**
+     * All Job Tickets attributes.
+     */
+    private static final String[][] JOBTICKET_ATTR_ARRAYS =
+            { JOBTICKET_ATTR_MEDIA, JOBTICKET_ATTR_COPY,
+                    JOBTICKET_ATTR_FINISHINGS_EXT };
+
+    /**
+     * IPP Attributes that makes a Job Ticket for settlement only: array of
+     * 2-element array elements, one for each attribute:
+     * <ol>
+     * <li>The first element is the IPP option key.</li>
+     * <li>The second element its NONE value.</li>
+     * </ol>
+     */
+    public static final String[][] JOBTICKET_ATTR_SETTLE_ONLY_V_NONE =
+            { { IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_COVER_TYPE,
+                    IppKeyword.ORG_SAVAPAGE_ATTR_COVER_TYPE_NO_COVER } };
+
+    /**
+     * IPP Attributes exclusively for *SPJobTicket/Copy: array of 2-element
+     * array elements:
+     * <ol>
+     * <li>The first element is the IPP option key.</li>
+     * <li>The second element its NONE value.</li>
+     * </ol>
+     */
+    public static final String[][] JOBTICKET_ATTR_COPY_V_NONE = {
+            { IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_COVER_TYPE,
+                    IppKeyword.ORG_SAVAPAGE_ATTR_COVER_TYPE_NO_COVER },
+            { IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_EXT,
+                    IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_EXTERNAL_NONE }
+            //
+    };
 
     /**
      * Custom SavaPage IPP Job template finishing attribute for Stapling.
@@ -276,6 +385,109 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
      */
     public static final String ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET =
             ORG_SAVAPAGE_ATTR_PFX_FINISHINGS + "booklet";
+
+    /**
+     * Custom SavaPage IPP Job template finishing attribute for jog-offset.
+     */
+    public static final String ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET =
+            ORG_SAVAPAGE_ATTR_PFX_FINISHINGS + "jog-offset";
+
+    /**
+     * Array of 2-element array elements, one for each finishings: the first
+     * element is the IPP option key, and the second element its NONE value.
+     */
+    public static final String[][] ORG_SAVAPAGE_ATTR_FINISHINGS_V_NONE = {
+            { IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET,
+                    IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET_NONE },
+            { IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_FOLD,
+                    IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_FOLD_NONE },
+            { IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_PUNCH,
+                    IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_PUNCH_NONE },
+            { IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_STAPLE,
+                    IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_STAPLE_NONE }
+            //
+    };
+
+    /**
+     * A set of IPP attribute keywords used in UI (Web App) that MUST have a
+     * PPDE override, to be displayed.
+     */
+    public static final String[] ATTR_SET_UI_PPDE_ONLY = new String[] {
+            /* */
+            ATTR_MEDIA_TYPE,
+            /* */
+            /* */
+            ATTR_OUTPUT_BIN };
+
+    /**
+     * A set of IPP attribute keywords used in UI (Web App) for Page Options.
+     * <p>
+     * Note that the option order in the array is the top-down order as they
+     * appear in the Web App.
+     * </p>
+     */
+    public static final String[] ATTR_SET_UI_PAGE_SETUP = new String[] {
+            /* */
+            ATTR_MEDIA_SOURCE,
+            /* */
+            ATTR_OUTPUT_BIN,
+            /* */
+            ATTR_MEDIA,
+            /* */
+            ATTR_MEDIA_TYPE,
+            /* */
+            ATTR_SIDES,
+            /* */
+            ATTR_PRINT_COLOR_MODE,
+            /* */
+            ATTR_PRINTER_RESOLUTION,
+            /* */
+            ATTR_NUMBER_UP };
+
+    /**
+     * A set of IPP attribute keywords used in UI (Web App) for Job Options.
+     * <p>
+     * Note that the option order in the array is the top-down order as they
+     * appear in the Web App.
+     * </p>
+     */
+    public static final String[] ATTR_SET_UI_JOB = new String[] {
+            /*
+             * No entries intended.
+             */
+    };
+
+    /**
+     * A set of IPP attribute keywords used in UI (Web App) for Advanced
+     * Options.
+     * <p>
+     * Note that the option order in the array is the top-down order as they
+     * appear in the Web App.
+     * </p>
+     */
+    public static final String[] ATTR_SET_UI_ADVANCED = new String[] {
+            /* */
+            ORG_SAVAPAGE_ATTR_FINISHINGS_STAPLE,
+            /* */
+            ORG_SAVAPAGE_ATTR_FINISHINGS_PUNCH,
+            /* */
+            ORG_SAVAPAGE_ATTR_FINISHINGS_FOLD,
+            /* */
+            ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET };
+
+    /**
+     * A set of IPP attribute keywords NOT used in UI (Web App) but for
+     * reference only.
+     */
+    public static final String[] ATTR_SET_REFERENCE_ONLY = new String[] {
+            /* */
+            ATTR_SHEET_COLLATE,
+            /* */
+            ATTR_PRINT_SCALING,
+            /* */
+            ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET
+            //
+    };
 
     /*
      * Defaults
@@ -309,6 +521,8 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
     public static final String ATTR_MEDIA_SOURCE_DFLT =
             ATTR_MEDIA_SOURCE + _DFLT;
 
+    public static final String ATTR_MEDIA_TYPE_DFLT = ATTR_MEDIA_TYPE + _DFLT;
+
     public static final String ATTR_PRINTER_RESOLUTION_DFLT =
             ATTR_PRINTER_RESOLUTION + _DFLT;
 
@@ -317,6 +531,9 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
 
     public static final String ATTR_SHEET_COLLATE_DFLT =
             ATTR_SHEET_COLLATE + _DFLT;
+
+    public static final String ATTR_PRINT_SCALING_DFLT =
+            ATTR_PRINT_SCALING + _DFLT;
 
     public static final String ATTR_PRINT_COLOR_MODE_DFLT =
             ATTR_PRINT_COLOR_MODE + _DFLT;
@@ -358,6 +575,8 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
     public static final String ATTR_MEDIA_SOURCE_SUPP =
             ATTR_MEDIA_SOURCE + _SUPP;
 
+    public static final String ATTR_MEDIA_TYPE_SUPP = ATTR_MEDIA_TYPE + _SUPP;
+
     public static final String ATTR_PRINTER_RESOLUTION_SUPP =
             ATTR_PRINTER_RESOLUTION + _SUPP;
 
@@ -366,6 +585,9 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
 
     public static final String ATTR_SHEET_COLLATE_SUPP =
             ATTR_SHEET_COLLATE + _SUPP;
+
+    public static final String ATTR_PRINT_SCALING_SUPP =
+            ATTR_PRINT_SCALING + _SUPP;
 
     public static final String ATTR_PRINT_COLOR_MODE_SUPP =
             ATTR_PRINT_COLOR_MODE + _SUPP;
@@ -611,6 +833,15 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
             // ALTERNATIVE: see attributesAlt
 
             /**
+             * media-type
+             */
+            // DEFAULT
+            new IppAttr(ATTR_MEDIA_TYPE, IppKeyword.instance()),
+            new IppAttr(ATTR_MEDIA_TYPE_DFLT, IppKeyword.instance()),
+            new IppAttr(ATTR_MEDIA_TYPE_SUPP, IppKeyword.instance()),
+            // ALTERNATIVE: see attributesAlt
+
+            /**
              * <pre>
              * +-------------------+----------------------+----------------------+
              * | printer-resolution| printer-resolution-  | printer-resolution-  |
@@ -651,6 +882,10 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
             new IppAttr(ATTR_SHEET_COLLATE, IppKeyword.instance()),
             new IppAttr(ATTR_SHEET_COLLATE_DFLT, IppKeyword.instance()),
             new IppAttr(ATTR_SHEET_COLLATE_SUPP, IppKeyword.instance()),
+
+            new IppAttr(ATTR_PRINT_SCALING, IppKeyword.instance()),
+            new IppAttr(ATTR_PRINT_SCALING_DFLT, IppKeyword.instance()),
+            new IppAttr(ATTR_PRINT_SCALING_SUPP, IppKeyword.instance()),
 
             /**
              * Where from ???
@@ -746,6 +981,14 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
             new IppAttr(ATTR_MEDIA_SOURCE_SUPP, IppName.instance()),
 
             /**
+             * media-source type3 keyword | name(MAX)
+             */
+            // ALTERNATIVE
+            new IppAttr(ATTR_MEDIA_TYPE, IppName.instance()),
+            new IppAttr(ATTR_MEDIA_TYPE_DFLT, IppName.instance()),
+            new IppAttr(ATTR_MEDIA_TYPE_SUPP, IppName.instance()),
+
+            /**
              * output-bin type3 keyword | name(MAX)
              */
             // ALTERNATIVE
@@ -821,6 +1064,11 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
             return dictionaryAlt.get(keyword);
         }
 
+        if (keyword.startsWith(ATTR_MEDIA_TYPE)
+                && (valueTag != IppValueTag.KEYWORD)) {
+            return dictionaryAlt.get(keyword);
+        }
+
         if (keyword.startsWith(ATTR_OUTPUT_BIN)
                 && (valueTag != IppValueTag.KEYWORD)) {
             return dictionaryAlt.get(keyword);
@@ -830,6 +1078,51 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
          * Use the default.
          */
         return getAttr(keyword);
+    }
+
+    /**
+     * Checks if an IPP option is exclusively used in Job Ticket context.
+     *
+     * @param keyword
+     *            The IPP option keyword.
+     * @return {@code true} if IPP option is exclusively used for Job Ticket.
+     */
+    public static boolean isJobTicketAttr(final String keyword) {
+
+        if (isCustomExtAttr(keyword)) {
+            return true;
+        }
+
+        for (final String[] attrs : JOBTICKET_ATTR_ARRAYS) {
+            for (final String attr : attrs) {
+                if (attr.equals(keyword)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Checks if an IPP option/value is a finishing with unspecified "none"
+     * value.
+     *
+     * @param keyword
+     *            The IPP option keyword.
+     * @param value
+     *            The IPP option value.
+     * @return {@code true} if IPP option/value is finishing with unspecified
+     *         "none" value.
+     */
+    public static boolean isNoneValueFinishing(final String keyword,
+            final String value) {
+
+        for (final String[] finishing : ORG_SAVAPAGE_ATTR_FINISHINGS_V_NONE) {
+            if (finishing[0].equals(keyword)) {
+                return finishing[1].equals(value);
+            }
+        }
+        return false;
     }
 
     /**

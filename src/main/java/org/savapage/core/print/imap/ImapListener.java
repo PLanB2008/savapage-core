@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -26,6 +26,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 
 import javax.mail.Flags;
@@ -45,6 +46,7 @@ import javax.mail.internet.InternetAddress;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.time.DateUtils;
 import org.savapage.core.SpException;
+import org.savapage.core.UnavailableException;
 import org.savapage.core.cometd.AdminPublisher;
 import org.savapage.core.cometd.PubLevelEnum;
 import org.savapage.core.cometd.PubTopicEnum;
@@ -87,23 +89,24 @@ import com.sun.mail.imap.IMAPFolder;
  * <li><a href=
  * "https://javamail.java.net/nonav/docs/api/com/sun/mail/imap/package-summary.html"
  * >IMAP protocol properties</a>. Note that if you're using the "imaps" protocol
- * to access IMAP over SSL, all the properties would be named "mail.imaps.*".</li>
+ * to access IMAP over SSL, all the properties would be named "mail.imaps.*".
+ * </li>
  * </ul>
  * </p>
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class ImapListener extends MessageCountAdapter {
 
-    private static final Logger LOGGER = LoggerFactory
-            .getLogger(ImapListener.class);
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(ImapListener.class);
 
     /**
     *
     */
-    private static final QueueService QUEUE_SERVICE = ServiceContext
-            .getServiceFactory().getQueueService();
+    private static final QueueService QUEUE_SERVICE =
+            ServiceContext.getServiceFactory().getQueueService();
 
     /*
      * Use local host as originator IP.
@@ -342,8 +345,8 @@ public final class ImapListener extends MessageCountAdapter {
          */
         this.inbox = store.getFolder(inboxFolder);
         if (this.inbox == null) {
-            throw new SpException("IMAP folder [" + this.inboxFolder
-                    + "] does not exist.");
+            throw new SpException(
+                    "IMAP folder [" + this.inboxFolder + "] does not exist.");
         }
 
         /*
@@ -351,8 +354,8 @@ public final class ImapListener extends MessageCountAdapter {
          */
         trash = store.getFolder(trashFolder);
         if (trash == null) {
-            throw new SpException("IMAP folder [" + this.trashFolder
-                    + "] does not exist.");
+            throw new SpException(
+                    "IMAP folder [" + this.trashFolder + "] does not exist.");
         }
 
         /*
@@ -362,13 +365,13 @@ public final class ImapListener extends MessageCountAdapter {
         this.trash.open(Folder.HOLDS_MESSAGES);
 
         if (!(this.inbox instanceof IMAPFolder)) {
-            throw new SpException("[" + this.inboxFolder
-                    + "] is not an IMAP folder.");
+            throw new SpException(
+                    "[" + this.inboxFolder + "] is not an IMAP folder.");
         }
 
         if (!(this.trash instanceof IMAPFolder)) {
-            throw new SpException("[" + this.inboxFolder
-                    + "] is not an IMAP folder.");
+            throw new SpException(
+                    "[" + this.inboxFolder + "] is not an IMAP folder.");
         }
 
         if (LOGGER.isDebugEnabled()) {
@@ -427,8 +430,8 @@ public final class ImapListener extends MessageCountAdapter {
      * @throws MessagingException
      * @throws InterruptedException
      */
-    public synchronized void disconnect() throws MessagingException,
-            InterruptedException {
+    public synchronized void disconnect()
+            throws MessagingException, InterruptedException {
 
         int nActions = 0;
 
@@ -550,8 +553,8 @@ public final class ImapListener extends MessageCountAdapter {
      *             When thread has been interrupted.
      */
     public void listen(final int sessionHeartbeatSecs,
-            final int sessionDurationSecs) throws MessagingException,
-            InterruptedException {
+            final int sessionDurationSecs)
+            throws MessagingException, InterruptedException {
 
         final SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
         try {
@@ -568,16 +571,14 @@ public final class ImapListener extends MessageCountAdapter {
 
             final IMAPFolder watchFolder = (IMAPFolder) inbox;
 
-            this.keepConnectionAlive =
-                    new Thread(new ImapHeartbeat(watchFolder,
-                            sessionHeartbeatSecs),
-                            ImapHeartbeat.class.getSimpleName());
+            this.keepConnectionAlive = new Thread(
+                    new ImapHeartbeat(watchFolder, sessionHeartbeatSecs),
+                    ImapHeartbeat.class.getSimpleName());
 
             this.keepConnectionAlive.start();
 
-            final long timeMax =
-                    System.currentTimeMillis() + DateUtil.DURATION_MSEC_SECOND
-                            * sessionDurationSecs;
+            final long timeMax = System.currentTimeMillis()
+                    + DateUtil.DURATION_MSEC_SECOND * sessionDurationSecs;
 
             final Date dateMax = new Date(timeMax);
 
@@ -601,12 +602,11 @@ public final class ImapListener extends MessageCountAdapter {
                 }
 
                 if (LOGGER.isTraceEnabled()) {
-                    LOGGER.trace("Waiting ["
-                            + (++nInterval)
-                            + "] next ["
+                    LOGGER.trace("Waiting [" + (++nInterval) + "] next ["
                             + dateFormat.format(DateUtils.addSeconds(now,
-                                    sessionHeartbeatSecs)) + "] till ["
-                            + dateFormat.format(dateMax) + "] ...");
+                                    sessionHeartbeatSecs))
+                            + "] till [" + dateFormat.format(dateMax)
+                            + "] ...");
                 }
 
                 /*
@@ -718,8 +718,8 @@ public final class ImapListener extends MessageCountAdapter {
                     } else {
                         message.setFlag(Flags.Flag.DELETED, true);
                         if (LOGGER.isTraceEnabled()) {
-                            LOGGER.trace("Message # " + nMsg
-                                    + " AD-HOC deleted");
+                            LOGGER.trace(
+                                    "Message # " + nMsg + " AD-HOC deleted");
                         }
                     }
                 } catch (MessageRemovedException e) {
@@ -732,8 +732,10 @@ public final class ImapListener extends MessageCountAdapter {
     }
 
     /**
+     * Processes email messages
      *
      * @param messages
+     *            The array of email messages.
      * @throws MessagingException
      * @throws IOException
      */
@@ -820,9 +822,8 @@ public final class ImapListener extends MessageCountAdapter {
 
         try {
 
-            final User user =
-                    ServiceContext.getServiceFactory().getUserService()
-                            .findUserByEmail(from);
+            final User user = ServiceContext.getServiceFactory()
+                    .getUserService().findUserByEmail(from);
 
             if (user == null) {
 
@@ -851,14 +852,16 @@ public final class ImapListener extends MessageCountAdapter {
                             cm.getConfigInt(Key.PRINT_IMAP_MAX_FILES);
 
                     long maxBytesAllowed =
-                            cm.getConfigLong(Key.PRINT_IMAP_MAX_FILE_MB) * 1024 * 1024;
+                            cm.getConfigLong(Key.PRINT_IMAP_MAX_FILE_MB) * 1024
+                                    * 1024;
 
                     Multipart multipart = (Multipart) content;
                     final MutableInt nPrinted = new MutableInt(0);
 
                     for (int i = 0; i < multipart.getCount(); i++) {
                         printMessagePart(from, user, multipart.getBodyPart(i),
-                                i, nPrinted, maxPrintedAllowed, maxBytesAllowed);
+                                i, nPrinted, maxPrintedAllowed,
+                                maxBytesAllowed);
                     }
 
                 } else {
@@ -891,16 +894,15 @@ public final class ImapListener extends MessageCountAdapter {
      * @throws MessagingException
      * @throws IOException
      */
-    private void printMessagePart(final String originatorEmail,
-            final User user, final Part part, final int i,
-            final MutableInt nPrinted, final int maxPrintedAllowed,
-            final long maxBytesAllowed) throws MessagingException, IOException {
+    private void printMessagePart(final String originatorEmail, final User user,
+            final Part part, final int i, final MutableInt nPrinted,
+            final int maxPrintedAllowed, final long maxBytesAllowed)
+            throws MessagingException, IOException {
 
         final String fileName = part.getFileName();
 
-        final String contentType =
-                part.getContentType().replaceAll("\\s*[\\r\\n]+\\s*", "")
-                        .trim().toLowerCase();
+        final String contentType = part.getContentType()
+                .replaceAll("\\s*[\\r\\n]+\\s*", "").trim().toLowerCase();
 
         /*
          * From the JavaDoc
@@ -958,8 +960,8 @@ public final class ImapListener extends MessageCountAdapter {
                     final DocContentPrintReq docContentPrintReq =
                             new DocContentPrintReq();
 
-                    docContentPrintReq.setContentType(DocContent
-                            .getContentTypeFromFile(fileName));
+                    docContentPrintReq.setContentType(
+                            DocContent.getContentTypeFromFile(fileName));
                     docContentPrintReq.setFileName(fileName);
                     docContentPrintReq.setOriginatorEmail(originatorEmail);
                     docContentPrintReq.setOriginatorIp(ORIGINATOR_IP);
@@ -975,6 +977,14 @@ public final class ImapListener extends MessageCountAdapter {
 
                 } catch (DocContentPrintException e) {
                     rejectedReason = e.getMessage();
+                } catch (UnavailableException e) {
+                    if (e.getState() == UnavailableException.State.TEMPORARY) {
+                        rejectedReason = "print for this file type is "
+                                + "currently uavailable";
+                    } else {
+                        rejectedReason =
+                                "print for this file type is unvailable";
+                    }
                 }
 
             } else {
@@ -998,13 +1008,13 @@ public final class ImapListener extends MessageCountAdapter {
                     String.format("%s Mail Print rejected file [%s]",
                             CommunityDictEnum.SAVAPAGE.getWord(), fileName);
 
-            final String content =
-                    String.format("File: %s<p>Reason: %s</p>", fileName,
-                            rejectedReason);
+            final String content = String.format("File: %s<p>Reason: %s</p>",
+                    fileName, rejectedReason);
 
-            this.sendEmail(originatorEmail, subject, String.format(
-                    "%s Mail Print rejected",
-                    CommunityDictEnum.SAVAPAGE.getWord()), content);
+            this.sendEmail(originatorEmail, subject,
+                    String.format("%s Mail Print rejected",
+                            CommunityDictEnum.SAVAPAGE.getWord()),
+                    content);
         }
     }
 
@@ -1015,7 +1025,9 @@ public final class ImapListener extends MessageCountAdapter {
      *            The email address.
      * @param subject
      *            The subject of the message.
-     * @param body
+     * @param headerText
+     *            The content header text.
+     * @param content
      *            The body text with optional newline {@code \n} characters.
      */
     private void sendEmail(final String toAddress, final String subject,
@@ -1027,7 +1039,8 @@ public final class ImapListener extends MessageCountAdapter {
 
             emailParms.setToAddress(toAddress);
             emailParms.setSubject(subject);
-            emailParms.setBodyFromTemplate(headerText, content);
+            emailParms.setBodyInStationary(headerText, content,
+                    Locale.getDefault(), true);
 
             ServiceContext.getServiceFactory().getEmailService()
                     .writeEmail(emailParms);
@@ -1075,8 +1088,8 @@ public final class ImapListener extends MessageCountAdapter {
      * states: <i> Per GMail's IMAP client settings pages (in the Help Center),
      * the IMAP "delete" command is being used to remove the current label, or
      * "archive" in the case of inbox. To actually "delete" something from an
-     * IMAP session, you need to move the message to the "[GMail]\Trash" folder.
-     * </i>
+     * IMAP session, you need to move the message to the "[GMail]\Trash"
+     * folder. </i>
      * </p>
      * <p>
      * See <a href=

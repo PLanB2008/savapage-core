@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -26,11 +26,16 @@ import java.math.BigDecimal;
 import java.text.DateFormat;
 import java.text.NumberFormat;
 import java.text.ParseException;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
+import java.util.ResourceBundle;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.IConfigProp.Key;
 
 /**
  *
@@ -38,6 +43,17 @@ import org.apache.commons.lang3.StringUtils;
  *
  */
 public final class LocaleHelper {
+
+    private static final String LOCALE_LANG_ENGLISH = "en";
+    private static final String LOCALE_LANG_DUTCH = "nl";
+    private static final String LOCALE_LANG_FRENCH = "fr";
+    private static final String LOCALE_LANG_GERMAN = "de";
+    private static final String LOCALE_LANG_RUSSIAN = "ru";
+    private static final String LOCALE_LANG_SPANISH = "es";
+
+    private static final String LOCALE_CTRY_NL = "NL";
+    private static final String LOCALE_CTRY_ES = "ES";
+    private static final String LOCALE_CTRY_RU = "RU";
 
     /**
      *
@@ -165,10 +181,57 @@ public final class LocaleHelper {
      */
     public static <E extends Enum<E>> String uiText(final Enum<E> value,
             final Locale locale) {
-        return Messages
-                .loadXmlResource(value.getClass(),
-                        value.getClass().getSimpleName(), locale)
-                .getString(value.toString());
+        return getResourceBundle(value, locale).getString(value.toString());
+    }
+
+    /**
+     * Gets the localized user interface text of an {@link Enum} value with
+     * arguments.
+     *
+     * @param <E>
+     *            The Enum class.
+     * @param value
+     *            The Enum value.
+     * @param locale
+     *            The {@link Locale}.
+     * @param args
+     *            The arguments.
+     * @return The localized text.
+     */
+    public static <E extends Enum<E>> String uiText(final Enum<E> value,
+            final Locale locale, final String... args) {
+        return Messages.formatMessage(uiText(value, locale), args);
+    }
+
+    /**
+     * Gets the localized user interface text of an {@link Enum} value.
+     *
+     * @param <E>
+     *            The Enum class.
+     * @param value
+     *            The Enum value.
+     * @param locale
+     *            The {@link Locale}.
+     * @param suffix
+     *            The value suffix to be appended to the Enum string value.
+     * @return The localized text.
+     */
+    public static <E extends Enum<E>> String uiText(final Enum<E> value,
+            final Locale locale, final String suffix) {
+        return getResourceBundle(value, locale)
+                .getString(String.format("%s%s", value.toString(), suffix));
+    }
+
+    /**
+     *
+     * @param value
+     * @param locale
+     * @return
+     */
+    private static <E extends Enum<E>> ResourceBundle
+            getResourceBundle(final Enum<E> value, final Locale locale) {
+        return Messages.loadXmlResource(value.getClass(),
+                value.getClass().getSimpleName(), locale);
     }
 
     /**
@@ -215,6 +278,67 @@ public final class LocaleHelper {
         }
 
         return file;
+    }
+
+    /**
+     *
+     * @return The comma separated list of supported languages.
+     */
+    private static String getSupportedLanguages() {
+
+        final StringBuilder list = new StringBuilder();
+
+        list.append(Locale.GERMANY.getLanguage()).append(',');
+        list.append(Locale.US.getLanguage()).append(',');
+        list.append(Locale.FRANCE.getLanguage()).append(',');
+        list.append(LOCALE_LANG_SPANISH).append(',');
+        list.append(LOCALE_LANG_RUSSIAN).append(',');
+        list.append(LOCALE_LANG_DUTCH);
+
+        return list.toString();
+    }
+
+    /**
+     *
+     * @return The {@link Locale} list of available languages.
+     */
+    public static List<Locale> getAvailableLanguages() {
+
+        final List<Locale> list = new ArrayList<>();
+
+        String langAvailable = ConfigManager.instance()
+                .getConfigValue(Key.WEBAPP_LANGUAGE_AVAILABLE).trim();
+
+        if (StringUtils.isBlank(langAvailable)) {
+            langAvailable = getSupportedLanguages();
+        }
+
+        for (final String lang : StringUtils.split(langAvailable, " ,;:")) {
+            switch (lang.toLowerCase()) {
+            case LOCALE_LANG_DUTCH:
+                list.add(new Locale(LOCALE_LANG_DUTCH, LOCALE_CTRY_NL));
+                break;
+            case LOCALE_LANG_ENGLISH:
+                list.add(Locale.US);
+                break;
+            case LOCALE_LANG_FRENCH:
+                list.add(Locale.FRANCE);
+                break;
+            case LOCALE_LANG_GERMAN:
+                list.add(Locale.GERMANY);
+                break;
+            case LOCALE_LANG_SPANISH:
+                list.add(new Locale(LOCALE_LANG_SPANISH, LOCALE_CTRY_ES));
+                break;
+            case LOCALE_LANG_RUSSIAN:
+                list.add(new Locale(LOCALE_LANG_RUSSIAN, LOCALE_CTRY_RU));
+                break;
+            default:
+                break;
+            }
+        }
+
+        return list;
     }
 
 }

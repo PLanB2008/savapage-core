@@ -1,5 +1,5 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
  * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -22,6 +22,7 @@
 package org.savapage.core.services.impl;
 
 import java.io.IOException;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
@@ -59,6 +60,13 @@ public final class AccessControlServiceImpl extends AbstractService
             LoggerFactory.getLogger(AccessControlServiceImpl.class);
 
     /**
+     * The {@link ACLRoleEnum} values that are granted access when indeterminate
+     * at "All User" top level.
+     */
+    private static final EnumSet<ACLRoleEnum> TOP_INDETERMINATE_GRANTED =
+            EnumSet.of(ACLRoleEnum.PRINT_CREATOR);
+
+    /**
      * Checks if role is enabled in JSON String.
      *
      * @param json
@@ -76,11 +84,10 @@ public final class AccessControlServiceImpl extends AbstractService
         final Map<ACLRoleEnum, Boolean> map =
                 JsonHelper.createEnumBooleanMap(ACLRoleEnum.class, json);
 
-        final String key = role.toString();
         final Boolean value;
 
-        if (map.containsKey(key)) {
-            value = map.get(key);
+        if (map.containsKey(role)) {
+            value = map.get(role);
         } else {
             value = null;
         }
@@ -158,10 +165,10 @@ public final class AccessControlServiceImpl extends AbstractService
     @Override
     public boolean isAuthorized(final User user, final ACLRoleEnum role) {
 
-        final Boolean isUserAuthorized = isUserAuthorized(user, role);
+        final Boolean isUserAuth = isUserAuthorized(user, role);
 
-        if (isUserAuthorized != null) {
-            return isUserAuthorized.booleanValue();
+        if (isUserAuth != null) {
+            return isUserAuth.booleanValue();
         }
 
         /*
@@ -177,8 +184,9 @@ public final class AccessControlServiceImpl extends AbstractService
                         UserGroupMemberDao.GroupField.GROUP_NAME, true);
 
         for (final UserGroup group : groupList) {
-            if (BooleanUtils.isTrue(isGroupAuthorized(group, role))) {
-                return true;
+            final Boolean isGroupAuth = isGroupAuthorized(group, role);
+            if (isGroupAuth != null) {
+                return isGroupAuth.booleanValue();
             }
         }
 
@@ -193,13 +201,24 @@ public final class AccessControlServiceImpl extends AbstractService
             group = userGroupService().getExternalUserGroup();
         }
 
-        if (BooleanUtils.isTrue(isGroupAuthorized(group, role))) {
+        final Boolean isGroupAuth = isGroupAuthorized(group, role);
+        if (isGroupAuth != null) {
+            return isGroupAuth.booleanValue();
+        }
+
+        /*
+         * All Users: undetermined is handled as NOT authorized, except for some
+         * roles.
+         */
+        final Boolean isAllUserAuth =
+                isGroupAuthorized(userGroupService().getAllUserGroup(), role);
+
+        if (isAllUserAuth == null
+                && this.getTopIndeterminateGranted().contains(role)) {
             return true;
         }
 
-        // All Users
-        if (BooleanUtils.isTrue(isGroupAuthorized(
-                userGroupService().getAllUserGroup(), role))) {
+        if (BooleanUtils.isTrue(isAllUserAuth)) {
             return true;
         }
 
@@ -403,8 +422,13 @@ public final class AccessControlServiceImpl extends AbstractService
         }
 
         // All Users
-        return getGroupPrivileges(
-                userGroupService().getAllUserGroup(), groupAttrEnum, oid);
+        return getGroupPrivileges(userGroupService().getAllUserGroup(),
+                groupAttrEnum, oid);
+    }
+
+    @Override
+    public EnumSet<ACLRoleEnum> getTopIndeterminateGranted() {
+        return TOP_INDETERMINATE_GRANTED;
     }
 
 }

@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -40,6 +40,12 @@ public final class JsonProxyPrinterOpt {
      */
     @JsonProperty("keyword")
     private String keyword;
+
+    /**
+     * {@code true} when this option is for JobTicket specification.
+     */
+    @JsonIgnore
+    private boolean jobTicket;
 
     /**
      * The PPD option keyword (can be {@code null} when neither present nor
@@ -96,12 +102,42 @@ public final class JsonProxyPrinterOpt {
         this.defchoice = opt.defchoice;
         this.defchoiceIpp = opt.defchoiceIpp;
         this.uiText = opt.uiText;
+        this.jobTicket = opt.jobTicket;
 
         this.choices = new ArrayList<>();
 
         for (final JsonProxyPrinterOptChoice choice : opt.choices) {
             this.choices.add(choice.copy());
         }
+    }
+
+    /**
+     * Checks if a choice is present.
+     *
+     * @param choice
+     *            The choice to check.
+     * @return {@code true} when choice is present.
+     */
+    @JsonIgnore
+    public boolean hasChoice(final String choice) {
+        return getChoice(choice) != null;
+    }
+
+    /**
+     * Gets a choice.
+     *
+     * @param choice
+     *            The choice
+     * @return {@code null} when choice is not present.
+     */
+    @JsonIgnore
+    public JsonProxyPrinterOptChoice getChoice(final String choice) {
+        for (final JsonProxyPrinterOptChoice choiceWlk : this.choices) {
+            if (choiceWlk.getChoice().equals(choice)) {
+                return choiceWlk;
+            }
+        }
+        return null;
     }
 
     /**
@@ -206,6 +242,23 @@ public final class JsonProxyPrinterOpt {
     }
 
     /**
+     *
+     * @return {@code true} when this option is for JobTicket specification.
+     */
+    public boolean isJobTicket() {
+        return jobTicket;
+    }
+
+    /**
+     *
+     * @param jobTicket
+     *            {@code true} when this option is for JobTicket specification.
+     */
+    public void setJobTicket(boolean jobTicket) {
+        this.jobTicket = jobTicket;
+    }
+
+    /**
      * @return The choices of this option.
      */
     public ArrayList<JsonProxyPrinterOptChoice> getChoices() {
@@ -219,4 +272,14 @@ public final class JsonProxyPrinterOpt {
     public void setChoices(final ArrayList<JsonProxyPrinterOptChoice> choices) {
         this.choices = choices;
     }
+
+    /**
+     *
+     * @return {@code true} when this option is an PPD extension.
+     */
+    @JsonIgnore
+    public boolean isPpdExt() {
+        return this.keywordPpd != null;
+    }
+
 }

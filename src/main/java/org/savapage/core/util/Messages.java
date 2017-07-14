@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,17 +14,22 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.util;
 
+import java.io.File;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.text.MessageFormat;
 import java.util.Locale;
 import java.util.ResourceBundle;
 
+import org.savapage.core.SpException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,7 +38,7 @@ import org.slf4j.LoggerFactory;
  * {@code message_<locale>.xml} file in the same directory as the requester
  * class, which is passed as parameter to all public methods.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class Messages extends MessagesBundleMixin {
@@ -41,8 +46,8 @@ public final class Messages extends MessagesBundleMixin {
     /**
      * .
      */
-    private static final Logger LOGGER = LoggerFactory
-            .getLogger(Messages.class);
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(Messages.class);
 
     /**
      *
@@ -56,7 +61,7 @@ public final class Messages extends MessagesBundleMixin {
     }
 
     /**
-     * Loads a {@link ResourceBundle}.
+     * Loads a {@link ResourceBundle} from a jar file.
      *
      * @param reqClass
      *            The requester {@link Class}.
@@ -75,17 +80,37 @@ public final class Messages extends MessagesBundleMixin {
     }
 
     /**
-     * Loads a {@link ResourceBundle}.
-     * <p>
-     * NOTE: When a {@code message_<locale>.properties} files is already loaded
-     * in the cache, the content of this file is used instead of the XML
-     * variant. See
-     * {@link ResourceBundle#getBundle(String, Locale, ClassLoader, java.util.ResourceBundle.Control)}
-     * .
-     * </p>
+     * Loads a {@link ResourceBundle} from the file system.
+     *
+     * @param directory
+     *            The directory location of the XML resource.
+     * @param resourceName
+     *            The name of the resource bundle without the locale suffix and
+     *            file extension.
+     * @param candidate
+     *            The {@link Locale}.
+     * @return The {@link ResourceBundle}.
+     */
+    public static ResourceBundle loadXmlResource(final File directory,
+            final String resourceName, final Locale candidate) {
+
+        final URL[] urls;
+
+        try {
+            urls = new URL[] { directory.toURI().toURL() };
+        } catch (MalformedURLException e) {
+            throw new SpException(e.getMessage());
+        }
+
+        return getResourceBundle(new URLClassLoader(urls), resourceName,
+                resourceName, candidate, new XMLResourceBundleControl());
+    }
+
+    /**
+     * Loads a {@link ResourceBundle} from a jar file.
      *
      * @param reqClass
-     *            The requester {@link Class}.
+     *            The requester {@link Class} (used to compose the bunble name).
      * @param resourceName
      *            The name of the resource bundle without the locale suffix and
      *            file extension.
@@ -102,21 +127,50 @@ public final class Messages extends MessagesBundleMixin {
         final String bundleName =
                 getResourceBundleBaseName(reqClass.getPackage(), resourceName);
 
-        Locale locale = determineLocale(candidate);
+        return getResourceBundle(reqClass.getClassLoader(), bundleName,
+                resourceName, candidate, control);
+    }
 
-        ResourceBundle bundle =
-                ResourceBundle.getBundle(bundleName, locale,
-                        reqClass.getClassLoader(), control);
+    /**
+     * Loads a {@link ResourceBundle} using the class loader.
+     * <p>
+     * NOTE: When a {@code message_<locale>.properties} files is already loaded
+     * in the cache, the content of this file is used instead of the XML
+     * variant. See
+     * {@link ResourceBundle#getBundle(String, Locale, ClassLoader, java.util.ResourceBundle.Control)}
+     * .
+     * </p>
+     *
+     * @param classLoader
+     *            The class loader.
+     * @param bundleName
+     *            The bundle name.
+     * @param resourceName
+     *            The name of the resource bundle without the locale suffix and
+     *            file extension.
+     * @param candidate
+     *            The {@link Locale} candidate.
+     * @param control
+     *            The {@link XMLResourceBundleControl}.
+     * @return The {@link ResourceBundle}.
+     */
+    private static ResourceBundle getResourceBundle(
+            final ClassLoader classLoader, final String bundleName,
+            final String resourceName, final Locale candidate,
+            final XMLResourceBundleControl control) {
 
-        locale = checkAlternative(locale, bundle);
+        final Locale locale = determineLocale(candidate);
 
-        if (locale != null) {
-            bundle =
-                    ResourceBundle.getBundle(bundleName, locale,
-                            reqClass.getClassLoader(), control);
+        final ResourceBundle bundle = ResourceBundle.getBundle(bundleName,
+                locale, classLoader, control);
+
+        final Locale localeAlt = checkAlternative(locale, bundle);
+
+        if (localeAlt == null) {
+            return bundle;
         }
-
-        return bundle;
+        return ResourceBundle.getBundle(bundleName, localeAlt, classLoader,
+                control);
     }
 
     /**
@@ -192,6 +246,34 @@ public final class Messages extends MessagesBundleMixin {
     }
 
     /**
+     * Creates a MessageFormat with the given pattern and uses it to format the
+     * given arguments.
+     *
+     * @param pattern
+     *            The pattern.
+     * @param args
+     *            The arguments
+     * @return The formatted string.
+     */
+    public static String formatMessage(final String pattern,
+            final String... args) {
+        try {
+            /*
+             * Add an extra apostrophe ' to the MessageFormat pattern String to
+             * ensure the ' character is displayed.
+             */
+            return MessageFormat.format(pattern.replace("\'", "\'\'"),
+                    (Object[]) args);
+
+        } catch (IllegalArgumentException e) {
+            LOGGER.error("Error parsing message pattern [" + pattern + "]"
+                    + e.getMessage());
+            return pattern;
+        }
+
+    }
+
+    /**
      * Gets the localized message from {@code message*.xml} residing in the same
      * package as the requester class.
      *
@@ -210,33 +292,10 @@ public final class Messages extends MessagesBundleMixin {
 
         final String pattern = loadMessagePattern(reqClass, locale, key);
 
-        String msg;
-
         if ((args == null) || args.length == 0) {
-
-            msg = pattern;
-
-        } else {
-            try {
-                /*
-                 * Add an extra apostrophe ' to the MessageFormat pattern String
-                 * to ensure the ' character is displayed.
-                 */
-                msg =
-                        MessageFormat.format(pattern.replace("\'", "\'\'"),
-                                (Object[]) args);
-
-            } catch (IllegalArgumentException e) {
-
-                LOGGER.error("Error parsing message pattern [" + pattern
-                        + "] Locale [" + locale + "] : " + e.getMessage());
-                /*
-                 * use a substitute message
-                 */
-                msg = "[" + key + "]";
-            }
+            return pattern;
         }
-        return msg;
+        return formatMessage(pattern, args);
     }
 
     /**

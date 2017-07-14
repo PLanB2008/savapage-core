@@ -1,5 +1,5 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
  * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -41,10 +41,12 @@ import org.savapage.core.imaging.Pdf2PngPopplerCmd;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.User;
 import org.savapage.core.pdf.AbstractPdfCreator;
+import org.savapage.core.pdf.PdfCreateInfo;
 import org.savapage.core.pdf.PdfCreateRequest;
 import org.savapage.core.services.DocLogService;
 import org.savapage.core.services.InboxService;
 import org.savapage.core.services.ServiceContext;
+import org.savapage.core.services.helpers.InboxPageImageInfo;
 import org.savapage.core.services.impl.InboxServiceImpl;
 import org.savapage.core.system.CommandExecutor;
 import org.savapage.core.system.ICommandExecutor;
@@ -75,6 +77,9 @@ public final class OutputProducer {
     private static final Logger LOGGER =
             LoggerFactory.getLogger(OutputProducer.class);
 
+    /**
+     * .
+     */
     private static final DocLogService DOCLOG_SERVICE =
             ServiceContext.getServiceFactory().getDocLogService();
 
@@ -96,13 +101,16 @@ public final class OutputProducer {
      * {@link SingletonHolder#INSTANCE}, not before.
      */
     private static class SingletonHolder {
+        /**
+         * The singleton.
+         */
         public static final OutputProducer INSTANCE = new OutputProducer();
     }
 
     /**
      * Gets the singleton instance.
      *
-     * @return
+     * @return The singleton.
      */
     public static OutputProducer instance() {
         return SingletonHolder.INSTANCE;
@@ -120,9 +128,6 @@ public final class OutputProducer {
      * @param pageIn
      *            The zero-based ordinal page number in the job (or over all
      *            jobs).
-     * @param rotate
-     *            The rotation to be applied for this page. If {@code null}, no
-     *            rotation is applied.
      * @param thumbnail
      *            {@code true} if a thumbnail is requested, {@code false} if
      *            detailed image.
@@ -136,38 +141,55 @@ public final class OutputProducer {
      * @return The created image file.
      */
     public File allocatePageImage(final String user, final String jobName,
-            final String pageIn, final String rotate, final boolean thumbnail,
+            final String pageIn, final boolean thumbnail,
             final boolean isLetterhead, final boolean isLetterheadPublic,
             final String sessionId) {
 
-        String job = jobName;
-        String page = pageIn;
+        final InboxPageImageInfo pageImageInfo;
 
-        String rotate2Apply = rotate;
+        final String jobHomeDir;
+        final String jobFileName;
+        final String pageInJobFile;
 
-        if (job == null) {
+        if (isLetterhead) {
 
-            Object[] ret = INBOX_SERVICE.findJob(user, Integer.parseInt(page));
-
-            if (ret.length < 3) {
-                throw new SpException("job not found");
+            if (isLetterheadPublic) {
+                jobHomeDir = ConfigManager.getLetterheadDir();
+            } else {
+                jobHomeDir = String.format("%s%c%s",
+                        ConfigManager.getUserHomeDir(user), File.separatorChar,
+                        USER_LETTERHEADS_DIR_NAME);
             }
 
-            job = ret[0].toString();
-            page = ret[1].toString();
-            rotate2Apply = ret[2].toString();
+            pageImageInfo = new InboxPageImageInfo();
+            pageImageInfo.setFile(jobName);
+            pageImageInfo.setLandscape(false);
+            pageImageInfo.setPageInFile(Integer.valueOf(pageIn));
+
+            jobFileName = jobName;
+            pageInJobFile = pageIn;
+
+        } else {
+            jobHomeDir = ConfigManager.getUserHomeDir(user);
+
+            if (jobName == null) {
+
+                pageImageInfo = INBOX_SERVICE.getPageImageInfo(user,
+                        Integer.parseInt(pageIn));
+
+                pageInJobFile = String.valueOf(pageImageInfo.getPageInFile());
+                jobFileName = pageImageInfo.getFile();
+
+            } else {
+                pageImageInfo = INBOX_SERVICE.getPageImageInfo(user, jobName,
+                        Integer.valueOf(pageIn));
+                jobFileName = jobName;
+                pageInJobFile = pageIn;
+            }
         }
 
-        final String homedir;
-
-        if (isLetterheadPublic) {
-            homedir = ConfigManager.getLetterheadDir();
-        } else if (isLetterhead) {
-            homedir =
-                    String.format("%s%c%s", ConfigManager.getUserHomeDir(user),
-                            File.separatorChar, USER_LETTERHEADS_DIR_NAME);
-        } else {
-            homedir = ConfigManager.getUserHomeDir(user);
+        if (pageImageInfo == null) {
+            throw new SpException("job not found");
         }
 
         /*
@@ -179,8 +201,8 @@ public final class OutputProducer {
         final StringBuilder imgFileBuilder = new StringBuilder(128);
 
         imgFileBuilder.append(ConfigManager.getAppTmpDir()).append("/")
-                .append(user).append("_").append(job).append("_").append(page)
-                .append("_").append(time).append("_");
+                .append(user).append("_").append(jobFileName).append("_")
+                .append(pageInJobFile).append("_").append(time).append("_");
 
         if (thumbnail) {
             imgFileBuilder.append("0");
@@ -197,12 +219,12 @@ public final class OutputProducer {
          */
         final StringBuilder srcFileBuilder = new StringBuilder(128);
 
-        if (InboxServiceImpl.isScanJobFilename(job)) {
+        if (InboxServiceImpl.isScanJobFilename(jobFileName)) {
 
-            srcFileBuilder.append(homedir).append("/").append(job);
+            srcFileBuilder.append(jobHomeDir).append("/").append(jobFileName);
 
-        } else if (InboxServiceImpl.isPdfJobFilename(job)) {
-            srcFileBuilder.append(homedir).append("/").append(job);
+        } else if (InboxServiceImpl.isPdfJobFilename(jobFileName)) {
+            srcFileBuilder.append(jobHomeDir).append("/").append(jobFileName);
         } else {
             throw new SpException("unknown job type");
         }
@@ -221,10 +243,11 @@ public final class OutputProducer {
             imgWidth = ImageUrl.BROWSER_PAGE_WIDTH;
         }
 
-        final String command = pdf2PngCommand.createCommand(srcFile, imgFile,
-                Integer.parseInt(page), rotate2Apply,
+        final String command = pdf2PngCommand.createCommand(srcFile,
+                pageImageInfo.isLandscape(), pageImageInfo.getRotation(),
+                imgFile, Integer.parseInt(pageInJobFile),
                 Pdf2PngPopplerCmd.RESOLUTION_FOR_SCREEN,
-                Integer.valueOf(imgWidth));
+                pageImageInfo.getRotate(), imgWidth);
 
         LOGGER.trace(command);
 
@@ -384,7 +407,7 @@ public final class OutputProducer {
         pdfRequest.setApplyLetterhead(false);
         pdfRequest.setForPrinting(false);
 
-        return generatePdf(pdfRequest, null, null);
+        return generatePdf(pdfRequest, null, null).getPdfFile();
     }
 
     /**
@@ -400,7 +423,7 @@ public final class OutputProducer {
      * @param docLog
      *            The DocLog object to collect data on. A value of {@code null}
      *            is allowed: in that case no data is collected.
-     * @return File object with generated PDF.
+     * @return The {@link PdfCreateInfo}.
      * @throws PostScriptDrmException
      *             When source is DRM restricted.
      * @throws LetterheadNotFoundException
@@ -409,7 +432,7 @@ public final class OutputProducer {
      *             When {@link EcoPrintPdfTask} objects needed for this PDF are
      *             pending.
      */
-    public File generatePdf(final PdfCreateRequest createReq,
+    public PdfCreateInfo generatePdf(final PdfCreateRequest createReq,
             final LinkedHashMap<String, Integer> uuidPageCount,
             final DocLog docLog) throws LetterheadNotFoundException,
             PostScriptDrmException, EcoPrintPdfTaskPendingException {
@@ -486,11 +509,13 @@ public final class OutputProducer {
         pdfRequest.setEcoPdfShadow(ecoPdf);
         pdfRequest.setGrayscale(grayscale);
 
-        final File file = generatePdf(pdfRequest, uuidPageCount, docLog);
+        final PdfCreateInfo createInfo =
+                generatePdf(pdfRequest, uuidPageCount, docLog);
 
-        DOCLOG_SERVICE.collectData4DocOut(user, docLog, file, uuidPageCount);
+        DOCLOG_SERVICE.collectData4DocOut(user, docLog, createInfo,
+                uuidPageCount);
 
-        return file;
+        return createInfo.getPdfFile();
     }
 
 }

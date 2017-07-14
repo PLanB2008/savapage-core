@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -23,6 +23,8 @@ package org.savapage.core.imaging;
 
 import java.io.File;
 
+import org.savapage.core.pdf.PdfPageRotateHelper;
+
 /**
  * Command using Poppler.
  * <p>
@@ -30,7 +32,7 @@ import java.io.File;
  * have the {@code -jpeg} switch.
  * </p>
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class Pdf2PngPopplerCmd implements Pdf2ImgCommandExt {
@@ -72,18 +74,9 @@ public final class Pdf2PngPopplerCmd implements Pdf2ImgCommandExt {
     }
 
     @Override
-    public String createCommand(final File pdfFile, final File imgFile,
-            final int pageOrdinal, final String rotate2Apply,
-            final int resolution) {
-
-        return this.createCommand(pdfFile, imgFile, pageOrdinal, rotate2Apply,
-                resolution, null);
-    }
-
-    @Override
-    public String createCommand(final File pdfFile, final File imgFile,
-            final int pageOrdinal, final String rotate2Apply,
-            final int resolution, final Integer imgWidth) {
+    public String createCommand(final File pdfFile, final boolean landscape,
+            final int rotation, final File imgFile, final int pageOrdinal,
+            final int resolution, final int rotate, final Integer imgWidth) {
 
         final int pageOneBased = pageOrdinal + 1;
 
@@ -108,9 +101,11 @@ public final class Pdf2PngPopplerCmd implements Pdf2ImgCommandExt {
         cmdBuffer.append(" \"").append(pdfFile.getAbsolutePath()).append("\"");
 
         /*
-         * Apply rotate?
+         * Apply user requested rotate.
          */
-        if (rotate2Apply == null || rotate2Apply.equals("0")) {
+        final Integer rotate2Apply = Integer.valueOf(rotate);
+
+        if (rotate2Apply.equals(PdfPageRotateHelper.PDF_ROTATION_0)) {
             cmdBuffer.append(" > ");
         } else {
             cmdBuffer.append(" | convert -rotate ").append(rotate2Apply)
@@ -122,4 +117,13 @@ public final class Pdf2PngPopplerCmd implements Pdf2ImgCommandExt {
 
         return command;
     }
+
+    @Override
+    public String createCommand(final File pdfFile, final boolean landscape,
+            final int rotation, final File imgFile, final int pageOrdinal,
+            final int resolution, final int rotate) {
+        return this.createCommand(pdfFile, landscape, rotation, imgFile,
+                pageOrdinal, resolution, rotate, null);
+    }
+
 }

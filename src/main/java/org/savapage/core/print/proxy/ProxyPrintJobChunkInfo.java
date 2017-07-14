@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -22,8 +22,10 @@
 package org.savapage.core.print.proxy;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 import javax.print.attribute.standard.MediaSizeName;
 
@@ -32,12 +34,16 @@ import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.inbox.InboxInfoDto.InboxJob;
 import org.savapage.core.inbox.InboxInfoDto.InboxJobRange;
+import org.savapage.core.inbox.PdfOrientationInfo;
 import org.savapage.core.inbox.RangeAtom;
+import org.savapage.core.ipp.IppMediaSizeEnum;
 import org.savapage.core.services.InboxService;
+import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.util.MediaUtils;
 
 /**
+ * Page sequence chunks of a proxy print request.
  *
  * @author Rijk Ravestein
  *
@@ -49,10 +55,27 @@ public final class ProxyPrintJobChunkInfo {
     private final List<ProxyPrintJobChunk> chunks = new ArrayList<>();
 
     /**
+     * {@code true} when one of the job pages has landscape orientation.
+     * {@code null} when unknown.
+     */
+    private final Boolean landscape;
+
+    /**
     *
     */
+    private final PdfOrientationInfo pdfOrientation;
+
+    /**
+     * .
+     */
     private static final InboxService INBOX_SERVICE =
             ServiceContext.getServiceFactory().getInboxService();
+
+    /**
+     * .
+     */
+    private static final ProxyPrintService PROXY_PRINT_SERVICE =
+            ServiceContext.getServiceFactory().getProxyPrintService();
 
     /**
      * Prevent public default instantiation.
@@ -60,6 +83,37 @@ public final class ProxyPrintJobChunkInfo {
     @SuppressWarnings("unused")
     private ProxyPrintJobChunkInfo() {
         this.filteredInboxInfo = null;
+        this.landscape = null;
+        this.pdfOrientation = null;
+    }
+
+    /**
+     * Creates a dummy {@link ProxyPrintJobChunkInfo} for a Copy Job Ticket.
+     *
+     * @param mediaSize
+     *            The {@link IppMediaSizeEnum} of the copy.
+     * @param numberOfPages
+     *            The number of hard copy pages of the original document.
+     * @return The dummy {@link ProxyPrintJobChunkInfo} .
+     */
+    public static ProxyPrintJobChunkInfo createCopyJobChunk(
+            final IppMediaSizeEnum mediaSize, final int numberOfPages) {
+
+        final ProxyPrintJobChunk jobChunk = new ProxyPrintJobChunk();
+
+        jobChunk.setAssignedMedia(mediaSize);
+        jobChunk.setAssignedMediaSource(null);
+        jobChunk.setIppMediaSource(null);
+
+        final ProxyPrintJobChunkRange chunkRange =
+                new ProxyPrintJobChunkRange();
+
+        chunkRange.pageBegin = Integer.valueOf(1);
+        chunkRange.pageEnd = Integer.valueOf(numberOfPages);
+
+        jobChunk.getRanges().add(chunkRange);
+
+        return new ProxyPrintJobChunkInfo(jobChunk);
     }
 
     /**
@@ -71,12 +125,14 @@ public final class ProxyPrintJobChunkInfo {
      */
     public ProxyPrintJobChunkInfo(final ProxyPrintJobChunk jobChunk) {
         this.filteredInboxInfo = null;
+        this.landscape = null;
+        this.pdfOrientation = null;
         this.addChunk(jobChunk);
     }
 
     /**
      * Creates an ordinal list of {@link ProxyPrintJobChunk} with all inbox
-     * jobs. Each entry on the list represents a chunk of pages that correspond
+     * jobs: each entry on the list represents a chunk of pages that correspond
      * with a single inbox job.
      *
      * @param inboxInfoIn
@@ -90,6 +146,9 @@ public final class ProxyPrintJobChunkInfo {
         if (!INBOX_SERVICE.isInboxVanilla(inboxInfoIn)) {
             throw new ProxyPrintException("Inbox was edited by user");
         }
+
+        Boolean hasLandscape = Boolean.FALSE;
+        PdfOrientationInfo pdfOrientationWrk = null;
 
         this.filteredInboxInfo = INBOX_SERVICE.filterInboxInfoPages(inboxInfoIn,
                 RangeAtom.FULL_PAGE_RANGE);
@@ -113,13 +172,24 @@ public final class ProxyPrintJobChunkInfo {
             this.addChunk(printJobChunkWlk);
 
             addJobRangesToJobChunk(printJobChunkWlk, iJob, nJobPages, jobRange);
+
+            if (inboxJob.showLandscape()) {
+                hasLandscape = Boolean.TRUE;
+            }
+
+            if (pdfOrientationWrk == null) {
+                pdfOrientationWrk = inboxJob.createOrientationInfo();
+            }
         }
+
+        this.landscape = hasLandscape;
+        this.pdfOrientation = pdfOrientationWrk;
     }
 
     /**
-     * Creates an ordinal list of {@link ProxyPrintJobChunk} with all inbox
-     * jobs. Each entry on the list represents a chunk of pages that correspond
-     * with a single inbox job.
+     * Creates an ordinal list of {@link ProxyPrintJobChunk} with all page
+     * ranges of a single vanilla inbox job: each entry on the list represents a
+     * chunk of pages that correspond to a single inbox job.
      *
      * @param inboxInfoIn
      *            The {@link InboxInfoDto}.
@@ -132,11 +202,14 @@ public final class ProxyPrintJobChunkInfo {
      */
     public ProxyPrintJobChunkInfo(final InboxInfoDto inboxInfoIn,
             final int iVanillaJob, final String vanillaJobPageRanges)
-                    throws ProxyPrintException {
+            throws ProxyPrintException {
 
         if (!INBOX_SERVICE.isInboxVanilla(inboxInfoIn)) {
             throw new ProxyPrintException("Inbox was edited by user");
         }
+
+        Boolean hasLandscape = Boolean.FALSE;
+        PdfOrientationInfo pdfOrientationWrk = null;
 
         this.filteredInboxInfo = INBOX_SERVICE.filterInboxInfoPages(inboxInfoIn,
                 RangeAtom.FULL_PAGE_RANGE);
@@ -176,13 +249,24 @@ public final class ProxyPrintJobChunkInfo {
             addJobRangesToJobChunk(printJobChunkWlk, iJob, nJobPages,
                     jobRangeWork);
 
+            if (inboxJob.showLandscape()) {
+                hasLandscape = Boolean.TRUE;
+            }
+
+            if (pdfOrientationWrk == null) {
+                pdfOrientationWrk = inboxJob.createOrientationInfo();
+            }
+
             break;
         }
+
+        this.landscape = hasLandscape;
+        this.pdfOrientation = pdfOrientationWrk;
     }
 
     /**
      * Creates an ordinal list of {@link ProxyPrintJobChunk} of the selected
-     * pages of an inbox. Each entry on the list represents a chunk of pages
+     * pages of an inbox: each entry on the list represents a chunk of pages
      * with the same media size.
      *
      * @param inboxInfoIn
@@ -197,7 +281,7 @@ public final class ProxyPrintJobChunkInfo {
                 selectedPageRanges);
 
         /*
-         * First Page.
+         * Prepare.
          */
         ProxyPrintJobChunk printJobChunkWlk = null;
 
@@ -209,10 +293,18 @@ public final class ProxyPrintJobChunkInfo {
         final Iterator<InboxJobRange> iterPages =
                 filteredInboxInfo.getPages().iterator();
 
+        Boolean hasLandscape = Boolean.FALSE;
+        PdfOrientationInfo pdfOrientationWrk = null;
+
+        final List<String> chunkPageRangesWlk = new ArrayList<>();
+        final Set<Integer> chunkJobsWlk = new HashSet<>();
+        String chunkFirstDocNameWlk = null;
+
+        // Iterate.
         while (iterPages.hasNext()) {
 
             /*
-             * Next page.
+             * Next page range.
              */
             final InboxJobRange jobRange = iterPages.next();
 
@@ -228,7 +320,16 @@ public final class ProxyPrintJobChunkInfo {
             if (printJobChunkWlk == null
                     || mediaSizeNameItem != mediaSizeNameWlk) {
 
-                // create new
+                // Flush current
+                if (printJobChunkWlk != null) {
+                    composeChunkJobName(printJobChunkWlk, chunkFirstDocNameWlk,
+                            chunkPageRangesWlk, chunkJobsWlk.size());
+                }
+                chunkFirstDocNameWlk = inboxJob.getTitle();
+                chunkPageRangesWlk.clear();
+                chunkJobsWlk.clear();
+
+                // Create new.
                 mediaSizeNameItem = mediaSizeNameWlk;
 
                 printJobChunkWlk = new ProxyPrintJobChunk();
@@ -237,17 +338,74 @@ public final class ProxyPrintJobChunkInfo {
                 // Initialize DRM.
                 isDrm = BooleanUtils.isTrue(inboxJob.getDrm());
 
-                // Note: do NOT set chunk job name.
-
+                //
                 this.addChunk(printJobChunkWlk);
             }
+
+            chunkPageRangesWlk.add(jobRange.getRange());
+            chunkJobsWlk.add(jobRange.getJob());
 
             // Overwrite chunk with DRM of current job.
             printJobChunkWlk
                     .setDrm(isDrm || BooleanUtils.isTrue(inboxJob.getDrm()));
 
             addJobRangesToJobChunk(printJobChunkWlk, iJob, nJobPages, jobRange);
+
+            if (inboxJob.showLandscape()) {
+                hasLandscape = Boolean.TRUE;
+            }
+
+            if (pdfOrientationWrk == null) {
+                pdfOrientationWrk = inboxJob.createOrientationInfo();
+            }
         }
+
+        // Flush current
+        if (printJobChunkWlk != null) {
+            composeChunkJobName(printJobChunkWlk, chunkFirstDocNameWlk,
+                    chunkPageRangesWlk, chunkJobsWlk.size());
+        }
+
+        this.landscape = hasLandscape;
+        this.pdfOrientation = pdfOrientationWrk;
+    }
+
+    /**
+     * Sets a composed job name in a chunk.
+     *
+     * @param chunk
+     *            The chunk for which to set the job name.
+     * @param firstDocName
+     *            The name of the first document,
+     * @param chunkPageRanges
+     *            The collected page ranges (possibly from different source
+     *            documents).
+     * @param nDocsInChunk
+     *            The number of different documents in the chunk.
+     */
+    private static void composeChunkJobName(final ProxyPrintJobChunk chunk,
+            final String firstDocName, final List<String> chunkPageRanges,
+            final int nDocsInChunk) {
+
+        final StringBuilder name = new StringBuilder();
+
+        for (final String range : chunkPageRanges) {
+            if (name.length() == 0) {
+                name.append("(");
+            } else {
+                name.append(",");
+            }
+            if (range.isEmpty()) {
+                name.append("1-");
+            } else {
+                name.append(range);
+            }
+        }
+        name.append(") ").append(firstDocName);
+        if (nDocsInChunk > 1) {
+            name.append(" (+").append(nDocsInChunk - 1).append(")");
+        }
+        chunk.setJobName(name.toString());
     }
 
     /**
@@ -295,6 +453,20 @@ public final class ProxyPrintJobChunkInfo {
      */
     public InboxInfoDto getFilteredInboxInfo() {
         return filteredInboxInfo;
+    }
+
+    /**
+     *
+     * @return {@code true} when one of the job pages has landscape orientation.
+     *         {@code null} when unknown.
+     *
+     */
+    public Boolean isLandscape() {
+        return this.landscape;
+    }
+
+    public PdfOrientationInfo getPdfOrientation() {
+        return pdfOrientation;
     }
 
 }

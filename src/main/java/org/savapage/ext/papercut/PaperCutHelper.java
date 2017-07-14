@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -25,7 +25,9 @@ import java.net.URI;
 import java.util.UUID;
 
 import org.apache.commons.lang3.StringUtils;
+import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
+import org.savapage.core.services.helpers.ThirdPartyEnum;
 
 /**
  *
@@ -43,6 +45,20 @@ public final class PaperCutHelper {
     private static final String COMPOSED_ACCOUNT_NAME_PFX = "savapage";
     private static final String COMPOSED_ACCOUNT_NAME_CLASS_SHARED = "shared";
     private static final String COMPOSED_ACCOUNT_NAME_CLASS_GROUP = "group";
+
+    /**
+     * The number of words (split by {@link #COMPOSED_ACCOUNT_NAME_SEPARATOR}
+     * for a composed shared account name for PaperCut, for just a SavaPage
+     * parent account.
+     */
+    private static final int COMPOSED_ACCOUNT_WORDS_PARENT = 3;
+
+    /**
+     * The number of words (split by {@link #COMPOSED_ACCOUNT_NAME_SEPARATOR}
+     * for a composed shared account name for PaperCut, for a SavaPage
+     * parent/child account.
+     */
+    private static final int COMPOSED_ACCOUNT_WORDS_PARENT_CHILD = 4;
 
     /**
      * No public instantiation.
@@ -83,27 +99,53 @@ public final class PaperCutHelper {
      * @return The encoded unique name.
      */
     public static String encodeProxyPrintJobName(final String documentName) {
-        return encodeProxyPrintJobName(SAVAPAGE_PRINTJOB_ACCOUNT_NAME, UUID
-                .randomUUID().toString(), documentName);
+        return encodeProxyPrintJobName(SAVAPAGE_PRINTJOB_ACCOUNT_NAME,
+                UUID.randomUUID().toString(), documentName);
     }
 
     /**
-     * Uses SavaPage {@link Account} data to compose a shared account name for
-     * PaperCut.
+     * Replaces the UUID suffix of an encoded Job name with a new random one.
+     *
+     * @param documentName
+     *            The original encoded document name.
+     * @return The new encoded document name.
+     */
+    public static String renewProxyPrintJobNameUUID(final String documentName) {
+        /*
+         * Strip the UUID suffix.
+         */
+        final String[] words = StringUtils.split(documentName,
+                PaperCutPrintCommentSyntax.JOB_NAME_INFO_SEPARATOR);
+        final String lastWord = words[words.length - 1];
+
+        /*
+         * Replace with new UUID.
+         */
+        return StringUtils.replace(documentName, lastWord,
+                UUID.randomUUID().toString());
+    }
+
+    /**
+     * Uses SavaPage {@link Account} data to compose a shared sub account name
+     * for PaperCut.
      *
      * @param accountType
      *            The SavaPage {@link AccountTypeEnum}.
      * @param accountName
      *            The SavaPage account name.
+     * @param accountNameParent
+     *            The name of the SavaPage parent account. Is {@code null} when
+     *            parent account is irrelevant.
      * @return The composed sub account name to be used in PaperCut.
      */
     public static String composeSharedAccountName(
-            final AccountTypeEnum accountType, final String accountName) {
+            final AccountTypeEnum accountType, final String accountName,
+            final String accountNameParent) {
 
         final StringBuilder name = new StringBuilder();
 
-        name.append(COMPOSED_ACCOUNT_NAME_PFX).append(
-                COMPOSED_ACCOUNT_NAME_SEPARATOR);
+        name.append(COMPOSED_ACCOUNT_NAME_PFX)
+                .append(COMPOSED_ACCOUNT_NAME_SEPARATOR);
 
         switch (accountType) {
         case GROUP:
@@ -115,38 +157,73 @@ public final class PaperCutHelper {
             break;
 
         default:
-            throw new IllegalArgumentException(String.format(
-                    "%s.%s is not supported", accountType.getClass()
-                            .getSimpleName(), accountType.toString()));
+            throw new IllegalArgumentException(
+                    String.format("%s.%s is not supported",
+                            accountType.getClass().getSimpleName(),
+                            accountType.toString()));
         }
 
-        name.append(COMPOSED_ACCOUNT_NAME_SEPARATOR).append(accountName);
+        name.append(COMPOSED_ACCOUNT_NAME_SEPARATOR);
+
+        if (accountNameParent == null) {
+            name.append(accountName);
+        } else {
+            name.append(composeSharedAccountNameSuffix(accountName,
+                    accountNameParent));
+        }
 
         return name.toString();
     }
 
     /**
-     * Gets the SavaPage {@link Account} name from the compose a shared account
-     * name for PaperCut.
+     * Composes the suffix of the shared account name for PaperCut.
      *
-     * @see {@link #composeSharedAccountName(AccountTypeEnum, String)}.
+     * @param accountName
+     *            The SavaPage account name.
+     * @param accountNameParent
+     *            The name of the SavaPage parent account. Is {@code null} when
+     *            parent account is irrelevant.
+     * @return The composed suffix of the shared sub account name to be used in
+     *         PaperCut.
+     */
+    public static String composeSharedAccountNameSuffix(
+            final String accountName, final String accountNameParent) {
+        return String.format("%s%c%s", accountNameParent,
+                COMPOSED_ACCOUNT_NAME_SEPARATOR, accountName);
+    }
+
+    /**
+     * Gets the SavaPage {@link Account} name from the composed shared account
+     * name for PaperCut.
+     * <p>
+     * {@code "savapage.group.child"} returns {@code "child"} and
+     * {@code "savapage.group.parent.child"} returns {@code "parent.child"}.
+     * </p>
+     *
+     * @see {@link #composeSharedAccountName(AccountTypeEnum, String, String)}.
      *
      * @param composedAccountName
      *            The composed account name.
      * @return The account name.
      */
-    public static String decomposeSharedAccountName(
-            final String composedAccountName) {
+    public static String
+            decomposeSharedAccountName(final String composedAccountName) {
 
-        final String[] parts =
-                StringUtils.split(composedAccountName,
-                        COMPOSED_ACCOUNT_NAME_SEPARATOR);
+        final String[] parts = StringUtils.split(composedAccountName,
+                COMPOSED_ACCOUNT_NAME_SEPARATOR);
 
-        if (parts.length < 3) {
-            return null;
+        if (parts.length < COMPOSED_ACCOUNT_WORDS_PARENT
+                || parts.length > COMPOSED_ACCOUNT_WORDS_PARENT_CHILD) {
+            throw new IllegalArgumentException(String.format(
+                    "Composed group [%s] syntax error.", composedAccountName));
         }
 
-        return parts[parts.length - 1];
+        if (parts.length == COMPOSED_ACCOUNT_WORDS_PARENT) {
+            return parts[parts.length - 1];
+        }
+
+        return String.format("%s%c%s", parts[parts.length - 2],
+                COMPOSED_ACCOUNT_NAME_SEPARATOR, parts[parts.length - 1]);
     }
 
     /**
@@ -176,15 +253,15 @@ public final class PaperCutHelper {
         final StringBuilder sfx = new StringBuilder();
 
         if (StringUtils.isNotBlank(documentName)) {
-            sfx.append(DelegatedPrintCommentSyntax.JOB_NAME_INFO_SEPARATOR);
+            sfx.append(PaperCutPrintCommentSyntax.JOB_NAME_INFO_SEPARATOR);
         }
 
         if (StringUtils.isNotBlank(accountName)) {
             sfx.append(accountName);
         }
 
-        sfx.append(DelegatedPrintCommentSyntax.JOB_NAME_INFO_SEPARATOR).append(
-                documentId);
+        sfx.append(PaperCutPrintCommentSyntax.JOB_NAME_INFO_SEPARATOR)
+                .append(documentId);
 
         final String suffix = sfx.toString();
 
@@ -208,9 +285,8 @@ public final class PaperCutHelper {
     public static String getAccountFromEncodedProxyPrintJobName(
             final String encodedJobName) {
 
-        final String[] parts =
-                StringUtils.split(encodedJobName,
-                        DelegatedPrintCommentSyntax.JOB_NAME_INFO_SEPARATOR);
+        final String[] parts = StringUtils.split(encodedJobName,
+                PaperCutPrintCommentSyntax.JOB_NAME_INFO_SEPARATOR);
 
         if (parts.length < 3) {
             return null;
@@ -232,4 +308,12 @@ public final class PaperCutHelper {
                 && deviceUri.toString().startsWith("papercut:");
     }
 
+    /**
+     * @return The initial {@link ExternalSupplierStatusEnum} when issuing a job
+     *         to be monitored by {@link ThirdPartyEnum#PAPERCUT} Print
+     *         Management.
+     */
+    public static ExternalSupplierStatusEnum getInitialPendingJobStatus() {
+        return ExternalSupplierStatusEnum.PENDING_EXT;
+    }
 }

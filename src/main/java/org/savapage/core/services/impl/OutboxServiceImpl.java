@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -48,6 +48,7 @@ import org.savapage.core.SpException;
 import org.savapage.core.concurrent.ReadWriteLockEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
+import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.DaoContext;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
@@ -61,6 +62,7 @@ import org.savapage.core.outbox.OutboxInfoDto.LocaleInfo;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxAccountTrxInfo;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxAccountTrxInfoSet;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
+import org.savapage.core.pdf.PdfCreateInfo;
 import org.savapage.core.pdf.PdfPrintCollector;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq.Status;
@@ -171,11 +173,11 @@ public final class OutboxServiceImpl extends AbstractService
         protected void onPdfGenerated(final User lockedUser,
                 final ProxyPrintInboxReq request,
                 final LinkedHashMap<String, Integer> uuidPageCount,
-                final File pdfGenerated) {
+                final PdfCreateInfo createInfo) {
 
             final OutboxJobDto job =
                     this.serviceImpl.createOutboxJob(request, this.submitDate,
-                            this.expiryDate, pdfGenerated, uuidPageCount);
+                            this.expiryDate, createInfo, uuidPageCount);
 
             this.outboxInfo.addJob(job.getFile(), job);
         }
@@ -312,25 +314,30 @@ public final class OutboxServiceImpl extends AbstractService
     @Override
     public OutboxJobDto createOutboxJob(final AbstractProxyPrintReq request,
             final Date submitDate, final Date expiryDate,
-            final File pdfOutboxFile,
+            final PdfCreateInfo createInfo,
             final LinkedHashMap<String, Integer> uuidPageCount) {
 
         final OutboxJobDto job = new OutboxJobDto();
 
-        job.setFile(pdfOutboxFile.getName());
-        job.setPrinterName(request.getPrinterName());
+        if (createInfo != null) {
+            job.setFile(createInfo.getPdfFile().getName());
+            job.setFillerPages(createInfo.getBlankFillerPages());
+            job.setSheets(calNumberOfSheets(request, createInfo));
+        }
+        job.setPrinter(request.getPrinterName());
         job.setJobName(request.getJobName());
         job.setComment(request.getComment());
         job.setCopies(request.getNumberOfCopies());
         job.setPages(request.getNumberOfPages());
-        job.setSheets(calNumberOfSheets(request));
         job.setRemoveGraphics(request.isRemoveGraphics());
-        job.setEcoPrint(request.isEcoPrint() || request.isEcoPrintShadow());
+        job.setEcoPrint(request.isEcoPrintShadow());
         job.setCollate(request.isCollate());
-        job.setCost(request.getCost());
+        job.setCostResult(request.getCostResult());
         job.setSubmitTime(submitDate.getTime());
         job.setExpiryTime(expiryDate.getTime());
         job.setFitToPage(request.getFitToPage());
+        job.setLandscape(request.getLandscape());
+        job.setPdfOrientation(request.getPdfOrientation());
         job.setDrm(request.isDrm());
         job.putOptionValues(request.getOptionValues());
         job.setUuidPageCount(uuidPageCount);
@@ -346,9 +353,10 @@ public final class OutboxServiceImpl extends AbstractService
 
     @Override
     public void proxyPrintPdf(final User lockedUser,
-            final ProxyPrintDocReq request, final File pdfFile,
+            final ProxyPrintDocReq request, final PdfCreateInfo createInfo,
             final DocContentPrintInInfo printInfo) throws IOException {
 
+        final File pdfFile = createInfo.getPdfFile();
         final Date submitDate = ServiceContext.getTransactionDate();
         final Date expiryDate = calcHoldExpiry(submitDate);
 
@@ -380,7 +388,7 @@ public final class OutboxServiceImpl extends AbstractService
                     Integer.valueOf(request.getNumberOfPages()));
 
             final OutboxJobDto job = createOutboxJob(request, submitDate,
-                    expiryDate, pdfOutboxFile, uuidPageCount);
+                    expiryDate, createInfo, uuidPageCount);
 
             outboxInfo.addJob(job.getFile(), job);
 
@@ -427,10 +435,15 @@ public final class OutboxServiceImpl extends AbstractService
      *
      * @param request
      *            The request.
+     * @param createInfo
+     *            The {@link PdfCreateInfo} with the PDF file to be printed by
+     *            the Job Ticket.
      * @return The number of sheets.
      */
-    private static int calNumberOfSheets(final AbstractProxyPrintReq request) {
-        return PdfPrintCollector.calcNumberOfPrintedSheets(request);
+    private static int calNumberOfSheets(final AbstractProxyPrintReq request,
+            final PdfCreateInfo createInfo) {
+        return PdfPrintCollector.calcNumberOfPrintedSheets(request,
+                createInfo.getBlankFillerPages());
     }
 
     /**
@@ -466,7 +479,7 @@ public final class OutboxServiceImpl extends AbstractService
 
             final OutboxJobDto job = entry.getValue();
 
-            if (printerNames.contains(job.getPrinterName())) {
+            if (printerNames.contains(job.getPrinter())) {
                 jobs.add(job);
             }
         }
@@ -703,7 +716,8 @@ public final class OutboxServiceImpl extends AbstractService
 
         final Date dateNow = new Date();
 
-        final int nDecimals = 2;
+        final int nDecimals = ConfigManager.instance()
+                .getConfigInt(Key.FINANCIAL_USER_BALANCE_DECIMALS, 2);
 
         final DateFormat timeFormatter =
                 new SimpleDateFormat("yyyy-MM-dd' 'HH:mm");
@@ -719,13 +733,15 @@ public final class OutboxServiceImpl extends AbstractService
 
                 final OutboxJobDto job = entry.getValue();
 
-                costTotal = costTotal.add(job.getCost());
+                final BigDecimal jobCost = job.getCostTotal();
+
+                costTotal = costTotal.add(jobCost);
 
                 final LocaleInfo localeInfo = new LocaleInfo();
                 job.setLocaleInfo(localeInfo);
 
-                localeInfo.setCost(BigDecimalUtil.localize(job.getCost(),
-                        nDecimals, locale, currencySymbol, true));
+                localeInfo.setCost(BigDecimalUtil.localize(jobCost, nDecimals,
+                        locale, currencySymbol, true));
 
                 final Date submitDate = new Date(job.getSubmitTime());
                 final Date expiryDate = new Date(job.getExpiryTime());
@@ -1001,7 +1017,7 @@ public final class OutboxServiceImpl extends AbstractService
     public boolean isMonitorPaperCutPrintStatus(final OutboxJobDto job) {
         return job.getAccountTransactions() != null
                 && job.getAccountTransactions().getTransactions() != null
-                && paperCutService().isExtPaperCutPrint(job.getPrinterName());
+                && paperCutService().isExtPaperCutPrint(job.getPrinter());
     }
 
 }

@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -37,6 +37,7 @@ import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.User;
 import org.savapage.core.outbox.OutboxInfoDto;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
+import org.savapage.core.pdf.PdfCreateInfo;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq;
 import org.savapage.core.print.proxy.ProxyPrintDocReq;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
@@ -87,14 +88,16 @@ public interface OutboxService {
      *            The date the proxy print was submitted.
      * @param expiryDate
      *            The date the proxy print expires.
-     * @param pdfOutboxFile
-     *            The PDF file in the outbox.
+     * @param createInfo
+     *            The {@link PdfCreateInfo} with the PDF file in the outbox. Is
+     *            {@code null} when Copy Job Ticket.
      * @param uuidPageCount
      *            Object with the number of selected pages per input file UUID.
+     *            Is {@code null} when Copy Job Ticket.
      * @return The {@link OutboxJobDto}.
      */
     OutboxJobDto createOutboxJob(AbstractProxyPrintReq request, Date submitDate,
-            Date expiryDate, File pdfOutboxFile,
+            Date expiryDate, PdfCreateInfo createInfo,
             LinkedHashMap<String, Integer> uuidPageCount);
 
     /**
@@ -231,15 +234,17 @@ public interface OutboxService {
      *            The requesting {@link User}, which should be locked.
      * @param request
      *            The {@link ProxyPrintDocReq}.
-     * @param pdfFile
-     *            The arbitrary (non-inbox) PDF file to print.
+     * @param createInfo
+     *            The {@link PdfCreateInfo} with the arbitrary (non-inbox) PDF
+     *            file to print.
      * @param printInfo
      *            The {@link DocContentPrintInInfo}.
      * @throws IOException
      *             When file IO error occurs.
      */
-    void proxyPrintPdf(User lockedUser, ProxyPrintDocReq request, File pdfFile,
-            DocContentPrintInInfo printInfo) throws IOException;
+    void proxyPrintPdf(User lockedUser, ProxyPrintDocReq request,
+            final PdfCreateInfo createInfo, DocContentPrintInInfo printInfo)
+            throws IOException;
 
     /**
      *
@@ -280,7 +285,8 @@ public interface OutboxService {
      *
      * @param source
      *            The {@link OutboxJobDto}.
-     * @return The {@link AccountTrxInfoSet}.
+     * @return The {@link AccountTrxInfoSet} or {@code null} when the source
+     *         does not have transactions.
      */
     AccountTrxInfoSet createAccountTrxInfoSet(OutboxJobDto source);
 

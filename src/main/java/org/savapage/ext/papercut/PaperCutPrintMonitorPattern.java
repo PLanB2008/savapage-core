@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -28,28 +28,29 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.EnumUtils;
 import org.savapage.core.concurrent.ReadWriteLockEnum;
-import org.savapage.core.config.ConfigManager;
-import org.savapage.core.dao.AccountDao;
 import org.savapage.core.dao.AccountTrxDao;
 import org.savapage.core.dao.AccountTrxDao.ListFilter;
 import org.savapage.core.dao.DaoContext;
 import org.savapage.core.dao.DocInOutDao;
 import org.savapage.core.dao.DocLogDao;
-import org.savapage.core.dao.UserAccountDao;
+import org.savapage.core.dao.PrintOutDao;
 import org.savapage.core.dao.enums.DocLogProtocolEnum;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
-import org.savapage.core.jpa.Account.AccountTypeEnum;
+import org.savapage.core.dao.enums.PrintModeEnum;
+import org.savapage.core.ipp.IppJobStateEnum;
 import org.savapage.core.jpa.AccountTrx;
 import org.savapage.core.jpa.DocIn;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.DocOut;
 import org.savapage.core.jpa.PrintOut;
-import org.savapage.core.jpa.User;
-import org.savapage.core.services.AccountingService;
+import org.savapage.core.json.JsonAbstractBase;
+import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
+import org.savapage.core.services.helpers.JobTicketSupplierData;
+import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.util.DateUtil;
 import org.savapage.ext.ExtSupplierConnectException;
 import org.savapage.ext.ExtSupplierException;
@@ -64,7 +65,8 @@ import org.slf4j.LoggerFactory;
  * @author Rijk Ravestein
  *
  */
-public abstract class PaperCutPrintMonitorPattern {
+public abstract class PaperCutPrintMonitorPattern
+        implements PaperCutAccountResolver {
 
     /**
      * The logger.
@@ -72,23 +74,32 @@ public abstract class PaperCutPrintMonitorPattern {
     private static final Logger LOGGER =
             LoggerFactory.getLogger(PaperCutPrintMonitorPattern.class);
 
-    /**
-     * Days after which a SavaPage print to PaperCut is set to error when the
-     * PaperCut print log is not found.
-     */
-    private static final int MAX_DAYS_WAIT_FOR_PAPERCUT_PRINT_LOG = 5;
+    private static final AccountTrxDao ACCOUNT_TRX_DAO =
+            ServiceContext.getDaoContext().getAccountTrxDao();
 
-    /**
-     * .
-     */
-    private static final AccountingService ACCOUNTING_SERVICE =
-            ServiceContext.getServiceFactory().getAccountingService();
+    private static final DocLogDao DOC_LOG_DAO =
+            ServiceContext.getDaoContext().getDocLogDao();
+
+    private static final PrintOutDao PRINT_OUT_DAO =
+            ServiceContext.getDaoContext().getPrintOutDao();
 
     /**
      * .
      */
     private static final PaperCutService PAPERCUT_SERVICE =
             ServiceContext.getServiceFactory().getPaperCutService();
+
+    /**
+     * .
+     */
+    private static final ProxyPrintService PROXY_PRINT_SERVICE =
+            ServiceContext.getServiceFactory().getProxyPrintService();
+
+    /**
+     * Days after which a SavaPage print to PaperCut is set to error when the
+     * PaperCut print log is not found.
+     */
+    private static final int MAX_DAYS_WAIT_FOR_PAPERCUT_PRINT_LOG = 5;
 
     /**
      * .
@@ -112,16 +123,10 @@ public abstract class PaperCutPrintMonitorPattern {
 
     /**
      * @return {@code true} when account transaction candidates are linked with
-     *         the {@link DocLog} of the {@link DocIn}, {@code} when linked with
-     *         the {@link DocLog} of the {@link DocOut}.
+     *         the {@link DocLog} of the {@link DocIn}, {@code false} when
+     *         linked with the {@link DocLog} of the {@link DocOut}.
      */
     protected abstract boolean isDocInAccountTrx();
-
-    /**
-     * @return PaperCut is configured with Multiple Personal Accounts, and this
-     *         is the account name to use for personal transactions.
-     */
-    protected abstract String getUserAccountName();
 
     /**
      *
@@ -200,15 +205,12 @@ public abstract class PaperCutPrintMonitorPattern {
     public final void process() throws PaperCutException, ExtSupplierException,
             ExtSupplierConnectException {
 
-        final DocLogDao doclogDao =
-                ServiceContext.getDaoContext().getDocLogDao();
-
         final Map<String, DocLog> uniquePaperCutDocNames = new HashMap<>();
 
         /*
          * Find pending SavaPage jobs.
          */
-        for (final DocLog docLog : doclogDao
+        for (final DocLog docLog : DOC_LOG_DAO
                 .getListChunk(listFilterPendingExt)) {
             uniquePaperCutDocNames.put(docLog.getTitle(), docLog);
         }
@@ -320,9 +322,6 @@ public abstract class PaperCutPrintMonitorPattern {
             final Map<String, DocLog> papercutDocNamesToFind,
             final Set<String> papercutDocNamesFound) {
 
-        final DocLogDao doclogDao =
-                ServiceContext.getDaoContext().getDocLogDao();
-
         for (final String docName : papercutDocNamesToFind.keySet()) {
 
             if (papercutDocNamesFound.contains(docName)) {
@@ -355,7 +354,7 @@ public abstract class PaperCutPrintMonitorPattern {
                 docLog.setExternalStatus(
                         ExternalSupplierStatusEnum.ERROR.toString());
 
-                doclogDao.update(docLog);
+                DOC_LOG_DAO.update(docLog);
 
                 daoContext.commit();
 
@@ -371,6 +370,7 @@ public abstract class PaperCutPrintMonitorPattern {
     }
 
     /**
+     * Gets the total number of copies printed.
      * <p>
      * IMPORTANT: the accumulated weight of the individual Account transactions
      * need NOT be the same as the number of copies (since parts of the printing
@@ -392,49 +392,11 @@ public abstract class PaperCutPrintMonitorPattern {
     protected abstract Logger getLogger();
 
     /**
-     *
-     * @return
-     */
-    protected abstract String getSharedParentAccountName();
-
-    /**
-     * Uses SavaPage {@link Account} data to compose a shared (sub) account name
-     * for PaperCut.
-     *
-     * @param accountType
-     *            The SavaPage {@link AccountTypeEnum}.
-     * @param accountName
-     *            The SavaPage account name.
-     * @return The composed sub account name to be used in PaperCut.
-     */
-    protected abstract String composeSharedSubAccountName(
-            AccountTypeEnum accountType, String accountName);
-
-    /**
-     *
-     * @return
-     */
-    protected abstract String getSharedJobsAccountName();
-
-    /**
-     * Gets the klas (group or shared account) name from the composed account
-     * name.
-     * <p>
-     * Note: The klas (group) name is needed to compose the comment of a newly
-     * created PaperCut account transaction.
-     * </p>
-     *
-     * @param accountName
-     *            The (composed) SavaPage account name.
-     * @return The klas (group) name.
-     */
-    protected abstract String getKlasFromAccountName(String accountName);
-
-    /**
      * @param docLogOut
      *            The DocLog with linked {@link DocOut}.
      *
-     * @return The single DocLog source (if present and relevant).
+     * @return The single DocLog source, if present and relevant. {@code null}
+     *         when not present or not relevant.
      */
     private DocLog getDocLogIn(final DocLog docLogOut) {
 
@@ -470,11 +432,8 @@ public abstract class PaperCutPrintMonitorPattern {
         /*
          * Update print status in the DocLog (with linked DocOut).
          */
-        final DocLogDao doclogDao =
-                ServiceContext.getDaoContext().getDocLogDao();
-
         docLogOut.setExternalStatus(printStatus.toString());
-        doclogDao.update(docLogOut);
+        DOC_LOG_DAO.update(docLogOut);
 
         /*
          * Update the single DocLog source (if present and relevant).
@@ -483,7 +442,7 @@ public abstract class PaperCutPrintMonitorPattern {
 
         if (docLogIn != null) {
             docLogIn.setExternalStatus(printStatus.toString());
-            doclogDao.update(docLogIn);
+            DOC_LOG_DAO.update(docLogIn);
         }
     }
 
@@ -507,19 +466,9 @@ public abstract class PaperCutPrintMonitorPattern {
      * @throws PaperCutException
      *             When a PaperCut error occurs.
      */
-
     private void processPrintJobCompleted(final DocLog docLogOut,
             final PaperCutPrinterUsageLog papercutLog)
             throws PaperCutException {
-
-        final AccountDao accountDao =
-                ServiceContext.getDaoContext().getAccountDao();
-
-        final AccountTrxDao accountTrxDao =
-                ServiceContext.getDaoContext().getAccountTrxDao();
-
-        final DocLogDao doclogDao =
-                ServiceContext.getDaoContext().getDocLogDao();
 
         /*
          * Get the single DocLog source (if present and relevant).
@@ -532,38 +481,42 @@ public abstract class PaperCutPrintMonitorPattern {
         //
         final PrintOut printOutLog = docLogOut.getDocOut().getPrintOut();
 
-        //
-        final String indicatorDuplex;
-
-        if (printOutLog.getDuplex().booleanValue()) {
-            indicatorDuplex = DelegatedPrintCommentSyntax.INDICATOR_DUPLEX_ON;
-        } else {
-            indicatorDuplex = DelegatedPrintCommentSyntax.INDICATOR_DUPLEX_OFF;
-        }
-
-        //
-        final String indicatorColor;
-
-        if (printOutLog.getGrayscale().booleanValue()) {
-            indicatorColor = DelegatedPrintCommentSyntax.INDICATOR_COLOR_OFF;
-        } else {
-            indicatorColor = DelegatedPrintCommentSyntax.INDICATOR_COLOR_ON;
-        }
-
-        final String indicatorPaperSize = DelegatedPrintCommentSyntax
-                .convertToPaperSizeIndicator(printOutLog.getPaperSize());
-
-        final String indicatorExternalId =
-                StringUtils.defaultString(docLogOut.getExternalId(),
-                        printOutLog.getCupsJobId().toString());
+        final PrintModeEnum printMode = EnumUtils.getEnum(PrintModeEnum.class,
+                printOutLog.getPrintMode());
 
         /*
-         * Set status to COMPLETED.
+         * Set External Status to COMPLETED.
          */
         final String externalPrintJobStatus =
                 ExternalSupplierStatusEnum.COMPLETED.toString();
 
         docLogOut.setExternalStatus(externalPrintJobStatus);
+
+        /*
+         * Check if CUPS PrintOut status is completed as well. If not, Correct
+         * CUPS print status to completed according to PaperCut reporting.
+         * Mantis #833
+         */
+        final IppJobStateEnum cupsJobState = IppJobStateEnum
+                .asEnum(printOutLog.getCupsJobState().intValue());
+
+        if (cupsJobState != IppJobStateEnum.IPP_JOB_COMPLETED) {
+
+            LOGGER.warn(String.format(
+                    "%s reported %s: CUPS Job %d %s is corrected to %s.",
+                    ThirdPartyEnum.PAPERCUT.getUiText(), externalPrintJobStatus,
+                    printOutLog.getCupsJobId().intValue(),
+                    cupsJobState.asLogText(),
+                    IppJobStateEnum.IPP_JOB_COMPLETED.asLogText()));
+
+            printOutLog.setCupsJobState(
+                    IppJobStateEnum.IPP_JOB_COMPLETED.asInteger());
+
+            printOutLog.setCupsCompletedTime(
+                    Integer.valueOf(PROXY_PRINT_SERVICE.getCupsSystemTime()));
+
+            PRINT_OUT_DAO.update(printOutLog);
+        }
 
         /*
          * Any transactions?
@@ -576,8 +529,8 @@ public abstract class PaperCutPrintMonitorPattern {
              */
             final ListFilter filter = new ListFilter();
             filter.setDocLogId(docLogTrx.getId());
-            docLogTrx.setTransactions(
-                    accountTrxDao.getListChunk(filter, null, null, null, true));
+            docLogTrx.setTransactions(ACCOUNT_TRX_DAO.getListChunk(filter, null,
+                    null, null, true));
         }
 
         final List<AccountTrx> trxList = docLogTrx.getTransactions();
@@ -595,7 +548,7 @@ public abstract class PaperCutPrintMonitorPattern {
             /*
              * Just update the DocLog with status COMPLETED.
              */
-            doclogDao.update(docLogOut);
+            DOC_LOG_DAO.update(docLogOut);
             return;
         }
 
@@ -609,274 +562,31 @@ public abstract class PaperCutPrintMonitorPattern {
                 this.getAccountTrxWeightTotal(docLogOut, docLogIn);
 
         /*
-         * Total printing cost reported by PaperCut.
+         * Which printing cost to use?
          */
-        final BigDecimal papercutUsageCost =
-                BigDecimal.valueOf(papercutLog.getUsageCost());
+        final BigDecimal weightTotalCost;
 
-        /*
-         * Number of decimals for decimal scaling.
-         */
-        final int scale = ConfigManager.getFinancialDecimalsInDatabase();
+        if (printMode == PrintModeEnum.TICKET
+                && docLogOut.getExternalData() != null) {
 
-        /*
-         * Number of pages in the printed document.
-         */
-        final Integer numberOfDocumentPages = docLogTrx.getNumberOfPages();
+            final JobTicketSupplierData supplierData = JsonAbstractBase.create(
+                    JobTicketSupplierData.class, docLogOut.getExternalData());
 
-        /*
-         * Create transaction comment with job info.
-         */
-        final String requestingUserId = docLogTrx.getUser().getUserId();
+            weightTotalCost = supplierData.getCostTotal();
 
-        final StringBuilder jobTrxComment = new StringBuilder();
-
-        // user | copies | pages
-        jobTrxComment.append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR_FIRST)
-                .append(requestingUserId)
-                //
-                .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                .append(weightTotal)
-                //
-                .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                .append(numberOfDocumentPages);
-
-        // ... | A4 | S | G | id
-        jobTrxComment.append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR);
-
-        DelegatedPrintCommentSyntax.appendIndicatorFields(jobTrxComment,
-                indicatorPaperSize, indicatorDuplex, indicatorColor,
-                indicatorExternalId);
-
-        /*
-         * Adjust the Personal and Shared Accounts in PaperCut and update the
-         * SavaPage AccountTrx's.
-         */
-        int weightTotalJobTrx = 0;
-
-        for (final AccountTrx trx : trxList) {
-
-            final int weight = trx.getTransactionWeight().intValue();
-
-            final BigDecimal weightedCost =
-                    ACCOUNTING_SERVICE.calcWeightedAmount(papercutUsageCost,
-                            weightTotal, weight, scale);
-
-            final org.savapage.core.jpa.Account account = trx.getAccount();
-
-            /*
-             * PaperCut account adjustment.
-             */
-            final BigDecimal papercutAdjustment = weightedCost.negate();
-
-            final AccountTypeEnum accountType =
-                    AccountTypeEnum.valueOf(account.getAccountType());
-
-            if (accountType == AccountTypeEnum.SHARED
-                    || accountType == AccountTypeEnum.GROUP) {
-
-                /*
-                 * Adjust Shared [Parent]/[klas|group|shared] Account.
-                 */
-
-                /*
-                 * NOTE: Ignore account.getParent().getName(), which is SavaPage
-                 * internal, but use the top account name as used in PaperCut.
-                 */
-                final String topAccountName = this.getSharedParentAccountName();
-
-                final String subAccountName = this.composeSharedSubAccountName(
-                        accountType, account.getName());
-
-                final String klasName =
-                        this.getKlasFromAccountName(subAccountName);
-
-                // requester | copies | pages
-                final StringBuilder klasTrxComment = new StringBuilder();
-
-                klasTrxComment
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR_FIRST)
-                        .append(requestingUserId)
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(weight)
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(numberOfDocumentPages);
-
-                // ... | A4 | S | G | id
-                klasTrxComment
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR);
-
-                DelegatedPrintCommentSyntax.appendIndicatorFields(
-                        klasTrxComment, indicatorPaperSize, indicatorDuplex,
-                        indicatorColor, indicatorExternalId);
-
-                // ... | document | comment
-                klasTrxComment
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(docLogTrx.getTitle())
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(StringUtils
-                                .defaultString(docLogTrx.getLogComment()))
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR_LAST);
-
-                if (this.getLogger().isDebugEnabled()) {
-
-                    this.getLogger().debug(String.format(
-                            "PaperCut shared account [%s] "
-                                    + "adjustment [%s] comment: %s",
-                            this.papercutServerProxy.composeSharedAccountName(
-                                    topAccountName, subAccountName),
-                            papercutAdjustment.toPlainString(),
-                            klasTrxComment.toString()));
-                }
-
-                PAPERCUT_SERVICE.lazyAdjustSharedAccount(
-                        this.papercutServerProxy, topAccountName,
-                        subAccountName, papercutAdjustment,
-                        klasTrxComment.toString());
-
-                // ... | user@class-n | copies-n
-                jobTrxComment
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(requestingUserId)
-                        //
-                        .append(DelegatedPrintCommentSyntax.USER_CLASS_SEPARATOR)
-                        .append(klasName)
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(weight);
-
-                weightTotalJobTrx += weight;
-
-            } else {
-
-                final StringBuilder userCopiesComment = new StringBuilder();
-
-                // class | requester | copies | pages
-                userCopiesComment
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR_FIRST)
-                        .append(StringUtils.defaultString(trx.getExtDetails(),
-                                DelegatedPrintCommentSyntax.DUMMY_KLAS))
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(requestingUserId)
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(weight)
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(numberOfDocumentPages);
-
-                //
-                // ... | A4 | S | G | id
-                userCopiesComment
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR);
-
-                DelegatedPrintCommentSyntax.appendIndicatorFields(
-                        userCopiesComment, indicatorPaperSize, indicatorDuplex,
-                        indicatorColor, indicatorExternalId);
-
-                // ... | document | comment
-                userCopiesComment
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(docLogTrx.getTitle())
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                        .append(StringUtils
-                                .defaultString(docLogTrx.getLogComment()))
-                        //
-                        .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR_LAST);
-
-                //
-                final UserAccountDao userAccountDao =
-                        ServiceContext.getDaoContext().getUserAccountDao();
-
-                /*
-                 * Get the user of the transaction.
-                 */
-                final User user = userAccountDao
-                        .findByAccountId(trx.getAccount().getId()).getUser();
-                /*
-                 * Adjust Personal Account.
-                 */
-                if (this.getLogger().isDebugEnabled()) {
-
-                    this.getLogger()
-                            .debug(String.format(
-                                    "PaperCut personal account [%s] "
-                                            + "adjustment [%s] comment [%s]",
-                                    user.getUserId(),
-                                    papercutAdjustment.toPlainString(),
-                                    userCopiesComment.toString()));
-                }
-
-                PAPERCUT_SERVICE.adjustUserAccountBalance(
-                        this.papercutServerProxy, user.getUserId(),
-                        this.getUserAccountName(), papercutAdjustment,
-                        userCopiesComment.toString());
-            }
-
-            /*
-             * Update Account.
-             */
-            account.setBalance(account.getBalance().subtract(weightedCost));
-            accountDao.update(account);
-
-            /*
-             * Update AccountTrx.
-             */
-            trx.setAmount(papercutAdjustment);
-            trx.setBalance(account.getBalance());
-
-            trx.setTransactedBy(ServiceContext.getActor());
-            trx.setTransactionDate(ServiceContext.getTransactionDate());
-
-            if (this.isDocInAccountTrx()) {
-                // Move from DocLog source to target.
-                trx.setDocLog(docLogOut);
-            }
-
-            accountTrxDao.update(trx);
+        } else {
+            weightTotalCost = BigDecimal.valueOf(papercutLog.getUsageCost());
         }
 
         /*
-         * Create a transaction in the shared Jobs account with a comment of
-         * formatted job data.
+         * Create PaperCut transactions.
          */
+        final PaperCutAccountAdjustPattern accountAdjustPattern =
+                new PaperCutAccountAdjustPrint(papercutServerProxy, this,
+                        this.getLogger());
 
-        // ... |
-        if (weightTotalJobTrx != weightTotal) {
-
-            jobTrxComment.append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                    .append(requestingUserId)
-                    //
-                    .append(DelegatedPrintCommentSyntax.USER_CLASS_SEPARATOR)
-                    .append(DelegatedPrintCommentSyntax.DUMMY_KLAS)
-                    //
-                    .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                    .append(weightTotal - weightTotalJobTrx);
-        }
-
-        // ... | document | comment
-        jobTrxComment.append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                .append(docLogTrx.getTitle())
-                //
-                .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR)
-                .append(StringUtils.defaultString(docLogTrx.getLogComment()))
-                //
-                .append(DelegatedPrintCommentSyntax.FIELD_SEPARATOR_LAST);
-
-        PAPERCUT_SERVICE.lazyAdjustSharedAccount(this.papercutServerProxy,
-                this.getSharedParentAccountName(),
-                this.getSharedJobsAccountName(), papercutUsageCost.negate(),
-                StringUtils.abbreviate(jobTrxComment.toString(),
-                        PaperCutDbProxy.COL_LEN_TXN_COMMENT));
+        accountAdjustPattern.process(docLogTrx, docLogOut,
+                this.isDocInAccountTrx(), weightTotalCost, weightTotal);
 
         /*
          * DocLog updates.
@@ -889,9 +599,9 @@ public abstract class PaperCutPrintMonitorPattern {
 
             docLogIn.setExternalStatus(externalPrintJobStatus);
             docLogIn.setTransactions(null);
-            doclogDao.update(docLogIn);
+            DOC_LOG_DAO.update(docLogIn);
         }
 
-        doclogDao.update(docLogOut);
+        DOC_LOG_DAO.update(docLogOut);
     }
 }

@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -44,7 +44,7 @@ import org.slf4j.LoggerFactory;
  * <i>visible</i>.
  * </p>
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public class UserAuth {
@@ -88,32 +88,74 @@ public class UserAuth {
     public static final String MODE_CARD_IP = "nfc-network";
 
     /**
+     * Generic OAuth.
+     */
+    public static final String MODE_OAUTH = "oauth";
+
+    /**
+     * Login method for Yubico USB keys.
+     * <p>
+     * <b>NOTE</b>: Value is used as URL parameter at WebApp Login.
+     * </p>
+     */
+    public static final String MODE_YUBIKEY = "yubikey";
+
+    /**
      *
-     * @author Datraverse B.V.
+     * @author Rijk Ravestein
      *
      */
-    public static enum Mode {
-        NAME, ID, CARD_LOCAL, CARD_IP
+    public enum Mode {
+        /** Username/password. */
+        NAME,
+        /** ID. */
+        ID,
+        /** Local NFC. */
+        CARD_LOCAL,
+        /** Network NFC. */
+        CARD_IP,
+        /** OAuth (any). */
+        OAUTH,
+        /** YubiKey. */
+        YUBIKEY
     }
 
+    /** */
     private boolean visibleAuthName;
+    /** */
     private boolean visibleAuthId;
+    /** */
     private boolean visibleAuthCardLocal;
+    /** */
     private boolean visibleAuthCardIp;
+    /** */
+    private boolean visibleAuthYubikey;
 
+    /** */
     private Mode authModeDefault;
 
+    /** */
     private boolean authIdPinReq;
+    /** */
     private boolean authIdMasked;
+    /** */
     private boolean authCardPinReq;
 
+    /** */
     private boolean authCardSelfAssoc;
+    /** */
     private Integer maxIdleSeconds;
 
+    /** */
     private boolean allowAuthName;
+    /** */
     private boolean allowAuthId;
+    /** */
     private boolean allowAuthCardLocal;
+    /** */
     private boolean allowAuthCardIp;
+    /** */
+    private boolean allowAuthYubikey;
 
     /**
      *
@@ -125,6 +167,7 @@ public class UserAuth {
      * Gets the String representation from the {@link Mode}.
      *
      * @param mode
+     *            The authentication mode.
      * @return {@code null} when not found.
      */
     public static String mode(final Mode mode) {
@@ -137,8 +180,43 @@ public class UserAuth {
             return MODE_ID;
         case NAME:
             return MODE_NAME;
+        case OAUTH:
+            return MODE_OAUTH;
+        case YUBIKEY:
+            return MODE_YUBIKEY;
         default:
             return null;
+        }
+    }
+
+    /**
+     * Gets the UI text of an {@link Mode}.
+     *
+     * @param authMode
+     *            The {@link Mode} (can be {@code null}).
+     * @return The UI text.
+     */
+    public static String getUiText(final Mode authMode) {
+        if (authMode == null) {
+            // #21B7: CLOCKWISE TOP SEMICIRCLE ARROW
+            return "↷";
+        } else {
+            switch (authMode) {
+            case CARD_IP:
+            case CARD_LOCAL:
+                return "NFC";
+            case OAUTH:
+                return "OAuth";
+            case YUBIKEY:
+                return "YubiKey";
+            case ID:
+                return "ID";
+            case NAME:
+                return "~";
+            default:
+                throw new SpException(String.format("AuthMode %s not handled.",
+                        authMode.toString()));
+            }
         }
     }
 
@@ -146,6 +224,7 @@ public class UserAuth {
      * Gets the {@link Mode} representation from the String.
      *
      * @param mode
+     *            The authentication mode.
      * @return {@code null} when not found.
      */
     public static Mode mode(final String mode) {
@@ -157,6 +236,10 @@ public class UserAuth {
             return Mode.CARD_IP;
         } else if (mode.equals(MODE_CARD_LOCAL)) {
             return Mode.CARD_LOCAL;
+        } else if (mode.equals(MODE_OAUTH)) {
+            return Mode.OAUTH;
+        } else if (mode.equals(MODE_YUBIKEY)) {
+            return Mode.YUBIKEY;
         }
         return null;
     }
@@ -214,6 +297,7 @@ public class UserAuth {
         boolean showAuthId = false;
         boolean showAuthCardLocal = false;
         boolean showAuthCardIp = false;
+        boolean showAuthYubiKey = false;
 
         Mode authModeReq = null;
 
@@ -249,6 +333,8 @@ public class UserAuth {
                     customAuth.isTrue(DeviceAttrEnum.AUTH_MODE_CARD_IP, false);
             this.allowAuthCardLocal = customAuth
                     .isTrue(DeviceAttrEnum.AUTH_MODE_CARD_LOCAL, false);
+            this.allowAuthYubikey =
+                    customAuth.isTrue(DeviceAttrEnum.AUTH_MODE_YUBIKEY, false);
 
             this.authModeDefault = UserAuth
                     .mode(customAuth.get(DeviceAttrEnum.AUTH_MODE_DEFAULT,
@@ -258,6 +344,7 @@ public class UserAuth {
             showAuthId = this.allowAuthId;
             showAuthCardIp = this.allowAuthCardIp;
             showAuthCardLocal = this.allowAuthCardLocal;
+            showAuthYubiKey = this.allowAuthYubikey;
 
             if (!isAdminWebAppContext) {
                 this.maxIdleSeconds = Integer.valueOf(customAuth.get(
@@ -293,11 +380,13 @@ public class UserAuth {
             this.allowAuthId = cm.isConfigValue(Key.AUTH_MODE_ID);
             this.allowAuthCardLocal =
                     cm.isConfigValue(Key.AUTH_MODE_CARD_LOCAL);
+            this.allowAuthYubikey = cm.isConfigValue(Key.AUTH_MODE_YUBIKEY);
             this.allowAuthCardIp = false;
 
             showAuthName = cm.isConfigValue(Key.AUTH_MODE_NAME_SHOW);
             showAuthId = cm.isConfigValue(Key.AUTH_MODE_ID_SHOW);
             showAuthCardLocal = cm.isConfigValue(Key.AUTH_MODE_CARD_LOCAL_SHOW);
+            showAuthYubiKey = cm.isConfigValue(Key.AUTH_MODE_YUBIKEY_SHOW);
             showAuthCardIp = false;
 
             this.authModeDefault =
@@ -327,6 +416,9 @@ public class UserAuth {
             case NAME:
                 isValidDefault = this.allowAuthName && showAuthName;
                 break;
+            case YUBIKEY:
+                isValidDefault = this.allowAuthYubikey && showAuthYubiKey;
+                break;
             default:
                 break;
             }
@@ -339,7 +431,6 @@ public class UserAuth {
                 this.maxIdleSeconds =
                         cm.getConfigInt(Key.WEBAPP_USER_MAX_IDLE_SECS);
             }
-
         }
 
         /*
@@ -359,6 +450,7 @@ public class UserAuth {
             this.visibleAuthCardLocal =
                     this.allowAuthCardLocal && showAuthCardLocal;
             this.visibleAuthCardIp = this.allowAuthCardIp && showAuthCardIp;
+            this.visibleAuthYubikey = this.allowAuthYubikey && showAuthYubiKey;
 
             /*
              * INVARIANT: Admin WebApp SHOULD always be able to login with
@@ -376,6 +468,7 @@ public class UserAuth {
             this.visibleAuthId = false;
             this.visibleAuthCardLocal = false;
             this.visibleAuthCardIp = false;
+            this.visibleAuthYubikey = false;
 
             switch (authModeReq) {
             case CARD_IP:
@@ -389,6 +482,9 @@ public class UserAuth {
                 break;
             case NAME:
                 this.visibleAuthName = this.allowAuthName;
+                break;
+            case YUBIKEY:
+                this.visibleAuthYubikey = this.allowAuthYubikey;
                 break;
             default:
                 break;
@@ -415,13 +511,17 @@ public class UserAuth {
                 || (this.authModeDefault == Mode.CARD_LOCAL
                         && !this.visibleAuthCardLocal)
                 || (this.authModeDefault == Mode.CARD_IP
-                        && !this.visibleAuthCardIp);
+                        && !this.visibleAuthCardIp)
+                || (this.authModeDefault == Mode.YUBIKEY
+                        && !this.visibleAuthYubikey);
 
         if (incorrectDefault) {
             /*
              * Assign the more advanced methods first.
              */
-            if (this.visibleAuthCardIp) {
+            if (this.visibleAuthYubikey) {
+                this.authModeDefault = Mode.YUBIKEY;
+            } else if (this.visibleAuthCardIp) {
                 this.authModeDefault = Mode.CARD_IP;
             } else if (this.visibleAuthCardLocal) {
                 this.authModeDefault = Mode.CARD_LOCAL;
@@ -431,7 +531,6 @@ public class UserAuth {
                 this.authModeDefault = Mode.NAME;
             }
         }
-
     }
 
     /**
@@ -442,9 +541,10 @@ public class UserAuth {
      * </p>
      *
      * @param mode
-     * @return
+     *            The authentication mode.
+     * @return {@code true} when allowed.
      */
-    public boolean isAuthModeAllowed(UserAuth.Mode mode) {
+    public boolean isAuthModeAllowed(final UserAuth.Mode mode) {
 
         if (mode == UserAuth.Mode.NAME && authCardSelfAssoc) {
             return true;
@@ -453,7 +553,8 @@ public class UserAuth {
         return (allowAuthName && mode == UserAuth.Mode.NAME)
                 || (allowAuthId && mode == UserAuth.Mode.ID)
                 || (allowAuthCardLocal && mode == UserAuth.Mode.CARD_LOCAL)
-                || (allowAuthCardIp && mode == UserAuth.Mode.CARD_IP);
+                || (allowAuthCardIp && mode == UserAuth.Mode.CARD_IP)
+                || (allowAuthYubikey && mode == UserAuth.Mode.YUBIKEY);
     }
 
     public boolean isVisibleAuthName() {
@@ -470,6 +571,10 @@ public class UserAuth {
 
     public boolean isVisibleAuthCardIp() {
         return visibleAuthCardIp;
+    }
+
+    public boolean isVisibleAuthYubikey() {
+        return visibleAuthYubikey;
     }
 
     public Mode getAuthModeDefault() {
@@ -510,6 +615,10 @@ public class UserAuth {
 
     public boolean isAllowAuthCardIp() {
         return allowAuthCardIp;
+    }
+
+    public boolean isAllowAuthYubikey() {
+        return allowAuthYubikey;
     }
 
 }

@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -25,12 +25,17 @@ import java.util.Random;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
+ *
  */
 public final class NumberUtil {
 
-    private final static int UNIT_SI_1000 = 1000;
-    private final static int UNIT_BINARY_1024 = 1024;
+    /** */
+    public static final int INT_THOUSAND = 1000;
+    /** */
+    private static final int UNIT_SI_1000 = 1000;
+    /** */
+    private static final int UNIT_BINARY_1024 = 1024;
 
     /**
      *
@@ -56,9 +61,9 @@ public final class NumberUtil {
      * <p>
      * <a href=
      * "http://stackoverflow.com/questions/3758606/how-to-convert-byte-size-into
-     * - human-readable-format-in-java
-     * ">http://stackoverflow.com/questions/3758606/how-to-convert-byte-size-int
-     * o - human-readable-format-in-java</a>
+     * - human-readable-format-in-java ">http://stackoverflow.com/questions/
+     * 3758606/how-to-convert-byte-size-int o -
+     * human-readable-format-in-java</a>
      * </p>
      *
      * @param bytes
@@ -72,20 +77,27 @@ public final class NumberUtil {
             final boolean si) {
 
         final int unit;
+        final String unitSfx;
+        final String unitSfx2;
 
         if (si) {
             unit = UNIT_SI_1000;
+            unitSfx = "kMGTPE";
+            unitSfx2 = "";
         } else {
             unit = UNIT_BINARY_1024;
+            unitSfx = "KMGTPE";
+            unitSfx2 = "i";
         }
 
         if (bytes < unit) {
             return bytes + " B";
         }
-        int exp = (int) (Math.log(bytes) / Math.log(unit));
-        String pre =
-                (si ? "kMGTPE" : "KMGTPE").charAt(exp - 1) + (si ? "" : "i");
-        return String.format("%.1f %sB", bytes / Math.pow(unit, exp), pre);
+
+        final int exp = (int) (Math.log(bytes) / Math.log(unit));
+
+        return String.format("%.1f %c%sB", bytes / Math.pow(unit, exp),
+                unitSfx.charAt(exp - 1), unitSfx2);
     }
 
 }

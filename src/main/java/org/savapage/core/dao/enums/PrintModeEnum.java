@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -23,9 +23,15 @@ package org.savapage.core.dao.enums;
 
 import java.util.Locale;
 
+import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.util.LocaleHelper;
 
 /**
+ * Proxy Print Modes.
+ *
+ * <p>
+ * <b>Important</b>: the length of {@link PrintModeEnum#toString()} MUST NOT
+ * exceed the column width of {@link PrintOut#setPrintMode(String)}.
  *
  * @author Rijk Ravestein
  *
@@ -33,7 +39,7 @@ import org.savapage.core.util.LocaleHelper;
 public enum PrintModeEnum {
 
     /**
-     * Authenticated WebApp Print.
+     * Secure WebApp Print.
      */
     AUTH,
 
@@ -55,7 +61,23 @@ public enum PrintModeEnum {
     /**
      * Direct (Push) WebApp Print.
      */
-    PUSH;
+    PUSH,
+
+    /**
+     * Job Ticket Print.
+     */
+    TICKET,
+
+    /**
+     * Job Ticket Copy-off-the-glass MFP Print.
+     */
+    TICKET_C,
+
+    /**
+     * Job Ticket External Print, outside SavaPage by third-party printer
+     * driver.
+     */
+    TICKET_E;
 
     /**
      * @param locale

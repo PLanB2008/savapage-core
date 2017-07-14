@@ -1,5 +1,5 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
  * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -24,7 +24,6 @@ package org.savapage.ext.smartschool;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.text.SimpleDateFormat;
@@ -44,6 +43,7 @@ import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.time.DateUtils;
 import org.savapage.core.ShutdownException;
 import org.savapage.core.SpException;
+import org.savapage.core.UnavailableException;
 import org.savapage.core.cometd.AdminPublisher;
 import org.savapage.core.cometd.PubLevelEnum;
 import org.savapage.core.cometd.PubTopicEnum;
@@ -75,6 +75,7 @@ import org.savapage.core.jpa.IppQueue;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
 import org.savapage.core.msg.UserMsgIndicator;
+import org.savapage.core.pdf.PdfCreateInfo;
 import org.savapage.core.pdf.PdfSecurityException;
 import org.savapage.core.pdf.PdfValidityException;
 import org.savapage.core.pdf.SpPdfPageProps;
@@ -97,6 +98,7 @@ import org.savapage.core.services.helpers.DocContentPrintInInfo;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.core.services.helpers.InboxSelectScopeEnum;
 import org.savapage.core.services.helpers.PrinterAttrLookup;
+import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.users.IUserSource;
 import org.savapage.core.util.AppLogHelper;
@@ -2391,10 +2393,10 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
          * INVARIANT: If printer has media sources defined, a media-source MUST
          * be available that matches the media size of the document.
          */
-        final IppMediaSourceCostDto assignedMediaSource =
+        final IppMediaSourceCostDto assignedMediaSourceCost =
                 printerAttrLookup.findAnyMediaSourceForMedia(ippMediaSize);
 
-        if (assignedMediaSource == null) {
+        if (assignedMediaSourceCost == null) {
             throw new ProxyPrintException(localizedMsg("printer-media-not-foud",
                     printerName, ippMediaSize.getIppKeyword()));
         }
@@ -2411,8 +2413,10 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
         if (isManagedByPaperCut && hasMediaSourceAuto) {
             printReq.setMediaSourceOption(IppKeyword.MEDIA_SOURCE_AUTO);
             jobChunk.setAssignedMediaSource(null);
+            jobChunk.setIppMediaSource(IppKeyword.MEDIA_SOURCE_AUTO);
         } else {
-            jobChunk.setAssignedMediaSource(assignedMediaSource);
+            jobChunk.setAssignedMediaSource(assignedMediaSourceCost);
+            jobChunk.setIppMediaSource(assignedMediaSourceCost.getSource());
         }
 
         /*
@@ -2576,7 +2580,7 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
         final Printer printer = printerDao.findByName(printerNameSelected);
 
         final boolean isJobTicketPrinter =
-                PRINTER_SERVICE.isJobTicketPrinter(printer.getPrinterName());
+                PRINTER_SERVICE.isJobTicketPrinter(printer);
 
         /*
          * Determine Print Mode.
@@ -2742,8 +2746,17 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
 
             final IFileConverter converter = new PdfToGrayscale();
 
-            downloadedFileConverted =
-                    converter.convert(DocContentTypeEnum.PDF, downloadedFile);
+            try {
+                downloadedFileConverted = converter
+                        .convert(DocContentTypeEnum.PDF, downloadedFile);
+            } catch (UnavailableException e) {
+                /*
+                 * INVARIANT: Service MUST be available.
+                 */
+                throw new DocContentToPdfException(
+                        "Monochrome conversion failed "
+                                + "because service is unavailable.");
+            }
 
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug(String.format("[%s] converted to grayscale.",
@@ -2778,26 +2791,29 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
 
             if (printReq.getPrintMode() == PrintModeEnum.HOLD) {
 
-                final BigDecimal cost = ACCOUNTING_SERVICE.calcProxyPrintCost(
-                        ServiceContext.getLocale(),
-                        ServiceContext.getAppCurrencySymbol(), lockedUser,
-                        printer, printReq.createProxyPrintCostParms(),
-                        printReq.getJobChunkInfo());
+                final ProxyPrintCostDto costResult = ACCOUNTING_SERVICE
+                        .calcProxyPrintCost(ServiceContext.getLocale(),
+                                ServiceContext.getAppCurrencySymbol(),
+                                lockedUser, printer,
+                                printReq.createProxyPrintCostParms(null),
+                                printReq.getJobChunkInfo());
 
-                printReq.setCost(cost);
+                printReq.setCostResult(costResult);
+
+                final PdfCreateInfo createInfo = new PdfCreateInfo(fileToPrint);
 
                 if (isJobTicketPrinter) {
                     // TODO: 4 hours?
                     final int hours = 4;
 
                     JOBTICKET_SERVICE.proxyPrintPdf(lockedUser, printReq,
-                            fileToPrint, printInInfo,
+                            createInfo, printInInfo,
                             DateUtils.addHours(
                                     ServiceContext.getTransactionDate(),
                                     hours));
                 } else {
                     OUTBOX_SERVICE.proxyPrintPdf(lockedUser, printReq,
-                            fileToPrint, printInInfo);
+                            createInfo, printInInfo);
                 }
                 /*
                  * This will refresh the User Web App with new status
@@ -2809,7 +2825,7 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
             } else {
 
                 PROXY_PRINT_SERVICE.proxyPrintPdf(lockedUser, printReq,
-                        fileToPrint);
+                        new PdfCreateInfo(fileToPrint));
             }
 
             daoContext.commit();

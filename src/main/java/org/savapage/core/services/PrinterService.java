@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -41,6 +41,9 @@ import org.savapage.core.json.rpc.AbstractJsonRpcMessage;
 import org.savapage.core.json.rpc.AbstractJsonRpcMethodResponse;
 import org.savapage.core.json.rpc.JsonRpcMethodError;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
+import org.savapage.core.print.proxy.JsonProxyPrinterOpt;
+import org.savapage.core.print.proxy.JsonProxyPrinterOptChoice;
+import org.savapage.core.services.helpers.PrinterAttrLookup;
 
 /**
  *
@@ -62,6 +65,15 @@ public interface PrinterService {
      * @return {@code true} when internal printer.
      */
     boolean isInternalPrinter(Printer printer);
+
+    /**
+     * Reads the database to check if printer is a Job Ticket printer.
+     *
+     * @param printer
+     *            The {@link Printer}.
+     * @return {@code true} when Job Ticket printer.
+     */
+    boolean isJobTicketPrinter(Printer printer);
 
     /**
      * Checks if the {@link Printer} can be used for proxy printing, i.e. it is
@@ -364,18 +376,20 @@ public interface PrinterService {
     boolean isHoldReleasePrinter(final Printer printer);
 
     /**
+     * Finds the first "media-source" of a printer that matches a "media".
      *
-     * @param printerName
-     *            The CUPS printer name.
-     * @return {@code true} When printer name represents job ticket printer.
+     * @param printerAttrLookup
+     *            The {@link PrinterAttrLookup} containing the "media-source" to
+     *            "media" mapping.
+     * @param mediaSource
+     *            The "media-source" to search. See
+     *            {@link IppDictJobTemplateAttr#ATTR_MEDIA_SOURCE}
+     * @param requestedMedia
+     *            The requested "media", as value of
+     *            {@link IppDictJobTemplateAttr#ATTR_MEDIA}.
+     * @return The media source, or {@code null} when not found.
      */
-    boolean isJobTicketPrinter(String printerName);
-
-    /**
-     * Gets the CUPS printer name of the Job Ticket Printer.
-     *
-     * @return Empty string when not configured.
-     */
-    String getJobTicketPrinterName();
-
+    JsonProxyPrinterOptChoice findMediaSourceForMedia(
+            PrinterAttrLookup printerAttrLookup,
+            JsonProxyPrinterOpt mediaSource, String requestedMedia);
 }

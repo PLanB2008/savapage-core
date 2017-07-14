@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,25 +14,26 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.print.proxy;
 
-import java.math.BigDecimal;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
 import org.savapage.core.dao.enums.PrintModeEnum;
+import org.savapage.core.inbox.PdfOrientationInfo;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.core.services.helpers.InboxSelectScopeEnum;
+import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ProxyPrintCostParms;
 
 /**
@@ -97,8 +98,6 @@ public abstract class AbstractProxyPrintReq
     private boolean removeGraphics;
     private boolean drm;
 
-    private boolean ecoPrint;
-
     private boolean ecoPrintShadow;
 
     /**
@@ -118,7 +117,8 @@ public abstract class AbstractProxyPrintReq
     private String userMsg;
     private String userMsgKey;
     private Long idUser;
-    private BigDecimal cost;
+
+    private ProxyPrintCostDto costResult;
 
     private Date submitDate;
 
@@ -127,6 +127,17 @@ public abstract class AbstractProxyPrintReq
     private InboxSelectScopeEnum clearScope;
 
     private Boolean fitToPage;
+
+    /**
+     * {@code true} when one of the job pages has landscape orientation.
+     * {@code null} when unknown.
+     */
+    private Boolean landscape;
+
+    /**
+     * The PDF inbox document orientation of the first page to be proxy printed.
+     */
+    private PdfOrientationInfo pdfOrientation;
 
     private ProxyPrintJobChunkInfo jobChunkInfo;
 
@@ -195,23 +206,6 @@ public abstract class AbstractProxyPrintReq
 
     public void setDrm(boolean drm) {
         this.drm = drm;
-    }
-
-    /**
-     *
-     * @return {@code true} if Eco PDF is to be created.
-     */
-    public boolean isEcoPrint() {
-        return ecoPrint;
-    }
-
-    /**
-     *
-     * @param ecoPrint
-     *            {@code true} if Eco PDF is to be created.
-     */
-    public void setEcoPrint(boolean ecoPrint) {
-        this.ecoPrint = ecoPrint;
     }
 
     /**
@@ -336,12 +330,12 @@ public abstract class AbstractProxyPrintReq
         this.idUser = idUser;
     }
 
-    public BigDecimal getCost() {
-        return cost;
+    public ProxyPrintCostDto getCostResult() {
+        return costResult;
     }
 
-    public void setCost(BigDecimal cost) {
-        this.cost = cost;
+    public void setCostResult(ProxyPrintCostDto costResult) {
+        this.costResult = costResult;
     }
 
     public boolean isAuthenticated() {
@@ -537,6 +531,40 @@ public abstract class AbstractProxyPrintReq
         this.fitToPage = fitToPage;
     }
 
+    /**
+     * @return {@code true} when one of the job pages has landscape orientation.
+     *         {@code null} when unknown.
+     */
+    public Boolean getLandscape() {
+        return landscape;
+    }
+
+    /**
+     * @param landscape
+     *            {@code true} when one of the job pages has landscape
+     *            orientation. {@code null} when unknown.
+     */
+    public void setLandscape(Boolean landscape) {
+        this.landscape = landscape;
+    }
+
+    /**
+     * @return The PDF inbox document orientation of the first page to be proxy
+     *         printed.
+     */
+    public PdfOrientationInfo getPdfOrientation() {
+        return pdfOrientation;
+    }
+
+    /**
+     * @param pdfOrientation
+     *            The PDF inbox document orientation of the first page to be
+     *            proxy printed.
+     */
+    public void setPdfOrientation(PdfOrientationInfo pdfOrientation) {
+        this.pdfOrientation = pdfOrientation;
+    }
+
     public static int getNup(Map<String, String> optionValues) {
         int nUp = 1;
         final String value =
@@ -610,17 +638,27 @@ public abstract class AbstractProxyPrintReq
     /**
      * Creates {@link ProxyPrintCostParms}.
      *
+     * @param proxyPrinter
+     *            The target proxy printer (can be {@code null}, in which case
+     *            no custom media/copy costs are applicable).
      * @return The {@link ProxyPrintCostParms}.
      */
-    public ProxyPrintCostParms createProxyPrintCostParms() {
+    public final ProxyPrintCostParms
+            createProxyPrintCostParms(final JsonProxyPrinter proxyPrinter) {
 
-        final ProxyPrintCostParms costParms = new ProxyPrintCostParms();
+        final ProxyPrintCostParms costParms =
+                new ProxyPrintCostParms(proxyPrinter);
 
         costParms.setDuplex(this.isDuplex());
-        costParms.setEcoPrint(this.isEcoPrintShadow() || this.isEcoPrint());
+        costParms.setEcoPrint(this.isEcoPrintShadow());
         costParms.setGrayscale(this.isGrayscale());
         costParms.setNumberOfCopies(this.getNumberOfCopies());
         costParms.setPagesPerSide(this.getNup());
+        costParms.setIppMediaOption(this.getMediaOption());
+
+        costParms.importIppOptionValues(this.getOptionValues());
+
+        costParms.calcCustomCost();
 
         return costParms;
     }
@@ -630,7 +668,7 @@ public abstract class AbstractProxyPrintReq
      * @return {@code true} if PDF must to be converted to grayscale before
      *         proxy printing.
      */
-    public boolean isConvertToGrayscale() {
+    public final boolean isConvertToGrayscale() {
         return convertToGrayscale;
     }
 
@@ -640,7 +678,7 @@ public abstract class AbstractProxyPrintReq
      *            {@code true} if PDF must to be converted to grayscale before
      *            proxy printing.
      */
-    public void setConvertToGrayscale(boolean convertToGrayscale) {
+    public final void setConvertToGrayscale(boolean convertToGrayscale) {
         this.convertToGrayscale = convertToGrayscale;
     }
 

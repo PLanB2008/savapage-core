@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -68,18 +68,18 @@ public final class SmartschoolPaperCutMonitor
     }
 
     @Override
-    protected String getUserAccountName() {
+    public String getUserAccountName() {
         return ConfigManager.instance()
                 .getConfigValue(Key.SMARTSCHOOL_PAPERCUT_ACCOUNT_PERSONAL);
     }
 
     @Override
-    protected String getSharedParentAccountName() {
+    public String getSharedParentAccountName() {
         return SMARTSCHOOL_SERVICE.getSharedParentAccountName();
     }
 
     @Override
-    protected String getSharedJobsAccountName() {
+    public String getSharedJobsAccountName() {
         return SMARTSCHOOL_SERVICE.getSharedJobsAccountName();
     }
 
@@ -98,7 +98,7 @@ public final class SmartschoolPaperCutMonitor
     }
 
     @Override
-    protected String getKlasFromAccountName(final String subAccountName) {
+    public String getKlasFromAccountName(final String subAccountName) {
         return SMARTSCHOOL_SERVICE
                 .getKlasFromComposedAccountName(subAccountName);
     }
@@ -114,10 +114,11 @@ public final class SmartschoolPaperCutMonitor
     }
 
     @Override
-    protected String composeSharedSubAccountName(
-            final AccountTypeEnum accountType, final String accountName) {
+    public String composeSharedSubAccountName(final AccountTypeEnum accountType,
+            final String accountName, final String accountNameParent) {
         /*
-         * The account name is already in composed format.
+         * Account name is already in composed format and parent account name is
+         * irrelevant.
          */
         return accountName;
     }

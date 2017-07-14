@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -51,6 +51,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
 import org.savapage.core.PerformanceLogger;
 import org.savapage.core.SpException;
+import org.savapage.core.auth.YubiKeyOTP;
 import org.savapage.core.community.MemberCard;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
@@ -156,6 +157,7 @@ public final class UserServiceImpl extends AbstractService
         final String primaryEmail = dto.getEmail();
         final String cardNumber = dto.getCard();
         final String idNumber = dto.getId();
+        final String yubiKeyPubId = dto.getYubiKeyPubId();
 
         boolean isUpdated = false;
 
@@ -349,6 +351,45 @@ public final class UserServiceImpl extends AbstractService
         }
 
         /*
+         * YubiKey Public ID (remove).
+         */
+        if (StringUtils.isBlank(yubiKeyPubId)) {
+
+            if (dto.getRemoveYubiKey()) {
+                this.assocYubiKeyPubId(jpaUser, null);
+                isUpdated = true;
+            }
+
+        } else {
+
+            final int lengthYubiKey = YubiKeyOTP.PUBLIC_ID_LENGTH;
+
+            if (yubiKeyPubId.length() != lengthYubiKey) {
+                /*
+                 * INVARIANT: YubiKey Public ID MUST be valid.
+                 */
+                return createError("msg-yubikey-length-error",
+                        String.valueOf(lengthYubiKey));
+            }
+
+            final User jpaUserDuplicate =
+                    this.findUserByYubiKeyPubID(yubiKeyPubId);
+
+            if (jpaUserDuplicate != null
+                    && !jpaUserDuplicate.getUserId().equals(userid)) {
+
+                /*
+                 * INVARIANT: YubiKey Public ID MUST be unique.
+                 */
+                return createError("msg-user-duplicate-user-yubikey",
+                        dto.getId(), jpaUserDuplicate.getUserId());
+            }
+
+            this.assocYubiKeyPubId(jpaUser, yubiKeyPubId);
+            isUpdated = true;
+        }
+
+        /*
          * PIN (keep/remove)
          */
         if (StringUtils.isBlank(pin)) {
@@ -499,9 +540,13 @@ public final class UserServiceImpl extends AbstractService
         dto.setAdmin(user.getAdmin());
         dto.setPerson(user.getPerson());
         dto.setUserName(user.getUserId());
+
         dto.setInternal(user.getInternal());
+        dto.setInternalPw(user.getInternal().booleanValue()
+                && this.hasInternalPassword(user));
 
         dto.setId(this.getPrimaryIdNumber(user));
+        dto.setYubiKeyPubId(this.getYubiKeyPubID(user));
         dto.setEmail(this.getPrimaryEmailAddress(user));
         dto.setCard(this.getPrimaryCardNumber(user));
 
@@ -647,6 +692,7 @@ public final class UserServiceImpl extends AbstractService
             cardNumber = cardNumber.toLowerCase();
         }
         final String idNumber = userDto.getId();
+        final String yubiKeyPubId = userDto.getYubiKeyPubId();
         final String primaryEmail = userDto.getEmail();
 
         /*
@@ -676,14 +722,18 @@ public final class UserServiceImpl extends AbstractService
         }
 
         /*
-         * Find duplicates for userid, ID Number and Card Number.
+         * Find duplicates for userid, ID Number, YubiKey Public ID, and Card
+         * Number.
          *
-         * NOTE: The finds return null when instance is logically deleted!
+         * NOTE: The find returns null when instance is logically deleted!
          */
         final User jpaUserDuplicate =
                 userDAO().findActiveUserByUserId(userDto.getUserName());
 
         final User jpaUserIdNumberDuplicate = this.findUserByNumber(idNumber);
+
+        final User jpaUserYubiKeyuplicate =
+                this.findUserByYubiKeyPubID(yubiKeyPubId);
 
         final User jpaUserCardNumberDuplicate =
                 this.findUserByCardNumber(cardNumber);
@@ -701,6 +751,11 @@ public final class UserServiceImpl extends AbstractService
             if (jpaUserIdNumberDuplicate != null) {
                 return createError("msg-user-duplicate-user-id-number",
                         idNumber, jpaUserIdNumberDuplicate.getUserId());
+            }
+
+            if (jpaUserYubiKeyuplicate != null) {
+                return createError("msg-user-duplicate-user-yubikey",
+                        yubiKeyPubId, jpaUserYubiKeyuplicate.getUserId());
             }
 
             if (jpaUserCardNumberDuplicate != null) {
@@ -743,6 +798,12 @@ public final class UserServiceImpl extends AbstractService
                     .getUserId().equals(jpaUserDuplicate.getUserId())) {
                 return createError("msg-user-duplicate-user-id-number",
                         idNumber, jpaUserIdNumberDuplicate.getUserId());
+            }
+
+            if (jpaUserYubiKeyuplicate != null && !jpaUserYubiKeyuplicate
+                    .getUserId().equals(jpaUserDuplicate.getUserId())) {
+                return createError("msg-user-duplicate-user-yubikey",
+                        yubiKeyPubId, jpaUserYubiKeyuplicate.getUserId());
             }
 
             if (jpaUserCardNumberDuplicate != null
@@ -841,6 +902,19 @@ public final class UserServiceImpl extends AbstractService
         }
 
         this.assocPrimaryIdNumber(jpaUser, idNumber);
+
+        /*
+         * YubiKey Public ID.
+         */
+        if (StringUtils.isNotBlank(yubiKeyPubId)) {
+
+            if (yubiKeyPubId.length() != YubiKeyOTP.PUBLIC_ID_LENGTH) {
+                return createError("msg-yubikey-length-error",
+                        String.valueOf(YubiKeyOTP.PUBLIC_ID_LENGTH));
+            }
+        }
+
+        this.assocYubiKeyPubId(jpaUser, yubiKeyPubId);
 
         /*
          *
@@ -1027,7 +1101,19 @@ public final class UserServiceImpl extends AbstractService
                 daoAttr.create(attr);
             }
         } else if (attrValue == null) {
+
+            final Iterator<UserAttr> iter = user.getAttributes().iterator();
+
+            while (iter.hasNext()) {
+                final UserAttr attrWlk = iter.next();
+                if (attrWlk.getName().equals(attrEnum.getName())) {
+                    iter.remove();
+                    break;
+                }
+            }
+            userDAO().update(user);
             daoAttr.delete(attr);
+
         } else if (!attr.getValue().equals(attrValue)) {
             attr.setValue(attrValue);
             daoAttr.update(attr);
@@ -1109,14 +1195,8 @@ public final class UserServiceImpl extends AbstractService
         return this.deleteUserFinalAction(userIdToDelete);
     }
 
-    /**
-     * Encrypts the user password.
-     *
-     * @param userid
-     * @param password
-     * @return
-     */
-    private static String encryptUserPassword(final String userid,
+    @Override
+    public String encryptUserPassword(final String userid,
             final String password) {
         return CryptoUser.getHashedUserPassword(userid, password);
     }
@@ -1228,6 +1308,7 @@ public final class UserServiceImpl extends AbstractService
             dto.setCard(getPrimaryIdNumber(user));
             dto.setEmail(getPrimaryEmailAddress(user));
             dto.setId(getPrimaryIdNumber(user));
+            dto.setYubiKeyPubId(getYubiKeyPubID(user));
 
             items.add(dto);
         }
@@ -1479,7 +1560,9 @@ public final class UserServiceImpl extends AbstractService
                     userEmail.setAddress(keyDto);
                     userEmail.setDisplayName(keyDto);
 
-                    userEmailDAO().create(userEmail);
+                    if (!isNewInternalUser) {
+                        userEmailDAO().create(userEmail);
+                    }
                     userEmailList.add(userEmail);
 
                     readNextDto = true;
@@ -1507,7 +1590,9 @@ public final class UserServiceImpl extends AbstractService
                 userEmail.setAddress(keyDto);
                 userEmail.setDisplayName(keyDto);
 
-                userEmailDAO().create(userEmail);
+                if (!isNewInternalUser) {
+                    userEmailDAO().create(userEmail);
+                }
                 userEmailList.add(userEmail);
 
                 readNextDto = true;
@@ -1651,6 +1736,12 @@ public final class UserServiceImpl extends AbstractService
     }
 
     @Override
+    public boolean hasInternalPassword(final User user) {
+        return this.getUserAttrValue(user,
+                UserAttrEnum.INTERNAL_PASSWORD) != null;
+    }
+
+    @Override
     public User findUserByNumber(final String number) {
 
         User user = null;
@@ -1658,6 +1749,23 @@ public final class UserServiceImpl extends AbstractService
         if (StringUtils.isNotBlank(number)) {
 
             final UserNumber userNumber = userNumberDAO().findByNumber(number);
+
+            if (userNumber != null) {
+                user = userNumber.getUser();
+            }
+        }
+        return user;
+    }
+
+    @Override
+    public User findUserByYubiKeyPubID(final String publicID) {
+
+        User user = null;
+
+        if (StringUtils.isNotBlank(publicID)) {
+
+            final UserNumber userNumber =
+                    userNumberDAO().findByYubiKeyPubID(publicID);
 
             if (userNumber != null) {
                 user = userNumber.getUser();
@@ -1876,6 +1984,80 @@ public final class UserServiceImpl extends AbstractService
 
     }
 
+    /**
+     *
+     * @param user
+     * @param yubiKeyPubId
+     */
+    public void assocYubiKeyPubId(final User user, final String yubiKeyPubId) {
+
+        List<UserNumber> numberList = user.getIdNumbers();
+
+        if (StringUtils.isBlank(yubiKeyPubId)) {
+
+            /*
+             * Find and remove the YubiKey Public ID.
+             */
+            if (numberList != null) {
+
+                final Iterator<UserNumber> iter = numberList.iterator();
+
+                while (iter.hasNext()) {
+
+                    final UserNumber number = iter.next();
+
+                    if (userNumberDAO().isYubiKeyPubID(number)) {
+                        userNumberDAO().delete(number);
+                        iter.remove();
+                        break;
+                    }
+                }
+            }
+
+        } else {
+
+            /*
+             * Lazy create the list...
+             */
+            if (numberList == null) {
+                numberList = new ArrayList<>();
+                user.setIdNumbers(numberList);
+            }
+
+            /*
+             * Find the YubiKey Public ID.
+             */
+            UserNumber yubikeyNumber = null;
+
+            final Iterator<UserNumber> iter = numberList.iterator();
+
+            while (iter.hasNext()) {
+
+                final UserNumber number = iter.next();
+
+                if (userNumberDAO().isYubiKeyPubID(number)) {
+                    yubikeyNumber = number;
+                    break;
+                }
+            }
+
+            /*
+             * Create or update.
+             */
+            if (yubikeyNumber == null) {
+
+                yubikeyNumber = new UserNumber();
+                yubikeyNumber.setUser(user);
+                userNumberDAO().assignYubiKeyNumber(yubikeyNumber);
+
+                numberList.add(yubikeyNumber);
+            }
+
+            yubikeyNumber.setNumber(userNumberDAO()
+                    .composeYubiKeyDbNumber(yubiKeyPubId.toLowerCase()));
+        }
+    }
+
     @Override
     public void assocPrimaryIdNumber(final User user,
             final String primaryIdNumber) {
@@ -1948,7 +2130,6 @@ public final class UserServiceImpl extends AbstractService
 
             primaryNumber.setNumber(primaryIdNumber.toLowerCase());
         }
-
     }
 
     @Override
@@ -1997,6 +2178,30 @@ public final class UserServiceImpl extends AbstractService
             }
         }
         return idNumber;
+    }
+
+    @Override
+    public String getYubiKeyPubID(final User user) {
+        String publicID = "";
+
+        final List<UserNumber> numberList = user.getIdNumbers();
+
+        if (numberList != null) {
+
+            final Iterator<UserNumber> iter = numberList.iterator();
+
+            while (iter.hasNext()) {
+
+                final UserNumber number = iter.next();
+                final String id = userNumberDAO().getYubiKeyPubID(number);
+
+                if (id != null) {
+                    publicID = id;
+                    break;
+                }
+            }
+        }
+        return publicID;
     }
 
     @Override

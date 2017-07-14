@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -44,6 +44,7 @@ import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.AccountTrx;
 import org.savapage.core.jpa.DocLog;
+import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
@@ -56,6 +57,7 @@ import org.savapage.core.print.proxy.ProxyPrintException;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.print.proxy.ProxyPrintJobChunkInfo;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
+import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ProxyPrintCostParms;
 
 /**
@@ -285,7 +287,7 @@ public interface AccountingService {
      *
      * @param ippMediaSourceName
      *            The name of the IPP media-source.
-     * @return
+     * @return The attribute.
      */
     PrinterDao.MediaSourceAttr getMediaSourceAttr(String ippMediaSourceName);
 
@@ -296,9 +298,9 @@ public interface AccountingService {
      *            The proxy {@link Printer}.
      * @param costParms
      *            The {@link ProxyPrintCostParms}.
-     * @return The cost as {@link BigDecimal}.
+     * @return The {@link ProxyPrintCostDto}.
      */
-    BigDecimal calcProxyPrintCost(Printer printer,
+    ProxyPrintCostDto calcProxyPrintCost(Printer printer,
             ProxyPrintCostParms costParms);
 
     /**
@@ -326,7 +328,7 @@ public interface AccountingService {
      * @throws ProxyPrintException
      *             When total cost exceeds user's credit limit.
      */
-    BigDecimal calcProxyPrintCost(Locale locale, String currencySymbol,
+    ProxyPrintCostDto calcProxyPrintCost(Locale locale, String currencySymbol,
             User user, Printer printer, ProxyPrintCostParms costParms,
             ProxyPrintJobChunkInfo jobChunkInfo) throws ProxyPrintException;
 
@@ -410,18 +412,16 @@ public interface AccountingService {
     Account lazyGetSharedAccount(String accountName, Account accountTemplate);
 
     /**
-     * Creates an {@link AccountTrx} of {@link AccountTrx.AccountTrxTypeEnum}
-     * and updates the {@link Account}.
+     * Creates a single {@link AccountTrx} of
+     * {@link AccountTrxTypeEnum#PRINT_OUT} at the {@link DocLog} container of
+     * the {@link PrintOut} and updates the {@link Account}.
      *
      * @param account
      *            The {@link Account} to update.
-     * @param docLog
-     *            The {@link DocLog} to be accounted for.
-     * @param trxType
-     *            The {@link AccountTrxTypeEnum} of the {@link AccountTrx}.
+     * @param printOut
+     *            The {@link PrintOut} to be accounted for.
      */
-    void createAccountTrx(Account account, DocLog docLog,
-            AccountTrxTypeEnum trxType);
+    void createAccountTrx(Account account, PrintOut printOut);
 
     /**
      * Uses the {@link AccountTrxInfoSet} to create {@link AccountTrx} objects
@@ -437,6 +437,21 @@ public interface AccountingService {
      */
     void createAccountTrxs(AccountTrxInfoSet accountTrxInfoSet, DocLog docLog,
             AccountTrxTypeEnum trxType);
+
+    /**
+     * Updates the {@link AccountTrx} and the {@link Account} balance, and
+     * optionally attaches the {@link AccountTrx} to another {@link DocLog}.
+     *
+     * @param trx
+     *            The {@link AccountTrx} to update.
+     * @param trxAmount
+     *            The transaction amount.
+     * @param trxDocLog
+     *            If {@code null} the {@link AccountTrx#setDocLog(DocLog)}
+     *            method of the transaction is <i>not</i> executed.
+     */
+    void chargeAccountTrxAmount(AccountTrx trx, BigDecimal trxAmount,
+            DocLog trxDocLog);
 
     /**
      * Calculates the weighted amount in the context of the weight total.

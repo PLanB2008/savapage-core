@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,13 +21,13 @@
  */
 package org.savapage.core.pdf;
 
-
 /**
  * Page Properties of a PDF file.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
+ *
  */
-public class SpPdfPageProps {
+public final class SpPdfPageProps {
 
     /**
      * The IPP RFC2911 "media" name.
@@ -37,6 +37,8 @@ public class SpPdfPageProps {
     int mmWidth = 0;
     int mmHeight = 0;
     int numberOfPages = 0;
+
+    int rotationFirstPage = 0;
 
     /**
      * @return the IPP RFC2911 "media" name.
@@ -55,18 +57,32 @@ public class SpPdfPageProps {
         this.size = size;
     }
 
+    /**
+     * @return The PDF mediabox width in millimeters.
+     */
     public int getMmWidth() {
         return mmWidth;
     }
 
+    /**
+     * @param mmWidth
+     *            The PDF mediabox width in millimeters.
+     */
     public void setMmWidth(int mmWidth) {
         this.mmWidth = mmWidth;
     }
 
+    /**
+     * @return The PDF mediabox height in millimeters.
+     */
     public int getMmHeight() {
         return mmHeight;
     }
 
+    /**
+     * @param mmHeight
+     *            The PDF mediabox height in millimeters.
+     */
     public void setMmHeight(int mmHeight) {
         this.mmHeight = mmHeight;
     }
@@ -77,6 +93,21 @@ public class SpPdfPageProps {
 
     public void setNumberOfPages(int numberOfPages) {
         this.numberOfPages = numberOfPages;
+    }
+
+    public int getRotationFirstPage() {
+        return rotationFirstPage;
+    }
+
+    public void setRotationFirstPage(int rotationFirstPage) {
+        this.rotationFirstPage = rotationFirstPage;
+    }
+
+    /**
+     * @return {@code true} when the PDF mediabox is in landscape orientation.
+     */
+    public boolean isLandscape() {
+        return this.mmHeight < this.mmWidth;
     }
 
     /**

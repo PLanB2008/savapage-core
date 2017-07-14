@@ -1,7 +1,27 @@
+/*
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2016 Datraverse B.V.
+ * Author: Rijk Ravestein.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * For more information, please contact Datraverse B.V. at this
+ * address: info@datraverse.com
+ */
 package org.savapage.core.services.helpers;
 
 import java.io.File;
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.UUID;
@@ -15,7 +35,9 @@ import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.inbox.InboxInfoDto.InboxJobRange;
 import org.savapage.core.inbox.OutputProducer;
+import org.savapage.core.inbox.PdfOrientationInfo;
 import org.savapage.core.jpa.User;
+import org.savapage.core.pdf.PdfCreateInfo;
 import org.savapage.core.pdf.PdfCreateRequest;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
@@ -96,13 +118,13 @@ public abstract class ProxyPrintInboxPattern {
      * @param uuidPageCount
      *            Object filled with the number of selected pages per input file
      *            UUID.
-     * @param pdfGenerated
-     *            The generated PDF file.
+     * @param createInfo
+     *            The {@link PdfCreateInfo}.
      */
     protected abstract void onPdfGenerated(final User lockedUser,
             final ProxyPrintInboxReq request,
             final LinkedHashMap<String, Integer> uuidPageCount,
-            final File pdfGenerated);
+            final PdfCreateInfo createInfo);
 
     /**
      *
@@ -115,7 +137,7 @@ public abstract class ProxyPrintInboxPattern {
      */
     public final void print(final User lockedUser,
             final ProxyPrintInboxReq request)
-                    throws EcoPrintPdfTaskPendingException {
+            throws EcoPrintPdfTaskPendingException {
 
         final InboxService inboxService =
                 ServiceContext.getServiceFactory().getInboxService();
@@ -132,8 +154,10 @@ public abstract class ProxyPrintInboxPattern {
         final Boolean orgFitToPage = request.getFitToPage();
         final String orgMediaOption = request.getMediaOption();
         final String orgMediaSourceOption = request.getMediaSourceOption();
-        final BigDecimal orgCost = request.getCost();
+        final ProxyPrintCostDto orgCostResult = request.getCostResult();
         final boolean orgDrm = request.isDrm();
+        final Boolean orgLandscape = request.getLandscape();
+        final PdfOrientationInfo orgOrientation = request.getPdfOrientation();
 
         try {
 
@@ -146,6 +170,12 @@ public abstract class ProxyPrintInboxPattern {
                         inboxService.filterInboxInfoPages(inboxInfo,
                                 request.getPageRanges());
 
+                request.setLandscape(
+                        Boolean.valueOf(filteredInboxInfo.hasLandscape()));
+
+                request.setPdfOrientation(
+                        filteredInboxInfo.getFirstPdfOrientation());
+
                 this.proxyPrintInboxChunk(lockedUser, request,
                         filteredInboxInfo);
 
@@ -153,6 +183,8 @@ public abstract class ProxyPrintInboxPattern {
 
                 final InboxInfoDto inboxInfo =
                         request.getJobChunkInfo().getFilteredInboxInfo();
+
+                request.setLandscape(Boolean.valueOf(inboxInfo.hasLandscape()));
 
                 for (final ProxyPrintJobChunk chunk : request.getJobChunkInfo()
                         .getChunks()) {
@@ -164,10 +196,19 @@ public abstract class ProxyPrintInboxPattern {
                     request.setFitToPage(chunk.getFitToPage());
                     request.setMediaOption(
                             chunk.getAssignedMedia().getIppKeyword());
-                    request.setMediaSourceOption(
-                            chunk.getAssignedMediaSource().getSource());
-                    request.setCost(chunk.getCost());
+
+                    if (chunk.getIppMediaSource() != null) {
+                        request.setMediaSourceOption(chunk.getIppMediaSource());
+                    } else {
+                        request.setMediaSourceOption(
+                                chunk.getAssignedMediaSource().getSource());
+                    }
+
+                    request.setCostResult(chunk.getCostResult());
                     request.setDrm(chunk.isDrm());
+
+                    request.setPdfOrientation(
+                            request.getJobChunkInfo().getPdfOrientation());
 
                     if (StringUtils.isBlank(orgJobName)) {
                         request.setJobName(chunk.getJobName());
@@ -203,8 +244,10 @@ public abstract class ProxyPrintInboxPattern {
             request.setFitToPage(orgFitToPage);
             request.setMediaOption(orgMediaOption);
             request.setMediaSourceOption(orgMediaSourceOption);
-            request.setCost(orgCost);
+            request.setCostResult(orgCostResult);
             request.setDrm(orgDrm);
+            request.setLandscape(orgLandscape);
+            request.setPdfOrientation(orgOrientation);
         }
     }
 
@@ -223,7 +266,7 @@ public abstract class ProxyPrintInboxPattern {
      */
     private void proxyPrintInboxChunk(final User lockedUser,
             final ProxyPrintInboxReq request, final InboxInfoDto inboxInfo)
-                    throws EcoPrintPdfTaskPendingException {
+            throws EcoPrintPdfTaskPendingException {
 
         /*
          * Generate the PDF file.
@@ -247,7 +290,6 @@ public abstract class ProxyPrintInboxPattern {
             pdfRequest.setInboxInfo(inboxInfo);
             pdfRequest.setRemoveGraphics(request.isRemoveGraphics());
 
-            pdfRequest.setEcoPdf(request.isEcoPrint());
             pdfRequest.setEcoPdfShadow(request.isEcoPrintShadow());
             pdfRequest.setGrayscale(request.isConvertToGrayscale());
 
@@ -255,11 +297,18 @@ public abstract class ProxyPrintInboxPattern {
             pdfRequest.setApplyLetterhead(APPLY_LETTERHEAD);
             pdfRequest.setForPrinting(PDF_FOR_PRINTING);
 
-            pdfFileGenerated = OutputProducer.instance().generatePdf(pdfRequest,
-                    uuidPageCount, null);
+            // Reserved for future use.
+            pdfRequest.setForPrintingFillerPages(false);
 
-            this.onPdfGenerated(lockedUser, request, uuidPageCount,
-                    pdfFileGenerated);
+            pdfRequest.setPrintDuplex(request.isDuplex());
+            pdfRequest.setPrintNup(request.getNup());
+
+            final PdfCreateInfo createInfo = OutputProducer.instance()
+                    .generatePdf(pdfRequest, uuidPageCount, null);
+
+            pdfFileGenerated = createInfo.getPdfFile();
+
+            this.onPdfGenerated(lockedUser, request, uuidPageCount, createInfo);
 
             fileCreated = true;
 

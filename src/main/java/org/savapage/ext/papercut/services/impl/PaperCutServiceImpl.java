@@ -1,5 +1,5 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
  * Copyright (c) 2011-2016 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -32,11 +32,11 @@ import org.savapage.core.cometd.PubLevelEnum;
 import org.savapage.core.cometd.PubTopicEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
-import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.dao.enums.PrintModeEnum;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
+import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.services.impl.AbstractService;
 import org.savapage.ext.papercut.DelegatedPrintPeriodDto;
@@ -86,11 +86,35 @@ public final class PaperCutServiceImpl extends AbstractService
         return true;
     }
 
-    @Override
-    public void prepareForExtPaperCut(final AbstractProxyPrintReq printReq,
-            final ExternalSupplierInfo supplierInfo) {
+    /**
+     * Prepares the base properties of a {@link AbstractProxyPrintReq} for
+     * External PaperCut Print Status monitoring and notification to an external
+     * supplier.
+     *
+     * @param printReq
+     *            The {@link AbstractProxyPrintReq}.
+     * @param supplierInfo
+     *            The {@link ExternalSupplierInfo}: when {@code null},
+     *            {@link ExternalSupplierEnum#SAVAPAGE} is assumed.
+     * @param printMode
+     *            when {@code null}, {@link PrintModeEnum#PUSH} is assumed.
+     * @return The {@link ExternalSupplierInfo} input, or when input
+     *         {@code null}, the newly created instance.
+     */
+    private ExternalSupplierInfo prepareForExtPaperCutCommon(
+            final AbstractProxyPrintReq printReq,
+            final ExternalSupplierInfo supplierInfo,
+            final PrintModeEnum printMode) {
 
-        printReq.setPrintMode(PrintModeEnum.PUSH);
+        final PrintModeEnum printModeWrk;
+
+        if (printMode == null) {
+            printModeWrk = PrintModeEnum.PUSH;
+        } else {
+            printModeWrk = printMode;
+        }
+
+        printReq.setPrintMode(printModeWrk);
 
         final ExternalSupplierInfo supplierInfoWrk;
 
@@ -101,10 +125,36 @@ public final class PaperCutServiceImpl extends AbstractService
             supplierInfoWrk = supplierInfo;
         }
 
-        supplierInfoWrk
-                .setStatus(ExternalSupplierStatusEnum.PENDING_EXT.toString());
+        supplierInfoWrk.setStatus(
+                PaperCutHelper.getInitialPendingJobStatus().toString());
 
         printReq.setSupplierInfo(supplierInfoWrk);
+
+        return supplierInfoWrk;
+    }
+
+    @Override
+    public ExternalSupplierInfo prepareForExtPaperCutRetry(
+            final AbstractProxyPrintReq printReq,
+            final ExternalSupplierInfo supplierInfo,
+            final PrintModeEnum printMode) {
+
+        final ExternalSupplierInfo supplierInfoReturn =
+                prepareForExtPaperCutCommon(printReq, supplierInfo, printMode);
+
+        printReq.setJobName(PaperCutHelper
+                .renewProxyPrintJobNameUUID(printReq.getJobName()));
+
+        return supplierInfoReturn;
+    }
+
+    @Override
+    public void prepareForExtPaperCut(final AbstractProxyPrintReq printReq,
+            final ExternalSupplierInfo supplierInfo,
+            final PrintModeEnum printMode) {
+
+        final ExternalSupplierInfo supplierInfoWrk =
+                prepareForExtPaperCutCommon(printReq, supplierInfo, printMode);
 
         /*
          * Encode job name into PaperCut format.
@@ -119,15 +169,15 @@ public final class PaperCutServiceImpl extends AbstractService
         }
 
         /*
-         * Set all cost to zero, since cost is taken from PaperCut after
-         * PaperCut reports that jobs are printed successfully.
+         * Set all cost to zero, since cost is applied after PaperCut reports
+         * that jobs are printed successfully.
          */
-        printReq.setCost(BigDecimal.ZERO);
+        printReq.setCostResult(new ProxyPrintCostDto());
 
         if (printReq.getJobChunkInfo() != null) {
             for (final ProxyPrintJobChunk chunk : printReq.getJobChunkInfo()
                     .getChunks()) {
-                chunk.setCost(BigDecimal.ZERO);
+                chunk.setCostResult(new ProxyPrintCostDto());
                 chunk.setJobName(PaperCutHelper
                         .encodeProxyPrintJobName(chunk.getJobName()));
             }

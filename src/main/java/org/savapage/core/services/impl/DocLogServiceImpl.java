@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -54,7 +54,6 @@ import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.dao.enums.PrintInDeniedReasonEnum;
 import org.savapage.core.doc.DocContent;
-import org.savapage.core.ipp.IppJobStateEnum;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.DocIn;
 import org.savapage.core.jpa.DocInOut;
@@ -71,9 +70,10 @@ import org.savapage.core.jpa.UserAccount;
 import org.savapage.core.json.JsonRollingTimeSeries;
 import org.savapage.core.json.TimeSeriesInterval;
 import org.savapage.core.msg.UserMsgIndicator;
+import org.savapage.core.pdf.PdfCreateInfo;
 import org.savapage.core.pdf.SpPdfPageProps;
+import org.savapage.core.print.proxy.JsonProxyPrintJob;
 import org.savapage.core.print.proxy.ProxyPrintJobStatusMonitor;
-import org.savapage.core.print.proxy.ProxyPrintJobStatusPrintOut;
 import org.savapage.core.services.DocLogService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
@@ -84,7 +84,7 @@ import org.savapage.ext.smartschool.SmartschoolPrintInData;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class DocLogServiceImpl extends AbstractService
@@ -159,20 +159,17 @@ public final class DocLogServiceImpl extends AbstractService
          */
         if (printOut != null) {
 
-            final IppJobStateEnum jobState =
-                    IppJobStateEnum.asEnum(printOut.getCupsJobState());
+            final JsonProxyPrintJob printJob = new JsonProxyPrintJob();
 
-            final ProxyPrintJobStatusPrintOut jobStatus =
-                    new ProxyPrintJobStatusPrintOut(
-                            printOut.getPrinter().getPrinterName(),
-                            printOut.getCupsJobId(),
-                            printOut.getDocOut().getDocLog().getTitle(),
-                            jobState);
+            printJob.setCompletedTime(printOut.getCupsCompletedTime());
+            printJob.setCreationTime(printOut.getCupsCreationTime());
+            printJob.setJobId(printOut.getCupsJobId());
+            printJob.setJobState(printOut.getCupsJobState());
+            printJob.setTitle(docOut.getDocLog().getTitle());
+            printJob.setUser(user.getUserId());
 
-            jobStatus.setCupsCreationTime(printOut.getCupsCreationTime());
-            jobStatus.setCupsCompletedTime(printOut.getCupsCompletedTime());
-
-            ProxyPrintJobStatusMonitor.notify(jobStatus);
+            ProxyPrintJobStatusMonitor.notifyPrintOut(
+                    printOut.getPrinter().getPrinterName(), printJob);
         }
 
         /*
@@ -192,9 +189,39 @@ public final class DocLogServiceImpl extends AbstractService
                 user.getUserId());
     }
 
+    @Override
+    public void settlePrintOut(final User user, final PrintOut printOut,
+            final AccountTrxInfoSet accountTrxInfoSet) {
+        //
+        final DocOut docOut = printOut.getDocOut();
+
+        final int printOutPages = docOut.getDocLog().getNumberOfPages()
+                * printOut.getNumberOfCopies();
+
+        /*
+         * Commit #1: Create DocLog and update User statistics.
+         */
+        commitDocOutAndStatsUser(user, docOut, accountTrxInfoSet,
+                printOutPages);
+
+        /*
+         * Commit #2: Update Printer statistics.
+         */
+        commitDocOutStatsPrinter(docOut, printOutPages);
+
+        /*
+         * Commit #3: Update global statistics.
+         */
+        commitDocOutStatsGlobal(docOut);
+    }
+
     /**
      * Commits the create of a {@link DocLog} containing the {@link DocOut)
-     * object and statistics update for a locked {@link User}. See Mantis #430.
+     * object and statistics update for a locked {@link User}.
+     *
+     * <p>
+     * See Mantis #430.
+     * </p>
      *
      * @param user
      *            The {@link User}
@@ -203,6 +230,8 @@ public final class DocLogServiceImpl extends AbstractService
      * @param accountTrxInfoSet
      *            The {@link AccountTrxInfoSet}. If {@code null} the
      *            {@link AccountTypeEnum#USER} is used for accounting.
+     * @param printOutPages
+     *            The number of document pages printed.
      */
     private void commitDocOutAndStatsUser(final User user, final DocOut docOut,
             final AccountTrxInfoSet accountTrxInfoSet,
@@ -315,8 +344,7 @@ public final class DocLogServiceImpl extends AbstractService
                                             lockedUser, AccountTypeEnum.USER);
 
                             accountingService().createAccountTrx(
-                                    userAccount.getAccount(), docLog,
-                                    AccountTrxTypeEnum.PRINT_OUT);
+                                    userAccount.getAccount(), printOut);
                         }
 
                     } else {
@@ -1108,9 +1136,11 @@ public final class DocLogServiceImpl extends AbstractService
 
     @Override
     public void collectData4DocOut(final User user, final DocLog docLogCollect,
-            final File pdfFile,
+            final PdfCreateInfo createInfo,
             final LinkedHashMap<String, Integer> uuidPageCount)
             throws IOException {
+
+        final File pdfFile = createInfo.getPdfFile();
 
         this.applyCreationDate(docLogCollect,
                 ServiceContext.getTransactionDate());
@@ -1153,7 +1183,22 @@ public final class DocLogServiceImpl extends AbstractService
 
         docLogCollect.getDocOut()
                 .setSignature(this.generateSignature(docLogCollect));
+    }
 
+    @Override
+    public void collectData4DocOutCopyJob(final User user,
+            final DocLog docLogCollect, final int numberOfPages) {
+
+        this.applyCreationDate(docLogCollect,
+                ServiceContext.getTransactionDate());
+
+        docLogCollect.setUser(user);
+        docLogCollect.setUuid(java.util.UUID.randomUUID().toString());
+        docLogCollect.setNumberOfBytes(Long.valueOf(0));
+        docLogCollect.setNumberOfPages(numberOfPages);
+
+        docLogCollect.getDocOut()
+                .setSignature(this.generateSignature(docLogCollect));
     }
 
     @Override

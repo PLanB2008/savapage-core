@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,25 +14,57 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.services.helpers;
 
+import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import org.savapage.core.dto.IppMediaSourceCostDto;
+import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
+import org.savapage.core.ipp.attribute.syntax.IppKeyword;
+import org.savapage.core.print.proxy.JsonProxyPrinter;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
+ *
  */
-public class ProxyPrintCostParms {
+public final class ProxyPrintCostParms {
 
+    /**
+     *
+     */
     private int numberOfCopies;
+
+    /**
+     * The total number of pages. <b>Note</b>: Blank filler pages are <i>not</i>
+     * included in the count.
+     */
     private int numberOfPages;
+
+    /**
+     * The number of pages of logical sub-jobs. <b>Note</b>: Blank filler pages
+     * are <i>not</i> included in the count. When {@code null}, no logical
+     * sub-jobs are defined, and {@link #numberOfPages} must be used to
+     * calculate the cost.
+     */
+    private List<Integer> logicalNumberOfPages;
+
+    /**
+     * Number of pages per sheet-side.
+     */
     private int pagesPerSide;
 
+    /**
+     * .
+     */
     private IppMediaSourceCostDto mediaSourceCost;
 
     private String ippMediaOption;
@@ -40,6 +72,66 @@ public class ProxyPrintCostParms {
     private boolean duplex;
     private boolean ecoPrint;
 
+    /**
+     *
+     */
+    private final JsonProxyPrinter proxyPrinter;
+
+    /**
+     * Work area for calculating custom cost.
+     */
+    private Map<String, String> ippOptionValues;
+
+    /**
+     * Custom cost per single-sided media side. When not {@code null} this value
+     * is leading.
+     */
+    private BigDecimal customCostMediaSide;
+
+    /**
+     * Custom cost per duplex media side. When not {@code null} this value is
+     * leading.
+     */
+    private BigDecimal customCostMediaSideDuplex;
+
+    /**
+     * Additional custom cost for one (1) copy.
+     */
+    private BigDecimal customCostCopy;
+
+    /**
+     * Cost for {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_COVER_TYPE}.
+     * When {@code null} a Cover is not applicable.
+     */
+    private BigDecimal customCostCoverPrint;
+
+    /**
+     * Number of media pages for
+     * {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_COVER_TYPE}. Value can be
+     * {@code 1} for
+     * {@link IppKeyword#ORG_SAVAPAGE_ATTR_COVER_TYPE_PRINTFRONT_EXT_PFX}, or
+     * {@code 2} for
+     * {@link IppKeyword#ORG_SAVAPAGE_ATTR_COVER_TYPE_PRINTBOTH_EXT_PFX}. If
+     * {@code 0} a Cover is not applicable.
+     */
+    private int customCoverPrintPages;
+
+    /**
+     * Constructor.
+     *
+     * @param printer
+     *            The {@link JsonProxyPrinter} used to calculate custom
+     *            media/copy costs. Can be {@code null}, in which case no custom
+     *            costs are calculated/applied.
+     */
+    public ProxyPrintCostParms(final JsonProxyPrinter printer) {
+        this.proxyPrinter = printer;
+    }
+
+    /**
+     *
+     * @return The number of copies.
+     */
     public int getNumberOfCopies() {
         return numberOfCopies;
     }
@@ -102,6 +194,168 @@ public class ProxyPrintCostParms {
 
     public void setMediaSourceCost(IppMediaSourceCostDto mediaSourceCost) {
         this.mediaSourceCost = mediaSourceCost;
+    }
+
+    /**
+     * @return The number of pages of logical sub-jobs. <b>Note</b>: Blank
+     *         filler pages are <i>not</i> included in the count. When
+     *         {@code null}, no logical sub-jobs are defined, and
+     *         {@link #numberOfPages} must be used to calculate the cost.
+     */
+    public List<Integer> getLogicalNumberOfPages() {
+        return logicalNumberOfPages;
+    }
+
+    /**
+     * @param logicalNumberOfPages
+     *            The number of pages of logical sub-jobs. <b>Note</b>: Blank
+     *            filler pages are <i>not</i> included in the count. When
+     *            {@code null}, no logical sub-jobs are defined, and
+     *            {@link #numberOfPages} must be used to calculate the cost.
+     */
+    public void setLogicalNumberOfPages(List<Integer> logicalNumberOfPages) {
+        this.logicalNumberOfPages = logicalNumberOfPages;
+    }
+
+    /**
+     * Imports IPP option values. All values are put in a new {@link Map}, since
+     * we use it as work area to calculate custom costs.
+     *
+     * @param optionValues
+     *            The IPP option values.
+     */
+    public void importIppOptionValues(Map<String, String> optionValues) {
+        this.ippOptionValues = new HashMap<>();
+        this.ippOptionValues.putAll(optionValues);
+    }
+
+    /**
+     *
+     * @return Custom cost per single-sided media side. When not {@code null}
+     *         this value is leading.
+     */
+    public BigDecimal getCustomCostMediaSide() {
+        return customCostMediaSide;
+    }
+
+    /**
+     * @return Custom cost per duplex media side. When not {@code null} this
+     *         value is leading.
+     */
+    public BigDecimal getCustomCostMediaSideDuplex() {
+        return customCostMediaSideDuplex;
+    }
+
+    /**
+     *
+     * @return Additional custom cost for one (1) copy.
+     */
+    public BigDecimal getCustomCostCopy() {
+        return customCostCopy;
+    }
+
+    /**
+     * @return Cost for
+     *         {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_COVER_TYPE}. When
+     *         {@code null} a Cover is not applicable.
+     */
+    public BigDecimal getCustomCostCoverPrint() {
+        return customCostCoverPrint;
+    }
+
+    /**
+     * @return Number of media pages for
+     *         {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_COVER_TYPE}.
+     *         Value can be {@code 1} for
+     *         {@link IppKeyword#ORG_SAVAPAGE_ATTR_COVER_TYPE_PRINTFRONT_EXT_PFX}
+     *         , or {@code 2} for
+     *         {@link IppKeyword#ORG_SAVAPAGE_ATTR_COVER_TYPE_PRINTBOTH_EXT_PFX}
+     *         . If {@code 0} a Cover is not applicable.
+     */
+    public int getCustomCoverPrintPages() {
+        return customCoverPrintPages;
+    }
+
+    /**
+     * (Re)calculates the custom media/copy costs.
+     * <p>
+     * NOTE: Use this method <i>after</i> {@link #setIppMediaOption(String)} and
+     * {@link #importIppOptionValues(Map)}
+     * </p>
+     */
+    public void calcCustomCost() {
+
+        if (this.proxyPrinter == null || this.ippOptionValues == null) {
+            this.customCostCopy = null;
+            this.customCostMediaSide = null;
+            this.customCostCoverPrint = null;
+            this.customCoverPrintPages = 0;
+            return;
+        }
+
+        /*
+         * Cover cost and pages
+         */
+        final String ippCoverChoice = this.ippOptionValues
+                .get(IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_COVER_TYPE);
+
+        if (ippCoverChoice == null || ippCoverChoice
+                .equals(IppKeyword.ORG_SAVAPAGE_ATTR_COVER_TYPE_NO_COVER)) {
+
+            this.customCostCoverPrint = null;
+            this.customCoverPrintPages = 0;
+
+        } else {
+
+            this.customCostCoverPrint =
+                    this.proxyPrinter.getCustomCostCover(ippCoverChoice);
+
+            if (this.customCostCoverPrint == null) {
+                this.customCoverPrintPages = 0;
+            } else if (ippCoverChoice.startsWith(
+                    IppKeyword.ORG_SAVAPAGE_ATTR_COVER_TYPE_PRINTBOTH_EXT_PFX)) {
+                this.customCoverPrintPages = 2;
+            } else {
+                this.customCoverPrintPages = 1;
+            }
+
+        }
+        /*
+         * Media dependent cost.
+         */
+        this.ippOptionValues.put(IppDictJobTemplateAttr.ATTR_MEDIA,
+                this.ippMediaOption);
+
+        this.customCostCopy =
+                this.proxyPrinter.calcCustomCostCopy(this.ippOptionValues);
+
+        //
+        final BigDecimal costWrk =
+                this.proxyPrinter.calcCustomCostMedia(this.ippOptionValues);
+
+        if (isDuplex()) {
+
+            this.customCostMediaSideDuplex = costWrk;
+
+            // Save sides option.
+            final String sidesSaved =
+                    this.ippOptionValues.get(IppDictJobTemplateAttr.ATTR_SIDES);
+
+            this.ippOptionValues.put(IppDictJobTemplateAttr.ATTR_SIDES,
+                    IppKeyword.SIDES_ONE_SIDED);
+
+            this.customCostMediaSide =
+                    this.proxyPrinter.calcCustomCostMedia(this.ippOptionValues);
+
+            // Restore sides option.
+            this.ippOptionValues.put(IppDictJobTemplateAttr.ATTR_SIDES,
+                    sidesSaved);
+
+        } else {
+            this.customCostMediaSide = costWrk;
+            this.customCostMediaSideDuplex = costWrk;
+        }
+
     }
 
 }

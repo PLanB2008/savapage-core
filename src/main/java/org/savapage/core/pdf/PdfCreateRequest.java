@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -58,7 +58,7 @@ public final class PdfCreateRequest {
     private boolean applyPdfProps;
 
     /**
-     *
+     * {@code true} When letterhead should be applied.
      */
     private boolean applyLetterhead;
 
@@ -68,9 +68,21 @@ public final class PdfCreateRequest {
     private boolean forPrinting;
 
     /**
-     * {@code true} if Eco PDF is to be created.
+     * If {@code true}, filler pages are added between concatenated vanilla
+     * documents so the first page of a vanilla document is on the front page of
+     * a printed sheet.
      */
-    private boolean ecoPdf;
+    private boolean forPrintingFillerPages;
+
+    /**
+     * {@code true} when duplex (printing only).
+     */
+    private boolean printDuplex = false;
+
+    /**
+     * Number of pages per side (printing only).
+     */
+    private int printNup = 1;
 
     /**
      * {@code true} if Eco PDF shadow is to be used.
@@ -139,19 +151,22 @@ public final class PdfCreateRequest {
     }
 
     /**
-     * @return {@code true} if Eco PDF is to be created.
+     * @return If {@code true}, filler pages are added between concatenated
+     *         vanilla documents so the first page of a vanilla document is on
+     *         the front page of a printed sheet.
      */
-    public boolean isEcoPdf() {
-        return ecoPdf;
+    public boolean isForPrintingFillerPages() {
+        return forPrintingFillerPages;
     }
 
     /**
-     *
-     * @param ecoPdf
-     *            {@code true} if Eco PDF is to be created.
+     * @param forPrintingFillerPages
+     *            If {@code true}, filler pages are added between concatenated
+     *            vanilla documents so the first page of a vanilla document is
+     *            on the front page of a printed sheet.
      */
-    public void setEcoPdf(boolean ecoPdf) {
-        this.ecoPdf = ecoPdf;
+    public void setForPrintingFillerPages(boolean forPrintingFillerPages) {
+        this.forPrintingFillerPages = forPrintingFillerPages;
     }
 
     /**
@@ -185,6 +200,40 @@ public final class PdfCreateRequest {
      */
     public void setGrayscale(boolean grayscale) {
         this.grayscale = grayscale;
+    }
+
+    /**
+     *
+     * @return {@code true} when duplex (printing only).
+     */
+    public boolean isPrintDuplex() {
+        return printDuplex;
+    }
+
+    /**
+     *
+     * @param printDuplex
+     *            {@code true} when duplex (printing only).
+     */
+    public void setPrintDuplex(boolean printDuplex) {
+        this.printDuplex = printDuplex;
+    }
+
+    /**
+     *
+     * @return Number of pages per side (printing only).
+     */
+    public int getPrintNup() {
+        return printNup;
+    }
+
+    /**
+     *
+     * @param printNup
+     *            Number of pages per side (printing only).
+     */
+    public void setPrintNup(int printNup) {
+        this.printNup = printNup;
     }
 
 }

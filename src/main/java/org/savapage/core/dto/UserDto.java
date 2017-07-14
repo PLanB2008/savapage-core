@@ -1,5 +1,5 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
  * Copyright (c) 2011-2016 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -41,10 +41,10 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
  *
  */
 @JsonPropertyOrder({ "userName", "password", "fullName", "email", "emailOther",
-        "card", "cardFormat", "cardFirstByte", "id;", "pin", "uuid", "admin",
-        "person", "disabled", "keepEmailOther", "keepCard", "keepPassword",
-        "keepPin", "keepUuid", "accounting", "aclRoles", "aclOidsUser",
-        "aclOidsAdmin" })
+        "card", "cardFormat", "cardFirstByte", "id;", "pin", "yubiKeyPubId",
+        "uuid", "admin", "person", "disabled", "keepEmailOther", "keepCard",
+        "keepPassword", "keepPin", "keepUuid", "accounting", "aclRoles",
+        "aclOidsUser", "aclOidsAdmin" })
 @JsonInclude(Include.NON_NULL)
 public class UserDto extends AbstractDto {
 
@@ -81,11 +81,17 @@ public class UserDto extends AbstractDto {
     @JsonProperty("pin")
     private String pin;
 
+    @JsonProperty("yubiKeyPubId")
+    private String yubiKeyPubId;
+
     @JsonProperty("uuid")
     private String uuid;
 
     @JsonProperty("internal")
     private Boolean internal = Boolean.FALSE;
+
+    @JsonProperty("internalPw")
+    private Boolean internalPw = Boolean.FALSE;
 
     @JsonProperty("admin")
     private Boolean admin = Boolean.FALSE;
@@ -153,6 +159,7 @@ public class UserDto extends AbstractDto {
         email = dto.email;
         emailOther = dto.emailOther;
         id = dto.id;
+        yubiKeyPubId = dto.yubiKeyPubId;
         password = dto.password;
         pin = dto.pin;
         userName = dto.userName;
@@ -255,6 +262,14 @@ public class UserDto extends AbstractDto {
         this.id = id;
     }
 
+    public String getYubiKeyPubId() {
+        return yubiKeyPubId;
+    }
+
+    public void setYubiKeyPubId(String pubId) {
+        this.yubiKeyPubId = pubId;
+    }
+
     public String getPin() {
         return pin;
     }
@@ -277,6 +292,23 @@ public class UserDto extends AbstractDto {
 
     public void setInternal(Boolean internal) {
         this.internal = internal;
+    }
+
+    /**
+     *
+     * @return {@code true} when internal password is present.
+     */
+    public Boolean getInternalPw() {
+        return internalPw;
+    }
+
+    /**
+     *
+     * @param internalPw
+     *            {@code true} when internal password is present.
+     */
+    public void setInternalPw(Boolean internalPw) {
+        this.internalPw = internalPw;
     }
 
     public Boolean getAdmin() {

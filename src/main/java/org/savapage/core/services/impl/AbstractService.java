@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,14 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.services.impl;
+
+import java.util.Locale;
 
 import org.savapage.core.dao.AccountDao;
 import org.savapage.core.dao.AccountTrxDao;
@@ -42,6 +44,7 @@ import org.savapage.core.dao.UserAttrDao;
 import org.savapage.core.dao.UserCardDao;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.UserEmailDao;
+import org.savapage.core.dao.UserGroupAccountDao;
 import org.savapage.core.dao.UserGroupAttrDao;
 import org.savapage.core.dao.UserGroupDao;
 import org.savapage.core.dao.UserGroupMemberDao;
@@ -55,6 +58,7 @@ import org.savapage.core.services.AccountVoucherService;
 import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.DeviceService;
 import org.savapage.core.services.DocLogService;
+import org.savapage.core.services.EmailService;
 import org.savapage.core.services.InboxService;
 import org.savapage.core.services.JobTicketService;
 import org.savapage.core.services.OutboxService;
@@ -92,6 +96,10 @@ public abstract class AbstractService {
 
     protected static DocLogService docLogService() {
         return ServiceContext.getServiceFactory().getDocLogService();
+    }
+
+    protected static EmailService emailService() {
+        return ServiceContext.getServiceFactory().getEmailService();
     }
 
     protected static InboxService inboxService() {
@@ -228,6 +236,10 @@ public abstract class AbstractService {
         return ServiceContext.getDaoContext().getUserGroupDao();
     }
 
+    protected static UserGroupAccountDao userGroupAccountDAO() {
+        return ServiceContext.getDaoContext().getUserGroupAccountDao();
+    }
+
     protected static UserGroupAttrDao userGroupAttrDAO() {
         return ServiceContext.getDaoContext().getUserGroupAttrDao();
     }
@@ -248,8 +260,24 @@ public abstract class AbstractService {
      * @return The message text.
      */
     protected final String localize(final String key, final String... args) {
-        return Messages.getMessage(getClass(), ServiceContext.getLocale(), key,
-                args);
+        return localize(ServiceContext.getLocale(), key, args);
+    }
+
+    /**
+     * Return a localized message string.
+     *
+     * @param locale
+     *            The {@link Locale}.
+     * @param key
+     *            The key of the message.
+     * @param args
+     *            The placeholder arguments for the message template.
+     *
+     * @return The message text.
+     */
+    protected final String localize(final Locale locale, final String key,
+            final String... args) {
+        return Messages.getMessage(getClass(), locale, key, args);
     }
 
     /**

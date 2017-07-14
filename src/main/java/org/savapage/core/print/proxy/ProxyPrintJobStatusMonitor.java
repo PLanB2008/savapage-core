@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -48,7 +48,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Processes {@link PrintJobStatus} events in a separate thread.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class ProxyPrintJobStatusMonitor extends Thread {
@@ -62,8 +62,8 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
     /**
      * .
      */
-    private static final ProxyPrintService PROXY_PRINT_SERVICE = ServiceContext
-            .getServiceFactory().getProxyPrintService();;
+    private static final ProxyPrintService PROXY_PRINT_SERVICE =
+            ServiceContext.getServiceFactory().getProxyPrintService();;
 
     /**
      *
@@ -88,8 +88,8 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
     /**
      * .
      */
-    private static final Logger LOGGER = LoggerFactory
-            .getLogger(ProxyPrintJobStatusMonitor.class);
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(ProxyPrintJobStatusMonitor.class);
 
     /**
      * .
@@ -168,7 +168,8 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
             this.jobId = mixin.getJobId();
             this.jobName = mixin.getJobName();
 
-            if (mixin.getStatusSource() == ProxyPrintJobStatusMixin.StatusSource.CUPS) {
+            if (mixin
+                    .getStatusSource() == ProxyPrintJobStatusMixin.StatusSource.CUPS) {
                 this.jobStateCups = mixin.getJobState();
             } else {
                 this.jobStatePrintOut = mixin.getJobState();
@@ -240,10 +241,14 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
             this.cupsCompletedTime = cupsCompletedTime;
         }
 
-        public boolean isCompleted() {
-            return this.cupsCompletedTime != null
-                    && this.cupsCompletedTime.intValue() != 0;
+        /**
+         * @return {@code true} when the job state is finished. See
+         *         {@link IppJobStateEnum#isFinished()}.
+         */
+        public boolean isFinished() {
+            return this.jobStateCups.isFinished();
         }
+
     }
 
     /**
@@ -303,17 +308,32 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
      * Note: a notification for a remote printer is ignored.
      * </p>
      *
-     * @param jobStatus
-     *            The {@link ProxyPrintJobStatusPrintOut}.
+     * @param printerName
+     *            The CUPS printer name.
+     * @param printJob
+     *            The CUPS job data.
      */
-    public static void notify(final ProxyPrintJobStatusPrintOut jobStatus) {
+    public static void notifyPrintOut(final String printerName,
+            final JsonProxyPrintJob printJob) {
 
         final Boolean isLocalPrinter =
-                PROXY_PRINT_SERVICE.isLocalPrinter(jobStatus.getPrinterName());
+                PROXY_PRINT_SERVICE.isLocalPrinter(printerName);
 
-        if (isLocalPrinter != null && isLocalPrinter) {
-            SingletonHolder.INSTANCE.onNotify(jobStatus);
+        if (isLocalPrinter == null || !isLocalPrinter) {
+            return;
         }
+
+        final IppJobStateEnum jobState =
+                IppJobStateEnum.asEnum(printJob.getJobState().intValue());
+
+        final ProxyPrintJobStatusPrintOut jobStatus =
+                new ProxyPrintJobStatusPrintOut(printerName,
+                        printJob.getJobId(), printJob.getTitle(), jobState);
+
+        jobStatus.setCupsCreationTime(printJob.getCreationTime());
+        jobStatus.setCupsCompletedTime(printJob.getCompletedTime());
+
+        SingletonHolder.INSTANCE.onNotify(jobStatus);
     }
 
     /**
@@ -326,11 +346,11 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
 
         if (jobUpdate.getCupsCreationTime() == null) {
             /*
-             * The CUPS creation time is set when the job is added by
-             * either CUPS or PRINT_OUT (whoever is first).
+             * The CUPS creation time is set when the job is added by either
+             * CUPS or PRINT_OUT (whoever is first).
              */
             LOGGER.warn(String.format(
-                    "CUPS Job [%d] REFUDED because is has"
+                    "CUPS Job [%d] REFUSED because is has"
                             + " no creation time.",
                     jobUpdate.getJobId().intValue()));
             return;
@@ -344,8 +364,8 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
          */
         if (jobCurrent == null) {
 
-            this.jobStatusMap.put(jobUpdate.getJobId(), new PrintJobStatus(
-                    jobUpdate));
+            this.jobStatusMap.put(jobUpdate.getJobId(),
+                    new PrintJobStatus(jobUpdate));
 
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug(String.format("Add job [%s] [%d] [%s] [%s] [%s]",
@@ -359,10 +379,48 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
         }
 
         /*
+         * Mantis #734: Correct missing CUPS job completion time.
+         * Mantis #834: Handle missing CUPS job completion time.
+         *
+         * For printers that got their jobs delivered from a Printer Class,
+         * completion time is set to zero (0) by our SavaPage CUPS notifier.
+         */
+        if (jobUpdate.isFinished()) {
+
+            // CUPS creation and completed time is in seconds.
+            final int timeNowSecs = PROXY_PRINT_SERVICE.getCupsSystemTime();
+
+            final int timeCompletedSecs =
+                    jobUpdate.getCupsCompletedTime().intValue();
+            /*
+             * Just to be sure, we also check illogical time deviations.
+             * Comparison is valid for local CUPS. For (future) notifications
+             * from remote CUPS, this host and the remote host must be NTP
+             * sync-ed.
+             */
+            if (timeCompletedSecs == 0 || timeNowSecs < timeCompletedSecs
+                    || timeCompletedSecs < jobCurrent.getCupsCreationTime()
+                            .intValue()) {
+
+                if (timeCompletedSecs != 0 && LOGGER.isWarnEnabled()) {
+                    LOGGER.warn(String.format(
+                            "Completed time for Printer [%s] Job [%d] %s"
+                                    + " corrected from [%d] to [%d]",
+                            jobUpdate.getPrinterName(),
+                            jobUpdate.getJobId().intValue(),
+                            jobUpdate.getJobState().asLogText(),
+                            timeCompletedSecs, timeNowSecs));
+                }
+
+                jobUpdate.setCupsCompletedTime(Integer.valueOf(timeNowSecs));
+            }
+        }
+
+        /*
          * A status event of job id already present: update the completed time
          * and the status.
          */
-        if (jobUpdate.isCompleted() && !jobCurrent.isCompleted()) {
+        if (jobUpdate.isFinished() && !jobCurrent.isFinished()) {
             jobCurrent.setCupsCompletedTime(jobUpdate.getCupsCompletedTime());
         }
 
@@ -382,8 +440,7 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
 
             } else if (jobCurrent.getJobStatePrintOut() != null) {
 
-                msg.append(jobCurrent.getJobStatePrintOut())
-                        .append("] [")
+                msg.append(jobCurrent.getJobStatePrintOut()).append("] [")
                         .append(ProxyPrintJobStatusMixin.StatusSource.PRINT_OUT);
             }
 
@@ -391,9 +448,9 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
                     .append("] [").append(jobUpdate.getStatusSource())
                     .append("]");
 
-            if (jobCurrent.isCompleted()) {
-                msg.append(" Completed at: ").append(
-                        new Date(jobCurrent.getCupsCompletedTime()
+            if (jobCurrent.isFinished()) {
+                msg.append(" Finished on: ")
+                        .append(new Date(jobCurrent.getCupsCompletedTime()
                                 * DateUtil.DURATION_MSEC_SECOND).toString());
             }
 
@@ -411,8 +468,8 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
             break;
 
         default:
-            throw new SpException("[" + jobUpdate.getStatusSource()
-                    + "] is not supported");
+            throw new SpException(
+                    "[" + jobUpdate.getStatusSource() + "] is not supported");
         }
     }
 
@@ -420,9 +477,6 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
     public void run() {
 
         this.isProcessing = true;
-
-        final PrintOutDao printOutDao =
-                ServiceContext.getDaoContext().getPrintOutDao();
 
         while (this.keepProcessing) {
 
@@ -456,9 +510,8 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
                      * No corresponding PRINT_OUT received (yet). How long are
                      * we waiting?
                      */
-                    final long msecAge =
-                            timeNow - jobIter.getCupsCreationTime()
-                                    * DateUtil.DURATION_MSEC_SECOND;
+                    final long msecAge = timeNow - jobIter.getCupsCreationTime()
+                            * DateUtil.DURATION_MSEC_SECOND;
 
                     final boolean orphanedPrint =
                             msecAge > JOB_STATUS_MAX_AGE_MSEC;
@@ -474,11 +527,11 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
                      */
                     final StringBuilder msg = new StringBuilder();
 
-                    msg.append("External CUPS job #")
-                            .append(jobIter.getJobId())
+                    msg.append("External CUPS job #").append(jobIter.getJobId())
                             .append(" \"")
-                            .append(StringUtils.defaultString(jobIter
-                                    .getJobName())).append("\" on printer ")
+                            .append(StringUtils
+                                    .defaultString(jobIter.getJobName()))
+                            .append("\" on printer ")
                             .append(jobIter.getPrinterName()).append(" is ");
 
                     final IppJobStateEnum state;
@@ -489,7 +542,7 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
                         state = jobIter.getJobStateCups();
                     }
 
-                    msg.append(state.asUiText()).append(".");
+                    msg.append(state.asLogText()).append(".");
 
                     AdminPublisher.instance().publish(PubTopicEnum.CUPS,
                             PubLevelEnum.WARN, msg.toString());
@@ -504,20 +557,16 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
                     /*
                      * Find PrintOut CUPS job in the database.
                      */
-                    final PrintOut printOut =
-                            printOutDao.findCupsJob(jobIter.getPrinterName(),
-                                    jobIter.getJobId(),
-                                    jobIter.getCupsCreationTime());
+                    final PrintOut printOut = getPrintOutCupsJob(jobIter);
 
                     if (printOut == null) {
 
                         final StringBuilder msg = new StringBuilder();
 
                         msg.append("Print log of CUPS job #")
-                                .append(jobIter.getJobId())
-                                .append(" \"")
-                                .append(StringUtils.defaultString(jobIter
-                                        .getJobName()))
+                                .append(jobIter.getJobId()).append(" \"")
+                                .append(StringUtils
+                                        .defaultString(jobIter.getJobName()))
                                 .append("\" on printer ")
                                 .append(jobIter.getPrinterName())
                                 .append(" not found.");
@@ -533,27 +582,33 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
 
                     } else {
 
-                        if (LOGGER.isTraceEnabled()) {
+                        if (LOGGER.isDebugEnabled()) {
 
                             final StringBuilder log = new StringBuilder();
 
-                            log.append("PrintOut [");
+                            log.append("PrintOut on printer [")
+                                    .append(jobIter.getPrinterName())
+                                    .append("] job [")
+                                    .append(jobIter.getJobId())
+                                    .append("] status [");
+
                             if (jobIter.getJobStatePrintOut() != null) {
                                 log.append(jobIter.getJobStatePrintOut()
                                         .toString());
                             }
-                            log.append("], Cups [");
+                            log.append("], CupsState [");
                             if (jobIter.getJobStateCups() != null) {
-                                log.append(jobIter.getJobStateCups().toString());
+                                log.append(
+                                        jobIter.getJobStateCups().toString());
                             }
-                            log.append("],  CupsUpdate [");
+                            log.append("], CupsUpdate [");
                             if (jobIter.getJobStateCupsUpdate() != null) {
                                 log.append(jobIter.getJobStateCupsUpdate()
                                         .toString());
                             }
                             log.append("]");
 
-                            LOGGER.trace(log.toString());
+                            LOGGER.debug(log.toString());
                         }
 
                         final IppJobStateEnum jobStateCups;
@@ -604,15 +659,13 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
 
                         final StringBuilder msg = new StringBuilder();
 
-                        msg.append("CUPS job #")
-                                .append(jobIter.getJobId())
+                        msg.append("CUPS job #").append(jobIter.getJobId())
                                 .append(" \"")
-                                .append(StringUtils.defaultString(jobIter
-                                        .getJobName()))
+                                .append(StringUtils
+                                        .defaultString(jobIter.getJobName()))
                                 .append("\" on printer ")
-                                .append(jobIter.getPrinterName())
-                                .append(" is ").append(jobStateCups.asUiText())
-                                .append(".");
+                                .append(jobIter.getPrinterName()).append(" is ")
+                                .append(jobStateCups.asLogText()).append(".");
 
                         AdminPublisher.instance().publish(PubTopicEnum.CUPS,
                                 pubLevel, msg.toString());
@@ -623,9 +676,11 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
 
                         jobIter.setJobStateCups(jobStateCups);
 
-                        final String userid =
-                                updatePrintOutStatus(printOut, jobStateCups,
-                                        jobIter.getCupsCompletedTime());
+                        final String userid = printOut.getDocOut().getDocLog()
+                                .getUser().getUserId();
+
+                        updatePrintOutStatus(printOut.getId(), jobStateCups,
+                                jobIter.getCupsCompletedTime());
 
                         try {
 
@@ -634,15 +689,13 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
 
                         } catch (IOException e) {
 
-                            AdminPublisher.instance().publish(
-                                    PubTopicEnum.CUPS, PubLevelEnum.ERROR,
-                                    e.getMessage());
+                            AdminPublisher.instance().publish(PubTopicEnum.CUPS,
+                                    PubLevelEnum.ERROR, e.getMessage());
                         }
 
                         removeJobIter =
                                 !jobIter.getJobStateCups().isPresentOnQueue();
                     }
-
                 }
 
                 /*
@@ -660,6 +713,8 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
                         LOGGER.trace("wait ...");
                     }
                     Thread.sleep(POLLING_MSEC);
+
+                    ServiceContext.reopen(); // !!!
                 }
             } catch (InterruptedException e) {
                 if (LOGGER.isInfoEnabled()) {
@@ -670,6 +725,77 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
         } // end-while endless loop.
 
         this.isProcessing = false;
+    }
+
+    /**
+     * Finds the {@link PrintOut} belonging to a print job status notification.
+     * <p>
+     * The PrintOut is expected to be present, so when not found, we might have
+     * a synchronization problem. I.e. the CUPS notification arrives, before the
+     * database commit of the PrintOut is visible from this thread. Therefore,
+     * we {@link ServiceContext#reopen()} after two (2) seconds and retry (2
+     * times).
+     * </p>
+     *
+     * @param printJobStatus
+     *            The CUPS {@link PrintJobStatus} notification.
+     * @return {@code null} when not found.
+     */
+    private PrintOut getPrintOutCupsJob(final PrintJobStatus printJobStatus) {
+
+        final int nMaxTrials = 3; // retry 2 times.
+
+        int iTrial = 0;
+
+        while (iTrial < nMaxTrials) {
+
+            final PrintOutDao printOutDao =
+                    ServiceContext.getDaoContext().getPrintOutDao();
+
+            final PrintOut printOut = printOutDao.findCupsJob(
+                    printJobStatus.getPrinterName(), printJobStatus.getJobId());
+
+            iTrial++;
+
+            if (LOGGER.isWarnEnabled() && iTrial > 1) {
+
+                final StringBuilder msg = new StringBuilder();
+
+                msg.append("Trial #").append(iTrial).append(" [");
+
+                if (printJobStatus.getJobStateCups() == null) {
+                    msg.append("-");
+                } else {
+                    msg.append(printJobStatus.getJobStateCups().asLogText());
+                }
+                msg.append("] : Find Print log of CUPS job #")
+                        .append(printJobStatus.getJobId()).append(" \"")
+                        .append(StringUtils
+                                .defaultString(printJobStatus.getJobName()))
+                        .append("\" on printer ")
+                        .append(printJobStatus.getPrinterName());
+
+                LOGGER.warn(msg.toString());
+            }
+
+            if (printOut != null || iTrial == nMaxTrials) {
+                return printOut;
+            }
+
+            try {
+
+                Thread.sleep(2 * DateUtil.DURATION_MSEC_SECOND);
+
+                ServiceContext.reopen();
+
+            } catch (InterruptedException e) {
+                if (LOGGER.isInfoEnabled()) {
+                    LOGGER.info(e.getMessage());
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -709,27 +835,26 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
      *            The CUPS complete time in seconds (can be {@code null}).
      * @return The user id of the printOut.
      */
-    private String updatePrintOutStatus(final PrintOut printOut,
+    private void updatePrintOutStatus(final Long printOutId,
             final IppJobStateEnum ippState, final Integer cupsCompletedTime) {
+
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug(String.format("PrintOut ID [%d] update: state [%s]",
+                    printOutId, ippState.asLogText()));
+        }
 
         final DaoContext daoContext = ServiceContext.getDaoContext();
 
         boolean rollback = false;
 
-        final String userid;
-
         try {
-
-            userid = printOut.getDocOut().getDocLog().getUser().getUserId();
 
             daoContext.beginTransaction();
 
             rollback = true;
 
-            printOut.setCupsJobState(ippState.asInt());
-            printOut.setCupsCompletedTime(cupsCompletedTime);
-
-            daoContext.getPrintOutDao().update(printOut);
+            daoContext.getPrintOutDao().updateCupsJob(printOutId, ippState,
+                    cupsCompletedTime);
 
             daoContext.commit();
             rollback = false;
@@ -739,8 +864,6 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
                 daoContext.rollback();
             }
         }
-
-        return userid;
     }
 
     /**
@@ -765,9 +888,8 @@ public final class ProxyPrintJobStatusMonitor extends Thread {
             }
         }
 
-        SpInfo.instance()
-                .log(String.format("... %s shutdown completed.",
-                        OBJECT_NAME_FOR_LOG));
+        SpInfo.instance().log(String.format("... %s shutdown completed.",
+                OBJECT_NAME_FOR_LOG));
 
     }
 
