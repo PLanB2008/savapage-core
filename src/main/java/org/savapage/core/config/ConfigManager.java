@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,6 +27,7 @@ import static java.nio.file.attribute.PosixFilePermission.OWNER_WRITE;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
@@ -47,15 +48,18 @@ import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
+import java.text.MessageFormat;
 import java.util.Currency;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
+import javax.mail.internet.InternetAddress;
 import javax.management.InstanceAlreadyExistsException;
 import javax.management.MBeanRegistrationException;
 import javax.management.MBeanServer;
@@ -68,6 +72,7 @@ import javax.persistence.Persistence;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableLong;
@@ -81,10 +86,12 @@ import org.savapage.core.circuitbreaker.CircuitDamagingException;
 import org.savapage.core.circuitbreaker.CircuitNonTrippingException;
 import org.savapage.core.community.CommunityDictEnum;
 import org.savapage.core.community.MemberCard;
+import org.savapage.core.concurrent.ReadLockObtainFailedException;
 import org.savapage.core.concurrent.ReadWriteLockEnum;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.config.IConfigProp.LdapType;
 import org.savapage.core.config.IConfigProp.Prop;
+import org.savapage.core.config.validator.EnumSetValidator;
 import org.savapage.core.config.validator.ValidationResult;
 import org.savapage.core.crypto.CryptoApp;
 import org.savapage.core.crypto.CryptoUser;
@@ -119,6 +126,9 @@ import org.savapage.core.users.conf.UserAliasList;
 import org.savapage.core.util.CurrencyUtil;
 import org.savapage.core.util.FileSystemHelper;
 import org.savapage.core.util.InetUtils;
+import org.savapage.lib.pgp.PGPBaseException;
+import org.savapage.lib.pgp.PGPHelper;
+import org.savapage.lib.pgp.PGPSecretKeyInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -159,6 +169,12 @@ public final class ConfigManager {
     public static final String SERVER_REL_PATH_CUSTOM_CUPS = "custom/cups";
 
     /**
+     * The relative path of the custom i18n properties files (relative to the
+     * {@code server} directory).
+     */
+    public static final String SERVER_REL_PATH_CUSTOM_I18N = "custom/i18n";
+
+    /**
      * The relative path of the CUPS custom i18n XML files (relative to the
      * {@code server} directory).
      */
@@ -191,6 +207,13 @@ public final class ConfigManager {
      */
     private static final String SERVER_REL_PATH_PRINT_JOBTICKETS =
             "data/print-jobtickets";
+
+    /**
+     * The relative path of the Atom Feeds folder (relative to the
+     * {@code server} directory).
+     */
+    private static final String SERVER_REL_PATH_FEEDS =
+            "data/feed";
 
     /**
      * .
@@ -316,6 +339,37 @@ public final class ConfigManager {
     private static final String SERVER_PROP_IPP_PRINTER_UUID =
             "ipp.printer-uuid";
 
+    private static final String SERVER_PROP_PGP_SECRETKEY_FILE =
+            "pgp.secretkey.file";
+
+    private static final String SERVER_PROP_PGP_SECRETKEY_PASSPHRASE =
+            "pgp.secretkey.passphrase";
+
+    /**
+     * URL of the PGP Public Key Server: to search for a key.
+     */
+    private static final String SERVER_PROP_PGP_PUBLICKEY_SERVER_URL =
+            "pgp.publickey.server.url";
+    /**
+     * An URL to preview the content of PGP Public Key as template: {0} is to be
+     * replaced without hexKeyID, with "0x" prefix.
+     */
+    private static final String SERVER_PROP_PGP_PUBLICKEY_SERVER_URL_VINDEX =
+            "pgp.publickey.server.url.vindex";
+
+    /**
+     * An URL template to get (download) the PGP Public Key: {0} is to be
+     * replaced without hexKeyID, with "0x" prefix.
+     */
+    private static final String SERVER_PROP_PGP_PUBLICKEY_SERVER_URL_GET =
+            "pgp.publickey.server.url.get";
+
+    /**
+     *
+     */
+    private static final String SERVER_PROP_START_CLEANUP_DOCLOG =
+            "start.cleanup-doclog";
+
     // ========================================================================
     // Undocumented ad-hoc properties for testing purposes.
     // ========================================================================
@@ -363,14 +417,13 @@ public final class ConfigManager {
     private final CircuitBreakerRegistry circuitBreakerRegistry =
             new CircuitBreakerRegistry();
 
-    /**
-     *
-     */
+    /** */
     private DbVersionInfo myDbVersionInfo = null;
 
-    /**
-     *
-     */
+    /** */
+    private PGPSecretKeyInfo pgpSecretKeyInfo;
+
+    /** */
     private ConfigManager() {
         runMode = null;
     }
@@ -429,6 +482,13 @@ public final class ConfigManager {
      */
     public CryptoApp cipher() {
         return myCipher;
+    }
+
+    /**
+     * @return {@code null} when not (properly) configured.
+     */
+    public PGPSecretKeyInfo getPGPSecretKeyInfo() {
+        return this.pgpSecretKeyInfo;
     }
 
     /**
@@ -745,6 +805,18 @@ public final class ConfigManager {
      *
      * @return
      */
+    public static boolean isCleanUpDocLogAtStart() {
+        return theServerProps != null && BooleanUtils
+                .toBooleanObject(theServerProps.getProperty(
+                        SERVER_PROP_START_CLEANUP_DOCLOG,
+                        Boolean.TRUE.toString()))
+                .booleanValue();
+    }
+
+    /**
+     *
+     * @return
+     */
     public static String getIppPrinterUuid() {
         return theServerProps.getProperty(SERVER_PROP_IPP_PRINTER_UUID, "");
     }
@@ -844,6 +916,14 @@ public final class ConfigManager {
 
     /**
      *
+     * @return The directory path with the Admin Atom Feeds.
+     */
+    public static Path getAtomFeedsHome() {
+        return Paths.get(getServerHome(), SERVER_REL_PATH_FEEDS);
+    }
+
+    /**
+     *
      * @throws IOException
      */
     private synchronized void lazyCreateJobTicketsHome() throws IOException {
@@ -909,6 +989,21 @@ public final class ConfigManager {
     public static File getServerCustomCupsI18nHome() {
         return new File(String.format("%s/%s", getServerHome(),
                 SERVER_REL_PATH_CUSTOM_CUPS_I18N));
+    }
+
+    /**
+     * Gets the location of a custom resource for Wicket container class.
+     *
+     * @param clazz
+     *            The class of the Wicket component.
+     * @return The directory with the custom i18n files.
+     */
+    public static File getServerCustomI18nHome(final Class<?> clazz) {
+
+        return Paths.get(getServerHome(),
+                SERVER_REL_PATH_CUSTOM_I18N, StringUtils.replace(
+                        clazz.getPackage().getName(), ".", File.separator))
+                .toFile();
     }
 
     /**
@@ -996,9 +1091,10 @@ public final class ConfigManager {
      * @return
      */
     public static String getAppVersionBuild() {
-        return String.format("%s.%s.%s (Build %s)", VersionInfo.VERSION_A_MAJOR,
-                VersionInfo.VERSION_B_MINOR, VersionInfo.VERSION_C_REVISION,
-                VersionInfo.VERSION_D_BUILD);
+        return String.format("%s.%s.%s%s (Build %s)",
+                VersionInfo.VERSION_A_MAJOR, VersionInfo.VERSION_B_MINOR,
+                VersionInfo.VERSION_C_REVISION, VersionInfo.VERSION_D_STATUS,
+                VersionInfo.VERSION_E_BUILD);
     }
 
     /**
@@ -1219,7 +1315,133 @@ public final class ConfigManager {
             throw new SpException("mode [" + mode + "] is not supported");
         }
 
+        initPGP();
+
         runMode = mode;
+    }
+
+    /**
+     * Initializes the PGP secret key.
+     */
+    private void initPGP() {
+
+        if (theServerProps == null) {
+            return;
+        }
+
+        final String secretFile =
+                theServerProps.getProperty(SERVER_PROP_PGP_SECRETKEY_FILE);
+
+        if (secretFile == null) {
+            return;
+        }
+
+        final PGPHelper helper = PGPHelper.instance();
+
+        try {
+            this.pgpSecretKeyInfo = helper.readSecretKey(
+                    new FileInputStream(
+                            Paths.get(getServerHome(), secretFile).toFile()),
+                    theServerProps
+                            .getProperty(SERVER_PROP_PGP_SECRETKEY_PASSPHRASE));
+
+            SpInfo.instance().log(String.format("PGP Key ID [%s]",
+                    this.pgpSecretKeyInfo.formattedKeyID()));
+
+            for (final InternetAddress addr : this.pgpSecretKeyInfo.getUids()) {
+                SpInfo.instance()
+                        .log(String.format("PGP UID [%s]", addr.toString()));
+            }
+
+            SpInfo.instance().log(String.format("PGP Fingerprint [%s]",
+                    this.pgpSecretKeyInfo.formattedFingerPrint()));
+
+            // Elicit an exception when one of the URLs is wrong.
+            this.getPGPPublicKeySearchUrl();
+            this.getPGPPublicKeyDownloadUrl("TEST");
+            this.getPGPPublicKeyPreviewUrl("TEST");
+
+        } catch (FileNotFoundException | PGPBaseException
+                | MalformedURLException e) {
+            LOGGER.error(e.getMessage());
+        }
+    }
+
+    /**
+     * Gets the URL of Web Page where PGP Public Key can be searched.
+     *
+     * @return The URL to search for a key, or {@code null} when unknown.
+     * @throws MalformedURLException
+     *             If URL template is ill-formed.
+     */
+    public URL getPGPPublicKeySearchUrl() throws MalformedURLException {
+
+        final String value = theServerProps
+                .getProperty(SERVER_PROP_PGP_PUBLICKEY_SERVER_URL);
+        if (StringUtils.isBlank(value)) {
+            return null;
+        }
+        return new URL(value);
+    }
+
+    /**
+     * Gets the URL to download the PGP Public Key.
+     *
+     * @param hexKeyID
+     *            Hexadecimal KeyID, without "0x" prefix.
+     * @return The URL to download the public ASCII armored key, or {@code null}
+     *         when unknown.
+     * @throws MalformedURLException
+     *             If URL template is ill-formed.
+     */
+    public URL getPGPPublicKeyDownloadUrl(final String hexKeyID)
+            throws MalformedURLException {
+
+        final String value = theServerProps
+                .getProperty(SERVER_PROP_PGP_PUBLICKEY_SERVER_URL_GET);
+        if (StringUtils.isBlank(value)) {
+            return null;
+        }
+        return new URL(MessageFormat.format(value, hexKeyID));
+    }
+
+    /**
+     * Gets the URL of Web Page to preview the content of the PGP Public Key.
+     *
+     * @param hexKeyID
+     *            Hexadecimal KeyID, without "0x" prefix.
+     * @return The URL to preview the public key, or {@code null} when unknown.
+     * @throws MalformedURLException
+     *             If URL template is ill-formed.
+     */
+    public URL getPGPPublicKeyPreviewUrl(final String hexKeyID)
+            throws MalformedURLException {
+
+        final String value = this.getPGPPublicKeyPreviewUrlTemplate();
+        if (value == null) {
+            return null;
+        }
+        return new URL(MessageFormat.format(value, hexKeyID));
+    }
+
+    /**
+     * Gets the URL template of Web Page to preview the content of the PGP
+     * Public Key.
+     * <p>
+     * Placeholder <tt>{0}</tt> is to be replaced by the Hexadecimal KeyID,
+     * without "0x" prefix.
+     * </p>
+     *
+     * @return The template string, or {@code null} when unknown.
+     */
+    public String getPGPPublicKeyPreviewUrlTemplate() {
+
+        final String value = theServerProps
+                .getProperty(SERVER_PROP_PGP_PUBLICKEY_SERVER_URL_VINDEX);
+        if (StringUtils.isBlank(value)) {
+            return null;
+        }
+        return value;
     }
 
     /**
@@ -1229,6 +1451,47 @@ public final class ConfigManager {
      */
     public boolean isAppReadyToUse() {
         return myConfigProp.isRunnable();
+    }
+
+    /**
+     * @return {@code true} when application is temporarily unavailable.
+     */
+    public static boolean isTempUnavailable() {
+
+        boolean acquired = false;
+
+        try {
+            ReadWriteLockEnum.DATABASE_READONLY.tryReadLock();
+            acquired = true;
+        } catch (ReadLockObtainFailedException e) {
+            acquired = false;
+        } finally {
+            if (acquired) {
+                ReadWriteLockEnum.DATABASE_READONLY.setReadLock(false);
+            }
+        }
+        return !acquired;
+    }
+
+    /**
+     * Gets the system status.
+     *
+     * @return The {@link SystemStatusEnum}.
+     */
+    public SystemStatusEnum getSystemStatus() {
+
+        final SystemStatusEnum stat;
+
+        if (!this.isAppReadyToUse()) {
+            stat = SystemStatusEnum.SETUP;
+        } else if (isSysMaintenance()) {
+            stat = SystemStatusEnum.MAINTENANCE;
+        } else if (isTempUnavailable()) {
+            stat = SystemStatusEnum.UNAVAILABLE;
+        } else {
+            stat = SystemStatusEnum.READY;
+        }
+        return stat;
     }
 
     /**
@@ -1417,6 +1680,7 @@ public final class ConfigManager {
      * @param props
      *            The properties.
      * @throws IOException
+     *             When IO errors.
      */
     private void initAsCoreLibrary(final DatabaseTypeEnum databaseTypeDefault,
             final Properties props) throws IOException {
@@ -1759,7 +2023,9 @@ public final class ConfigManager {
      */
     public boolean isUserEncrypted(final IConfigProp.Key key) {
         return key == Key.AUTH_LDAP_ADMIN_PASSWORD
+                || key == Key.API_JSONRPC_SECRET_KEY
                 || key == Key.CLIAPP_AUTH_ADMIN_PASSKEY
+                || key == Key.FEED_ATOM_ADMIN_PASSWORD
                 || key == Key.MAIL_SMTP_PASSWORD
                 || key == Key.PAPERCUT_DB_PASSWORD
                 || key == Key.PAPERCUT_SERVER_AUTH_TOKEN
@@ -1778,7 +2044,12 @@ public final class ConfigManager {
     }
 
     /**
+     * Gets the enum of the configuration key.
      *
+     * @param key
+     *            The string representation of the key.
+     * @return The enum representation of the key, or {@code null} when the key
+     *         is not found.
      */
     public IConfigProp.Key getConfigKey(final String key) {
         return myConfigProp.getKey(key);
@@ -1840,6 +2111,39 @@ public final class ConfigManager {
     public <E extends Enum<E>> E getConfigEnum(final Class<E> enumClass,
             final IConfigProp.Key key) {
         return EnumUtils.getEnum(enumClass, this.getConfigValue(key));
+    }
+
+    /**
+     * Gets the enum set config value.
+     *
+     * @param enumClass
+     *            The enum class.
+     * @param key
+     *            The {@link Key}.
+     * @param <E>
+     *            The enum type.
+     * @return The enum set (can be empty).
+     */
+    public <E extends Enum<E>> EnumSet<E> getConfigEnumSet(
+            final Class<E> enumClass, final IConfigProp.Key key) {
+        return EnumSetValidator.getEnumSet(enumClass, this.getConfigValue(key));
+    }
+
+    /**
+     * Gets the enum list config value (in order of appearance).
+     *
+     * @param enumClass
+     *            The enum class.
+     * @param key
+     *            The {@link Key}.
+     * @param <E>
+     *            The enum type.
+     * @return The enum list (can be empty).
+     */
+    public <E extends Enum<E>> List<E> getConfigEnumList(
+            final Class<E> enumClass, final IConfigProp.Key key) {
+        return EnumSetValidator.getEnumList(enumClass,
+                this.getConfigValue(key));
     }
 
     /**
@@ -2036,6 +2340,16 @@ public final class ConfigManager {
 
     /**
      *
+     * @param key
+     *            The key.
+     * @return {@code true} if Key can be updated by Public API, like JSON-RPC.
+     */
+    public boolean isConfigApiUpdatable(final IConfigProp.Key key) {
+        return myConfigProp.isApiUpdatable(key);
+    }
+
+    /**
+     *
      * @return
      */
     public static boolean isInternalUsersEnabled() {
@@ -2131,12 +2445,17 @@ public final class ConfigManager {
     }
 
     /**
-     * Tells whether the setup for SavaPage is completed.
-     *
-     * @return
+     * @return {@code true} when setup for SavaPage is completed.
      */
     public boolean isSetupCompleted() {
         return isConfigValue(IConfigProp.Key.SYS_SETUP_COMPLETED);
+    }
+
+    /**
+     * @return {@code true} when SavaPage is in maintenance mode.
+     */
+    public static boolean isSysMaintenance() {
+        return instance().isConfigValue(IConfigProp.Key.SYS_MAINTENANCE);
     }
 
     /**
@@ -2146,6 +2465,10 @@ public final class ConfigManager {
         shutdownInProgress = true;
     }
 
+    /**
+     *
+     * @return {@code true} when shutdown is in progress.
+     */
     public static boolean isShutdownInProgress() {
         return shutdownInProgress;
     }
@@ -2456,6 +2779,16 @@ public final class ConfigManager {
         } else {
             DbConfig.configHibernatePostgreSQL(config);
         }
+    }
+
+    /**
+     * @return The JDBC user of the PostgreSQL database.
+     */
+    public static String getPostgreSQLUser() {
+        if (theServerProps == null) {
+            return null;
+        }
+        return theServerProps.getProperty(SERVER_PROP_DB_USER);
     }
 
     /**

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -61,13 +61,10 @@ import org.savapage.core.dto.MediaPageCostDto;
 import org.savapage.core.dto.ProxyPrinterCostDto;
 import org.savapage.core.dto.ProxyPrinterDto;
 import org.savapage.core.dto.ProxyPrinterMediaSourcesDto;
-import org.savapage.core.inbox.PdfOrientationInfo;
 import org.savapage.core.ipp.IppMediaSizeEnum;
 import org.savapage.core.ipp.IppPrinterType;
 import org.savapage.core.ipp.IppSyntaxException;
 import org.savapage.core.ipp.attribute.AbstractIppDict;
-import org.savapage.core.ipp.attribute.IppAttr;
-import org.savapage.core.ipp.attribute.IppAttrCollection;
 import org.savapage.core.ipp.attribute.IppAttrGroup;
 import org.savapage.core.ipp.attribute.IppAttrValue;
 import org.savapage.core.ipp.attribute.IppDictJobDescAttr;
@@ -77,11 +74,10 @@ import org.savapage.core.ipp.attribute.IppDictOperationAttr;
 import org.savapage.core.ipp.attribute.IppDictPrinterDescAttr;
 import org.savapage.core.ipp.attribute.IppDictSubscriptionAttr;
 import org.savapage.core.ipp.attribute.syntax.IppBoolean;
-import org.savapage.core.ipp.attribute.syntax.IppInteger;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
-import org.savapage.core.ipp.attribute.syntax.IppMimeMediaType;
 import org.savapage.core.ipp.client.IppClient;
 import org.savapage.core.ipp.client.IppConnectException;
+import org.savapage.core.ipp.client.IppReqPrintJob;
 import org.savapage.core.ipp.encoding.IppDelimiterTag;
 import org.savapage.core.ipp.helpers.IppOptionMap;
 import org.savapage.core.ipp.operation.IppGetPrinterAttrOperation;
@@ -101,7 +97,6 @@ import org.savapage.core.json.rpc.JsonRpcError.Code;
 import org.savapage.core.json.rpc.JsonRpcMethodError;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
 import org.savapage.core.pdf.PdfCreateInfo;
-import org.savapage.core.pdf.PdfPageRotateHelper;
 import org.savapage.core.pdf.PdfPrintCollector;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq;
 import org.savapage.core.print.proxy.JsonProxyPrintJob;
@@ -109,6 +104,7 @@ import org.savapage.core.print.proxy.JsonProxyPrinter;
 import org.savapage.core.print.proxy.JsonProxyPrinterOpt;
 import org.savapage.core.print.proxy.JsonProxyPrinterOptChoice;
 import org.savapage.core.print.proxy.JsonProxyPrinterOptGroup;
+import org.savapage.core.print.proxy.ProxyPrintLogger;
 import org.savapage.core.print.proxy.ProxyPrinterOptGroupEnum;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.CupsPrinterClass;
@@ -116,7 +112,6 @@ import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.util.BigDecimalUtil;
 import org.savapage.core.util.DateUtil;
 import org.savapage.core.util.InetUtils;
-import org.savapage.core.util.MediaUtils;
 import org.savapage.core.util.Messages;
 import org.savapage.core.util.NumberUtil;
 import org.savapage.ext.papercut.PaperCutHelper;
@@ -138,8 +133,13 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
     private static final String CUSTOM_IPP_I18N_RESOURCE_NAME = "ipp-i18n";
 
+    /** Key prefix of IPP option (choice) text.*/
     private static final String LOCALIZE_IPP_ATTR_PREFIX = "ipp-attr-";
 
+    /** Key prefix of IPP option choice(s) icon CSS class. */
+    private static final String LOCALIZE_IPP_ICON_PREFIX = "ipp-icon-";
+
+    /** */
     private final static String NOTIFY_PULL_METHOD = "ippget";
 
     /**
@@ -249,8 +249,6 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         final boolean remoteCupsEnabled = ConfigManager.instance()
                 .isConfigValue(Key.CUPS_IPP_REMOTE_ENABLED);
 
-        final JsonProxyPrinter defaultPrinter = getCupsDefaultPrinter();
-
         /*
          * Get the list of CUPS printers.
          */
@@ -333,7 +331,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
              * Create JsonProxyPrinter object from PRINTER_ATTR group.
              */
             final JsonProxyPrinter proxyPrinterFromGroup =
-                    createUserPrinter(defaultPrinter, group);
+                    createUserPrinter(group);
 
             if (proxyPrinterFromGroup == null) {
                 continue;
@@ -460,7 +458,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         printerClass.setManualMediaSource(printerMember.getManualMediaSource());
         printerClass.setPpd(printerMember.getPpd());
         printerClass.setPpdVersion(printerMember.getPpdVersion());
-        printerClass.setSheetCollate(printerMember.getSheetCollate());
+        printerClass.setSheetCollated(printerMember.getSheetCollated());
+        printerClass.setSheetUncollated(printerMember.getSheetUncollated());
     }
 
     /**
@@ -518,7 +517,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 getIppPrinterAttr(printerName, printerUri);
 
         if (response.size() > 1) {
-            printer = createUserPrinter(null, response.get(1));
+            printer = createUserPrinter(response.get(1));
         }
 
         return printer;
@@ -609,15 +608,12 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      * parameter are not copied to the output {@link JsonProxyPrinter}.
      * </p>
      *
-     * @param defaultPrinter
-     *            {@code null} when default printer is unknown.
      * @param group
      *            The (raw) IPP printer options.
      * @return the {@link JsonProxyPrinter} or {@code null} when printer
      *         definition is not valid somehow.
      */
-    private JsonProxyPrinter createUserPrinter(
-            final JsonProxyPrinter defaultPrinter, final IppAttrGroup group) {
+    private JsonProxyPrinter createUserPrinter(final IppAttrGroup group) {
 
         final JsonProxyPrinter printer = new JsonProxyPrinter();
 
@@ -723,10 +719,6 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 ProxyPrinterOptGroupEnum.REFERENCE_ONLY,
                 IppDictJobTemplateAttr.ATTR_SET_REFERENCE_ONLY);
 
-        // -----------------------------------------
-        printer.setDfault(
-                defaultPrinter != null && defaultPrinter.hasSameName(printer));
-
         /*
          * TODO: The PPD values are used to see if a printer "changed", but this
          * becomes obsolete as soon as we utilize event subscription fully.
@@ -746,9 +738,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             final String attrKeyword,
             final List<JsonProxyPrinterOptChoice> choices) {
 
-        final boolean isMedia =
-                attrKeyword.equals(IppDictJobTemplateAttr.ATTR_MEDIA);
-
+        final boolean isMedia = IppDictJobTemplateAttr.isMediaAttr(attrKeyword);
         for (final JsonProxyPrinterOptChoice optChoice : choices) {
             localizePrinterOptChoice(locale, attrKeyword, isMedia, optChoice);
         }
@@ -760,16 +750,14 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             final JsonProxyPrinterOptChoice optChoice) {
 
         localizePrinterOptChoice(locale, attrKeyword,
-                attrKeyword.equals(IppDictJobTemplateAttr.ATTR_MEDIA),
-                optChoice);
+                IppDictJobTemplateAttr.isMediaAttr(attrKeyword), optChoice);
     }
 
     @Override
     public String localizePrinterOptValue(final Locale locale,
             final String attrKeyword, final String value) {
-        final boolean isMedia =
-                attrKeyword.equals(IppDictJobTemplateAttr.ATTR_MEDIA);
-        return localizePrinterOptChoice(locale, attrKeyword, isMedia, value);
+        return localizePrinterOptChoice(locale, attrKeyword,
+                IppDictJobTemplateAttr.isMediaAttr(attrKeyword), value);
     }
 
     @Override
@@ -941,7 +929,11 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         String choiceTextDefault = choice;
 
+        final String attrKeywordWrk;
+
         if (isMedia) {
+
+            attrKeywordWrk = IppDictJobTemplateAttr.ATTR_MEDIA;
 
             final IppMediaSizeEnum ippMediaSize = IppMediaSizeEnum.find(choice);
 
@@ -953,12 +945,14 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
             choiceTextDefault = localizeWithDefault(locale,
                     String.format("%s%s-%s", LOCALIZE_IPP_ATTR_PREFIX,
-                            attrKeyword, mediaSizeName.toString()),
+                            attrKeywordWrk, mediaSizeName.toString()),
                     mediaSizeName.toString());
+        } else {
+            attrKeywordWrk = attrKeyword;
         }
 
         final String key = String.format("%s%s-%s", LOCALIZE_IPP_ATTR_PREFIX,
-                attrKeyword, choice);
+                attrKeywordWrk, choice);
         final String customChoice = localizeCustomIpp(key, locale);
 
         final String finalChoice;
@@ -999,15 +993,86 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
             for (final JsonProxyPrinterOpt option : optGroup.getOptions()) {
                 localizePrinterOpt(locale, option);
+                attachCssIcons(locale, option);
             }
         }
     }
 
     /**
+     * Attaches CSS icon class to each of the printer option choices.
+     *
+     * @param locale
+     *            The locale.
+     * @param option
+     *            The printer option.
+     */
+    private void attachCssIcons(final Locale locale,
+            final JsonProxyPrinterOpt option) {
+
+        final String cssDefault = localizeCustomIpp(String.format("%s%s",
+                LOCALIZE_IPP_ICON_PREFIX, option.getKeyword()), locale);
+
+        for (final JsonProxyPrinterOptChoice choice : option.getChoices()) {
+
+            final String cssChoice =
+                    localizeCustomIpp(
+                            String.format("%s%s-%s", LOCALIZE_IPP_ICON_PREFIX,
+                                    option.getKeyword(), choice.getChoice()),
+                            locale);
+
+            if (cssChoice == null) {
+                choice.setUiIconClass(cssDefault);
+            } else {
+                choice.setUiIconClass(cssChoice);
+            }
+        }
+    }
+
+    /**
+     * Adds an {@code IppBoolean} option to the printerOptions parameter.
+     *
+     * @param printerOptions
+     *            The list of {@link JsonProxyPrinterOpt} to add the option to.
+     * @param attrKeyword
+     *            The IPP attribute keyword.
+     * @param defaultChoice
+     *            The default choice.
+     */
+    private void addOptionBoolean(
+            final ArrayList<JsonProxyPrinterOpt> printerOptions,
+            final String attrKeyword, final boolean defaultChoice) {
+
+        final JsonProxyPrinterOpt option = new JsonProxyPrinterOpt();
+
+        option.setKeyword(attrKeyword);
+        option.setUiText(attrKeyword);
+        final ArrayList<JsonProxyPrinterOptChoice> choices = new ArrayList<>();
+
+        JsonProxyPrinterOptChoice choice = new JsonProxyPrinterOptChoice();
+        choice.setChoice(IppBoolean.FALSE);
+        choice.setUiText(IppBoolean.FALSE);
+        choices.add(choice);
+
+        choice = new JsonProxyPrinterOptChoice();
+        choice.setChoice(IppBoolean.TRUE);
+        choice.setUiText(IppBoolean.TRUE);
+        choices.add(choice);
+
+        option.setChoices(choices);
+
+        if (defaultChoice) {
+            option.setDefchoice(IppBoolean.TRUE);
+        } else {
+            option.setDefchoice(IppBoolean.FALSE);
+        }
+
+        printerOptions.add(option);
+    }
+
+    /**
      * Adds an option to the printerOptions parameter.
      * <p>
-     * See <a href="https://secure.datraverse.nl/mantis/view.php?id=185">Mantis
-     * #185</a>.
+     * See Mantis #185.
      * </p>
      *
      * @param printer
@@ -1024,6 +1089,15 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             final IppAttrGroup group,
             final ArrayList<JsonProxyPrinterOpt> printerOptions,
             final String attrKeyword) {
+
+        /*
+         * Handle internal attributes first.
+         */
+        if (attrKeyword.equals(
+                IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_INT_PAGE_ROTATE180)) {
+            this.addOptionBoolean(printerOptions, attrKeyword, false);
+            return;
+        }
 
         /*
          * INVARIANT: More than one (1) choice.
@@ -1055,8 +1129,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         String defChoiceFound = attrChoice.getValues().get(0);
 
-        final boolean isMedia =
-                attrKeyword.equals(IppDictJobTemplateAttr.ATTR_MEDIA);
+        final boolean isMedia = IppDictJobTemplateAttr.isMediaAttr(attrKeyword);
 
         final boolean isMediaSource =
                 attrKeyword.equals(IppDictJobTemplateAttr.ATTR_MEDIA_SOURCE);
@@ -1070,7 +1143,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         final boolean isSheetCollate =
                 attrKeyword.equals(IppDictJobTemplateAttr.ATTR_SHEET_COLLATE);
 
-        int nSheetCollateChoices = 0;
+        boolean sheetCollated = false;
+        boolean sheetUncollated = false;
         boolean isDuplexPrinter = false;
         boolean hasManualMediaSource = false;
         boolean hasAutoMediaSource = false;
@@ -1104,7 +1178,13 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                     .equalsIgnoreCase(IppKeyword.MEDIA_SOURCE_MANUAL)) {
                 hasManualMediaSource = true;
             } else if (isSheetCollate) {
-                nSheetCollateChoices++;
+                if (choice
+                        .equalsIgnoreCase(IppKeyword.SHEET_COLLATE_COLLATED)) {
+                    sheetCollated = true;
+                } else if (choice.equalsIgnoreCase(
+                        IppKeyword.SHEET_COLLATE_UNCOLLATED)) {
+                    sheetUncollated = true;
+                }
             }
 
             if (choice.equals(defChoice)) {
@@ -1127,8 +1207,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             printer.setAutoMediaSource(Boolean.valueOf(hasAutoMediaSource));
             printer.setManualMediaSource(Boolean.valueOf(hasManualMediaSource));
         } else if (isSheetCollate) {
-            // Both choices must be present.
-            printer.setSheetCollate(Boolean.valueOf(nSheetCollateChoices == 2));
+            printer.setSheetCollated(sheetCollated);
+            printer.setSheetUncollated(sheetUncollated);
         }
 
     }
@@ -1224,8 +1304,13 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         if (request.getNumberOfCopies() > 1) {
 
-            clientSideCollate =
-                    BooleanUtils.isFalse(jsonPrinter.getSheetCollate());
+            if (request.isCollate()) {
+                clientSideCollate =
+                        BooleanUtils.isFalse(jsonPrinter.getSheetCollated());
+            } else {
+                clientSideCollate =
+                        BooleanUtils.isFalse(jsonPrinter.getSheetUncollated());
+            }
 
             if (!clientSideCollate) {
 
@@ -1291,12 +1376,16 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 pdfFileToPrint = filePdf;
             }
 
-            response =
-                    ippClient.send(urlCupsServer, IppOperationId.PRINT_JOB,
-                            this.reqPrintJob(request, pdfFileToPrint,
-                                    jsonPrinter, user, jobNameWork,
-                                    jobNameWork),
-                            pdfFileToPrint);
+            final IppOperationId ippOperation = IppOperationId.PRINT_JOB;
+
+            final List<IppAttrGroup> ippRequest =
+                    new IppReqPrintJob(request, pdfFileToPrint, jsonPrinter,
+                            user, jobNameWork, jobNameWork, createInfo).build();
+
+            response = ippClient.send(urlCupsServer, ippOperation, ippRequest,
+                    pdfFileToPrint);
+
+            ProxyPrintLogger.log(ippOperation, ippRequest, response);
 
         } catch (IOException e) {
 
@@ -1366,6 +1455,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      * @return The default {@link JsonProxyPrinter} or {@code null} when not
      *         found.
      * @throws IppConnectException
+     *             When IPP connection error.
      */
     private JsonProxyPrinter getCupsDefaultPrinter()
             throws IppConnectException {
@@ -1382,14 +1472,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             return null;
         }
 
-        final JsonProxyPrinter printer =
-                createUserPrinter(null, response.get(1));
-
-        if (printer != null) {
-            printer.setDfault(true);
-        }
-
-        return printer;
+        return createUserPrinter(response.get(1));
     }
 
     @Override
@@ -1930,723 +2013,6 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         // ---------
         return attrGroups;
-    }
-
-    /**
-     * Creates an IPP request for a print job.
-     *
-     * @param request
-     * @param fileToPrint
-     * @param jsonPrinter
-     * @param reqUser
-     * @param docName
-     * @param jobName
-     * @return
-     */
-    private List<IppAttrGroup> reqPrintJob(final AbstractProxyPrintReq request,
-            final File fileToPrint, final JsonProxyPrinter jsonPrinter,
-            final String reqUser, final String docName, final String jobName) {
-
-        final String uriPrinter = jsonPrinter.getPrinterUri().toString();
-
-        final int copies = request.getNumberOfCopies();
-        final Boolean fitToPage = request.getFitToPage();
-        final Map<String, String> optionValues = request.getOptionValues();
-
-        final List<IppAttrGroup> attrGroups = new ArrayList<>();
-
-        IppAttrGroup group = null;
-        AbstractIppDict dict = null;
-
-        /*
-         * Group 1: Operation Attributes
-         */
-        group = createOperationGroup();
-        attrGroups.add(group);
-
-        dict = IppDictOperationAttr.instance();
-
-        group.add(dict.getAttr(IppDictOperationAttr.ATTR_PRINTER_URI),
-                uriPrinter);
-
-        group.add(dict.getAttr(IppDictOperationAttr.ATTR_JOB_NAME), jobName);
-
-        group.add(dict.getAttr(IppDictOperationAttr.ATTR_REQUESTING_USER_NAME),
-                reqUser);
-
-        group.add(dict.getAttr(IppDictOperationAttr.ATTR_JOB_K_OCTETS),
-                String.valueOf(fileToPrint.length()));
-
-        group.add(
-                dict.getAttr(IppDictOperationAttr.ATTR_IPP_ATTRIBUTE_FIDELITY),
-                IppBoolean.TRUE);
-
-        group.add(dict.getAttr(IppDictOperationAttr.ATTR_DOCUMENT_NAME),
-                docName);
-
-        group.add(dict.getAttr(IppDictOperationAttr.ATTR_COMPRESSION),
-                IppKeyword.COMPRESSION_NONE);
-
-        group.add(dict.getAttr(IppDictOperationAttr.ATTR_DOCUMENT_FORMAT),
-                IppMimeMediaType.PDF);
-
-        // "document-natural-language" (naturalLanguage):
-
-        /*
-         * Group 2: Job Template Attributes
-         *
-         * The client OPTIONALLY supplies a set of Job Template attributes as
-         * defined in section 4.2. If the client is not supplying any Job
-         * Template attributes in the request, the client SHOULD omit Group 2
-         * rather than sending an empty group. However, a Printer object MUST be
-         * able to accept an empty group.
-         */
-
-        /*
-         * Mantis #738.
-         */
-        String numberUp = IppKeyword.NUMBER_UP_1;
-
-        /*
-         * No full bleed for now.
-         */
-        final boolean isFullBleed = false;
-
-        /*
-         * TODO: dependent on CUPS version. When was it implemented?
-         */
-        final boolean usePWG5100_13 = false;
-
-        group = null;
-
-        IppAttrCollection collectionMediaSize = null;
-        IppAttrValue attrValueMediaSource = null;
-
-        dict = IppDictJobTemplateAttr.instance();
-
-        /*
-         * We need easy lookup of options when they are injected with an
-         * SavaPage PPD Extension.
-         */
-        final Map<String, JsonProxyPrinterOpt> printerOptionsLookup;
-
-        if (jsonPrinter.isInjectPpdExt()) {
-            printerOptionsLookup = jsonPrinter.getOptionsLookup();
-        } else {
-            printerOptionsLookup = null;
-        }
-
-        /*
-         * Traverse the job options.
-         */
-        for (final Entry<String, String> entry : optionValues.entrySet()) {
-
-            // The IPP option keyword.
-            final String optionKeywordIpp = entry.getKey();
-
-            // The mapped PPD option keyword.
-            final String optionKeywordPpd;
-
-            // IPP option from proxy printer definition.
-            final JsonProxyPrinterOpt proxyPrinterOpt;
-
-            if (jsonPrinter.isInjectPpdExt()) {
-
-                proxyPrinterOpt = printerOptionsLookup.get(optionKeywordIpp);
-
-                if (proxyPrinterOpt != null
-                        && proxyPrinterOpt.getKeywordPpd() != null) {
-                    optionKeywordPpd = proxyPrinterOpt.getKeywordPpd();
-                } else {
-                    optionKeywordPpd = null;
-                }
-
-            } else {
-                proxyPrinterOpt = null;
-                optionKeywordPpd = null;
-            }
-
-            // IPP option for JobTicket specification.
-            if (proxyPrinterOpt != null && proxyPrinterOpt.isJobTicket()) {
-                continue;
-            }
-
-            // The actual attribute and options to send.
-            final IppAttr attr;
-            final String optionKeyword;
-            final String optionValue;
-
-            if (optionKeywordPpd == null) {
-
-                attr = dict.getAttr(optionKeywordIpp);
-                optionKeyword = optionKeywordIpp;
-                optionValue = entry.getValue();
-
-            } else {
-
-                final String optionValueIpp = entry.getValue();
-                String optionValuePpd = null;
-                for (final JsonProxyPrinterOptChoice choice : proxyPrinterOpt
-                        .getChoices()) {
-                    if (choice.getChoice().equals(optionValueIpp)) {
-                        optionValuePpd = choice.getChoicePpd();
-                        break;
-                    }
-                }
-                attr = dict.createPpdOptionAttr(optionKeywordPpd);
-                optionKeyword = optionKeywordPpd;
-                optionValue = optionValuePpd;
-            }
-
-            // Skip attributes exclusively used for Job Ticket.
-            if (IppDictJobTemplateAttr.isJobTicketAttr(optionKeyword)) {
-                continue;
-            }
-
-            if (attr == null) {
-
-                if (optionKeyword.equals(
-                        IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_LANDSCAPE)) {
-                    continue;
-                }
-                /*
-                 * Finishing options are not found when they are NOT mapped in
-                 * the PPDE. They can be skipped if they have a "none" value.
-                 * Any other value is signaled first.
-                 */
-                if (!IppDictJobTemplateAttr.isNoneValueFinishing(optionKeyword,
-                        optionValue)) {
-                    final StringBuilder msg = new StringBuilder();
-                    msg.append("IPP Attribute [").append(optionKeyword)
-                            .append("] with value [").append(optionValue)
-                            .append("] is unknown (attribute is skipped).");
-                    LOGGER.error(msg.toString());
-                }
-                continue;
-            }
-
-            if (optionValue == null) {
-                final StringBuilder msg = new StringBuilder();
-                msg.append("IPP Attribute [").append(optionKeywordIpp)
-                        .append("]");
-                if (optionKeywordPpd != null) {
-                    msg.append(" with mapped PPD option [")
-                            .append(optionKeywordPpd).append("]");
-                }
-                msg.append(": mapped PPD value of [").append(entry.getValue())
-                        .append("] unknown (attribute is skipped).");
-                LOGGER.error(msg.toString());
-                continue;
-            }
-
-            /*
-             * Lazy group initialization.
-             */
-            if (group == null) {
-                group = new IppAttrGroup(IppDelimiterTag.JOB_ATTR);
-                attrGroups.add(group);
-            }
-
-            /*
-             * Mantis #738.
-             */
-            if (optionKeyword.equals(IppDictJobTemplateAttr.ATTR_NUMBER_UP)) {
-                numberUp = optionValue;
-            }
-
-            /*
-             *
-             */
-            if (optionKeyword.equals(IppDictJobTemplateAttr.ATTR_MEDIA)) {
-                /*
-                 * Create here, apply later.
-                 */
-                collectionMediaSize = new IppAttrCollection(
-                        IppDictJobTemplateAttr.ATTR_MEDIA_SIZE);
-
-                final MediaSizeName sizeName =
-                        IppMediaSizeEnum.findMediaSizeName(optionValue);
-
-                final int[] array = MediaUtils.getMediaWidthHeight(sizeName);
-
-                // Number of hundredth in a mm.
-                final int hundredthMM = 100;
-
-                collectionMediaSize.add("x-dimension", new IppInteger(0),
-                        String.valueOf(array[0] * hundredthMM));
-                collectionMediaSize.add("y-dimension", new IppInteger(0),
-                        String.valueOf(array[1] * hundredthMM));
-
-            } else if (optionKeyword
-                    .equals(IppDictJobTemplateAttr.ATTR_MEDIA_SOURCE)) {
-                /*
-                 * Create here, apply later.
-                 */
-                attrValueMediaSource = new IppAttrValue(attr);
-                attrValueMediaSource.addValue(optionValue);
-
-            } else {
-                group.add(attr, optionValue);
-            }
-        } // job options
-
-        /*
-         * NOTE: PWG5100.13 states that "A Client specifies that is has
-         * borderless or "full-bleed" content by setting all of the margins to
-         * 0."
-         *
-         * HOWEVER, this does NOT seem to be true. We get an
-         * "Unsupported margins" error when " media-*-margin-supported" are NEQ
-         * zero. Why?
-         *
-         * Therefore, we use CUPS specific IPP Job template attributes. See:
-         * http://www.cups.org/documentation.php/spec-ipp.html
-         *
-         * Tested OK with: CUPS 1.5.3
-         */
-        if (group != null && !usePWG5100_13) {
-
-            final IppInteger syntax = new IppInteger(0);
-
-            for (final String keyword : new String[] {
-                    IppDictJobTemplateAttr.CUPS_ATTR_PAGE_BOTTOM,
-                    IppDictJobTemplateAttr.CUPS_ATTR_PAGE_LEFT,
-                    IppDictJobTemplateAttr.CUPS_ATTR_PAGE_RIGHT,
-                    IppDictJobTemplateAttr.CUPS_ATTR_PAGE_TOP }) {
-
-                if (isFullBleed) {
-                    group.add(keyword, syntax, "0");
-                }
-            }
-        }
-
-        /*
-         * print-scaling.
-         */
-        if (group != null && fitToPage != null) {
-
-            final String optionKeywordIpp =
-                    IppDictJobTemplateAttr.ATTR_PRINT_SCALING;
-
-            final JsonProxyPrinterOpt printScaling;
-
-            if (printerOptionsLookup == null) {
-                printScaling = null;
-            } else {
-                printScaling = printerOptionsLookup.get(optionKeywordIpp);
-            }
-
-            if (printScaling == null) {
-                /*
-                 * Mantis #205: add fit to page attribute.
-                 */
-                final String fitToPageIppBoolean;
-
-                if (fitToPage) {
-                    fitToPageIppBoolean = IppBoolean.TRUE;
-                } else {
-                    fitToPageIppBoolean = IppBoolean.FALSE;
-                }
-
-                group.add(IppDictJobTemplateAttr.CUPS_ATTR_FIT_TO_PAGE,
-                        IppBoolean.instance(), fitToPageIppBoolean);
-
-            } else {
-                /*
-                 * Mantis #719: Create PPD mapping for print-scaling.
-                 */
-                dict = IppDictJobTemplateAttr.instance();
-
-                // The mapped PPD option keyword.
-                final String optionKeywordPpd = printScaling.getKeywordPpd();
-
-                // The IPP value.
-                final String optionValueIpp;
-                if (fitToPage) {
-                    optionValueIpp = IppKeyword.PRINT_SCALING_FIT;
-                } else {
-                    optionValueIpp = IppKeyword.PRINT_SCALING_NONE;
-                }
-
-                // The actual attribute and value to send.
-                final IppAttr attr;
-                final String optionValue;
-
-                if (optionKeywordPpd == null) {
-
-                    attr = dict.getAttr(optionKeywordIpp);
-                    optionValue = optionValueIpp;
-
-                } else {
-
-                    String optionValuePpd = null;
-
-                    for (final JsonProxyPrinterOptChoice choice : printScaling
-                            .getChoices()) {
-                        if (choice.getChoice().equals(optionValueIpp)) {
-                            optionValuePpd = choice.getChoicePpd();
-                            break;
-                        }
-                    }
-                    attr = dict.createPpdOptionAttr(optionKeywordPpd);
-                    optionValue = optionValuePpd;
-                }
-
-                group.add(attr, optionValue);
-            }
-        }
-
-        /*
-         * Mantis #409: add media-source or media-size.
-         */
-        if (collectionMediaSize != null || attrValueMediaSource != null) {
-
-            final IppAttrCollection collection = new IppAttrCollection(
-                    IppDictJobTemplateAttr.ATTR_MEDIA_COL);
-
-            group.addCollection(collection);
-
-            if (collectionMediaSize != null) {
-
-                collection.addCollection(collectionMediaSize);
-            }
-
-            if (attrValueMediaSource != null) {
-                collection.addAttribute(attrValueMediaSource);
-            }
-
-            if (usePWG5100_13) {
-                /*
-                 * PWG5100.13: A Client specifies that is has borderless or
-                 * "full-bleed" content by setting all of the margins to 0."
-                 *
-                 * HOWEVER, this does NOT seem to be true. We get an
-                 * "Unsupported margins" error when " media-*-margin-supported"
-                 * are NEQ zero. Why?
-                 */
-                final IppInteger syntax = new IppInteger(0);
-
-                for (final String keyword : new String[] {
-                        IppDictJobTemplateAttr.ATTR_MEDIA_BOTTOM_MARGIN,
-                        IppDictJobTemplateAttr.ATTR_MEDIA_LEFT_MARGIN,
-                        IppDictJobTemplateAttr.ATTR_MEDIA_RIGHT_MARGIN,
-                        IppDictJobTemplateAttr.ATTR_MEDIA_TOP_MARGIN }) {
-
-                    if (isFullBleed) {
-                        collection.add(keyword, syntax, "0");
-                    }
-                }
-            }
-        }
-
-        /*
-         * Mantis #259: add number of copies when GT 1.
-         */
-        if (copies > 1) {
-            /*
-             * Lazy initialization.
-             */
-            if (group == null) {
-                group = new IppAttrGroup(IppDelimiterTag.JOB_ATTR);
-                attrGroups.add(group);
-            }
-            group.add(IppDictJobTemplateAttr.ATTR_COPIES, IppInteger.instance(),
-                    String.valueOf(copies));
-        }
-
-        /*
-         * Mantis #738: Apply correct n-up layout in landscape proxy print.
-         */
-        final PdfOrientationInfo pdfOrientation;
-
-        if (request.getJobChunkInfo() == null) {
-            pdfOrientation = request.getPdfOrientation();
-        } else {
-            pdfOrientation = request.getJobChunkInfo().getPdfOrientation();
-        }
-
-        if (pdfOrientation != null) {
-            reqPrintJobCorrectForPdfRotation(optionValues, group,
-                    pdfOrientation, numberUp);
-        }
-
-        return attrGroups;
-    }
-
-    /**
-     * Corrects a Print Job request for orientation and n-up layout.
-     * <p>
-     * Tested for:
-     * <ul>
-     * <li>Ricoh MPC5503 PPD</li>
-     * </ul>
-     * </p>
-     *
-     * @param optionValues
-     *            The IPP job option values.
-     * @param group
-     *            The IPP attribute group to append on.
-     * @param pdfOrientation
-     *            The {@link PdfOrientationInfo} of the PDF inbox document
-     *            belonging to the first page to be proxy printed.
-     * @param numberUp
-     *            The n-up value.
-     */
-    private void reqPrintJobCorrectForPdfRotation(
-            final Map<String, String> optionValues, final IppAttrGroup group,
-            final PdfOrientationInfo pdfOrientation, final String numberUp) {
-
-        final AbstractIppDict dict = IppDictJobTemplateAttr.instance();
-        final PdfPageRotateHelper rotateHelper = PdfPageRotateHelper.instance();
-
-        final Integer pdfRotationForPrint = rotateHelper
-                .getPageRotationForPrinting(pdfOrientation.getLandscape(),
-                        pdfOrientation.getRotation(),
-                        pdfOrientation.getRotate());
-
-        /*
-         * A portrait PDF document without PDF rotation needed, does not need
-         * correction.
-         */
-        if (!pdfOrientation.getLandscape() && pdfRotationForPrint
-                .equals(PdfPageRotateHelper.PDF_ROTATION_0)) {
-            return;
-        }
-
-        final String cupsOrientationRequested;
-        final String cupsNupLayout;
-        final boolean adhocLandscape;
-
-        switch (numberUp) {
-        /*
-         *
-         */
-        case IppKeyword.NUMBER_UP_1:
-
-            cupsNupLayout = null;
-
-            if (pdfRotationForPrint
-                    .equals(PdfPageRotateHelper.PDF_ROTATION_90)) {
-
-                /*
-                 * Landscape -> Landscape reverse
-                 */
-                cupsOrientationRequested =
-                        IppKeyword.ORIENTATION_REQUESTED_270_DEGREES;
-
-            } else if (pdfRotationForPrint
-                    .equals(PdfPageRotateHelper.PDF_ROTATION_180)) {
-
-                if (!pdfOrientation.getLandscape() && pdfOrientation.getRotate()
-                        .equals(PdfPageRotateHelper.PDF_ROTATION_90)) {
-                    cupsOrientationRequested = null;
-                } else {
-                    cupsOrientationRequested =
-                            IppKeyword.ORIENTATION_REQUESTED_180_DEGREES;
-                }
-            } else {
-                cupsOrientationRequested = null;
-            }
-
-            adhocLandscape = true;
-            break;
-
-        /*
-         * 4-up, 9-up and 16-up give result in logical landscape orientation.
-         */
-        case IppKeyword.NUMBER_UP_4:
-        case IppKeyword.NUMBER_UP_9:
-        case IppKeyword.NUMBER_UP_16:
-
-            if (pdfRotationForPrint
-                    .equals(PdfPageRotateHelper.PDF_ROTATION_90)) {
-                /*
-                 * Landscape -> Landscape reverse
-                 */
-                cupsOrientationRequested =
-                        IppKeyword.ORIENTATION_REQUESTED_270_DEGREES;
-
-                cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_LRTB;
-
-            } else if (pdfRotationForPrint
-                    .equals(PdfPageRotateHelper.PDF_ROTATION_180)) {
-
-                if (!pdfOrientation.getLandscape() && pdfOrientation.getRotate()
-                        .equals(PdfPageRotateHelper.PDF_ROTATION_90)) {
-
-                    cupsOrientationRequested = null;
-                    cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_TBRL;
-
-                } else {
-                    /*
-                     * Portrait -> Portrait reverse
-                     */
-                    cupsOrientationRequested =
-                            IppKeyword.ORIENTATION_REQUESTED_180_DEGREES;
-
-                    cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_BTLR;
-                }
-
-            } else {
-
-                cupsOrientationRequested = null;
-
-                if (pdfOrientation.getLandscape()
-                        && pdfOrientation.getRotation()
-                                .equals(PdfPageRotateHelper.PDF_ROTATION_270)) {
-
-                    cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_LRTB;
-
-                } else {
-                    //
-                    // LRTB (default)..... RLTB................TBRL (preferred)
-                    // +----+----S ....... +----+----S ....... +----+----S
-                    // |.*..|.*..| ....... |.*..|.*..| ....... |.*..|.*..|
-                    // |.*1.|.*2.| ....... |.*2.|.*1.| ....... |.*3.|.*1.|
-                    // |.*..|.*..|.........|.*..|.*..|.........|.*..|.*..|
-                    // |----+----|........ |----+----|........ |----+----|
-                    // |.*..|.*..|........ |.*..|.*..|........ |.*..|.*..|
-                    // |.*3.|.*4.|........ |.*4.|.*3.|........ |.*4.|.*2.|
-                    // |.*..|.*..|........ |.*..|.*..|........ |.*..|.*..|
-                    // +----+----+........ +----+----+........ +----+----+
-                    //
-                    cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_TBRL;
-                }
-            }
-
-            adhocLandscape = true;
-            break;
-
-        /*
-         * 2-up and 6-up result in portrait orientation.
-         */
-        case IppKeyword.NUMBER_UP_2:
-
-            if (pdfRotationForPrint
-                    .equals(PdfPageRotateHelper.PDF_ROTATION_90)) {
-                /*
-                 * Landscape -> Portrait
-                 */
-                cupsOrientationRequested =
-                        IppKeyword.ORIENTATION_REQUESTED_270_DEGREES;
-                cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_TBRL;
-
-            } else if (pdfRotationForPrint
-                    .equals(PdfPageRotateHelper.PDF_ROTATION_180)) {
-                /*
-                 * Portrait -> Landscape reverse
-                 */
-                cupsOrientationRequested =
-                        IppKeyword.ORIENTATION_REQUESTED_270_DEGREES;
-                cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_TBRL;
-
-            } else {
-
-                if (pdfOrientation.getLandscape()
-                        && pdfOrientation.getRotation()
-                                .equals(PdfPageRotateHelper.PDF_ROTATION_270)) {
-                    cupsOrientationRequested = null;
-                    cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_TBLR;
-                } else {
-                    cupsOrientationRequested =
-                            IppKeyword.ORIENTATION_REQUESTED_180_DEGREES;
-                    cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_TBRL;
-                }
-            }
-
-            adhocLandscape = false;
-            break;
-
-        case IppKeyword.NUMBER_UP_6:
-
-            if (pdfRotationForPrint
-                    .equals(PdfPageRotateHelper.PDF_ROTATION_90)) {
-                /*
-                 * Landscape -> Portrait
-                 */
-                cupsOrientationRequested =
-                        IppKeyword.ORIENTATION_REQUESTED_270_DEGREES;
-                cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_LRTB;
-
-            } else if (pdfRotationForPrint
-                    .equals(PdfPageRotateHelper.PDF_ROTATION_180)) {
-                /*
-                 * Portrait -> Landscape reverse
-                 */
-                cupsOrientationRequested =
-                        IppKeyword.ORIENTATION_REQUESTED_270_DEGREES;
-                cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_LRTB;
-
-            } else {
-                if (pdfOrientation.getLandscape()
-                        && pdfOrientation.getRotation()
-                                .equals(PdfPageRotateHelper.PDF_ROTATION_270)) {
-                    cupsOrientationRequested = null;
-                    cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_LRTB;
-                } else {
-                    cupsOrientationRequested =
-                            IppKeyword.ORIENTATION_REQUESTED_180_DEGREES;
-                    cupsNupLayout = IppKeyword.NUMBER_UP_LAYOUT_TBRL;
-                }
-            }
-
-            adhocLandscape = false;
-            break;
-
-        default:
-            cupsNupLayout = null;
-            cupsOrientationRequested = null;
-            adhocLandscape = false;
-            break;
-        }
-
-        //
-        if (cupsOrientationRequested != null) {
-            group.add(
-                    dict.createPpdOptionAttr(
-                            IppDictJobTemplateAttr.CUPS_ATTR_ORIENTATION_REQUESTED),
-                    cupsOrientationRequested);
-        }
-
-        if (cupsNupLayout != null) {
-            group.add(
-                    dict.createPpdOptionAttr(
-                            IppDictJobTemplateAttr.CUPS_ATTR_NUMBER_UP_LAYOUT),
-                    cupsNupLayout);
-        }
-
-        if (adhocLandscape) {
-            // Set ad-hoc landscape indication in original request.
-            optionValues.put(IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_LANDSCAPE,
-                    "");
-        }
-
-        if (LOGGER.isDebugEnabled()) {
-            final StringBuilder msg = new StringBuilder();
-
-            msg.append("PDF source: ");
-
-            if (pdfOrientation.getLandscape()) {
-                msg.append("landscape");
-            } else {
-                msg.append("portrait");
-            }
-            msg.append(" rotation [").append(pdfOrientation.getRotation())
-                    .append("] user rotate [")
-                    .append(pdfOrientation.getRotate()).append("]");
-
-            msg.append(" | PDF rotate for print [").append(pdfRotationForPrint)
-                    .append("] | CUPS ").append(numberUp).append("-up");
-
-            if (cupsNupLayout != null) {
-                msg.append(" ").append(cupsNupLayout.toUpperCase());
-            }
-            if (cupsOrientationRequested != null) {
-                msg.append(" orientation [").append(cupsOrientationRequested)
-                        .append("]");
-            }
-            LOGGER.debug(msg.toString());
-        }
     }
 
     /**

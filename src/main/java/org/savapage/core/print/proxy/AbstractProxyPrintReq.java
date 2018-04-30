@@ -30,6 +30,7 @@ import org.savapage.core.dao.enums.PrintModeEnum;
 import org.savapage.core.inbox.PdfOrientationInfo;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
+import org.savapage.core.ipp.helpers.IppOptionMap;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.core.services.helpers.InboxSelectScopeEnum;
@@ -529,6 +530,13 @@ public abstract class AbstractProxyPrintReq
 
     public void setFitToPage(Boolean fitToPage) {
         this.fitToPage = fitToPage;
+    }
+
+    /**
+     * @return The {@link IppOptionMap}.
+     */
+    public IppOptionMap createIppOptionMap() {
+        return new IppOptionMap(this.getOptionValues());
     }
 
     /**

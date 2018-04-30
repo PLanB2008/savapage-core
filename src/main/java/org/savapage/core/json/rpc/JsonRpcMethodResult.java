@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,12 +29,15 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-@JsonPropertyOrder({ "result" })
+@JsonPropertyOrder({ AbstractJsonRpcMessage.ATTR_JSONRPC,
+        AbstractJsonRpcMessage.ATTR_ID, JsonRpcMethodResult.ATTR_RESULT })
 @JsonInclude(Include.NON_NULL)
 public class JsonRpcMethodResult extends AbstractJsonRpcMethodResponse {
+
+    public static final String ATTR_RESULT = "result";
 
     @Override
     @JsonIgnore
@@ -42,7 +45,7 @@ public class JsonRpcMethodResult extends AbstractJsonRpcMethodResponse {
         return false;
     }
 
-    @JsonProperty("result")
+    @JsonProperty(JsonRpcMethodResult.ATTR_RESULT)
     private JsonRpcResult result;
 
     public JsonRpcResult getResult() {
@@ -77,14 +80,41 @@ public class JsonRpcMethodResult extends AbstractJsonRpcMethodResponse {
     }
 
     /**
-     * Creates a {@link JsonRpcMethodResult} with
-     * {@link JsonRpcResultDataMixin} data.
+     * Creates a {@link JsonRpcMethodResult} with {@link ResultEnum} data.
+     *
+     * @param enumObj
+     *            An enum object.
+     * @return The JSON-RPC result message.
+     */
+    public static JsonRpcMethodResult createEnumResult(final Enum<?> enumObj) {
+        final ResultEnum data = new ResultEnum();
+        data.setValue(enumObj.toString());
+        return createResult(data);
+    }
+
+    /**
+     * Creates a {@link JsonRpcMethodResult} with {@link ResultBoolean} data.
+     *
+     * @param success
+     *            {@code true} when success.
+     * @return The JSON-RPC result message.
+     */
+    public static JsonRpcMethodResult
+            createBooleanResult(final boolean success) {
+        final ResultBoolean data = new ResultBoolean();
+        data.setValue(success);
+        return createResult(data);
+    }
+
+    /**
+     * Creates a {@link JsonRpcMethodResult} with {@link JsonRpcResultDataMixin}
+     * data.
      *
      * @param data
      * @return
      */
-    public static JsonRpcMethodResult createResult(
-            JsonRpcResultDataMixin data) {
+    public static JsonRpcMethodResult
+            createResult(JsonRpcResultDataMixin data) {
         JsonRpcMethodResult methodResult = new JsonRpcMethodResult();
         JsonRpcResult result = new JsonRpcResult();
         result.setData(data);

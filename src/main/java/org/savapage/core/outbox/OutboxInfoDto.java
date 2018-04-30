@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -219,6 +219,7 @@ public final class OutboxInfoDto extends AbstractDto {
         private boolean collate;
 
         private int copies;
+        private int sheets;
         private int pages;
 
         public String getTicketNumber() {
@@ -243,6 +244,14 @@ public final class OutboxInfoDto extends AbstractDto {
 
         public void setCopies(int copies) {
             this.copies = copies;
+        }
+
+        public int getSheets() {
+            return sheets;
+        }
+
+        public void setSheets(int sheets) {
+            this.sheets = sheets;
         }
 
         public int getPages() {
@@ -319,8 +328,8 @@ public final class OutboxInfoDto extends AbstractDto {
         private String file;
 
         /**
-         * The name of the main printer, which can be the printer for the
-         * Hold Job or the Job Ticket printer.
+         * The name of the main printer, which can be the printer for the Hold
+         * Job or the Job Ticket printer.
          */
         private String printer;
 
@@ -336,12 +345,17 @@ public final class OutboxInfoDto extends AbstractDto {
          */
         private int fillerPages;
 
-        private int sheets;
         private boolean removeGraphics;
         private ProxyPrintCostDto costResult;
         private long submitTime;
         private long expiryTime;
         private Boolean fitToPage;
+
+        /**
+         * The RFC2911 IPP {@code media-source} keyword of the Job Sheet.
+         */
+        @JsonIgnore
+        private String mediaSourceJobSheet;
 
         /**
          * {@code true} when one of the job pages has landscape orientation.
@@ -443,14 +457,6 @@ public final class OutboxInfoDto extends AbstractDto {
             this.fillerPages = fillerPages;
         }
 
-        public int getSheets() {
-            return sheets;
-        }
-
-        public void setSheets(int sheets) {
-            this.sheets = sheets;
-        }
-
         public boolean isRemoveGraphics() {
             return removeGraphics;
         }
@@ -524,7 +530,7 @@ public final class OutboxInfoDto extends AbstractDto {
         }
 
         /**
-         * @return {@code true} when one of the job pages has landscape
+         * @return {@code true} when first page is perceived as landscape
          *         orientation. {@code null} when unknown.
          */
         public Boolean getLandscape() {
@@ -533,7 +539,7 @@ public final class OutboxInfoDto extends AbstractDto {
 
         /**
          * @param landscape
-         *            {@code true} when one of the job pages has landscape
+         *            {@code true} when first page is perceived as landscape
          *            orientation. {@code null} when unknown.
          */
         public void setLandscape(Boolean landscape) {
@@ -633,6 +639,26 @@ public final class OutboxInfoDto extends AbstractDto {
         public boolean isDelegatedPrint() {
             return this.accountTransactions != null;
         }
+
+        /**
+         * @return The RFC2911 IPP {@code media-source} keyword of the Job
+         *         Sheet.
+         */
+        @JsonIgnore
+        public String getMediaSourceJobSheet() {
+            return mediaSourceJobSheet;
+        }
+
+        /**
+         * @param mediaSource
+         *            The RFC2911 IPP {@code media-source} keyword of the Job
+         *            Sheet.
+         */
+        @JsonIgnore
+        public void setMediaSourceJobSheet(final String mediaSource) {
+            this.mediaSourceJobSheet = mediaSource;
+        }
+
     }
 
     /**

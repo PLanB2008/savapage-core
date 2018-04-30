@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -41,7 +41,6 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,6 +52,11 @@ import javax.persistence.EntityManager;
 import javax.persistence.EntityManagerFactory;
 import javax.persistence.EntityTransaction;
 import javax.persistence.Query;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+import javax.xml.stream.XMLStreamWriter;
 
 import org.apache.commons.beanutils.BeanUtils;
 import org.apache.commons.beanutils.ConvertUtils;
@@ -60,12 +64,6 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
-import org.dom4j.Document;
-import org.dom4j.DocumentHelper;
-import org.dom4j.Element;
-import org.dom4j.io.OutputFormat;
-import org.dom4j.io.SAXReader;
-import org.dom4j.io.XMLWriter;
 import org.hibernate.Session;
 import org.hibernate.boot.MetadataSources;
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
@@ -90,6 +88,7 @@ import org.savapage.core.jpa.AccountTrx;
 import org.savapage.core.jpa.AccountVoucher;
 import org.savapage.core.jpa.AppLog;
 import org.savapage.core.jpa.ConfigProperty;
+import org.savapage.core.jpa.CostChange;
 import org.savapage.core.jpa.Device;
 import org.savapage.core.jpa.DeviceAttr;
 import org.savapage.core.jpa.DocIn;
@@ -124,6 +123,7 @@ import org.savapage.core.jpa.schema.AccountV01;
 import org.savapage.core.jpa.schema.AccountVoucherV01;
 import org.savapage.core.jpa.schema.AppLogV01;
 import org.savapage.core.jpa.schema.ConfigPropertyV01;
+import org.savapage.core.jpa.schema.CostChangeV01;
 import org.savapage.core.jpa.schema.DeviceAttrV01;
 import org.savapage.core.jpa.schema.DeviceV01;
 import org.savapage.core.jpa.schema.DocInOutV01;
@@ -158,6 +158,7 @@ import org.savapage.core.jpa.xml.XAccountV01;
 import org.savapage.core.jpa.xml.XAccountVoucherV01;
 import org.savapage.core.jpa.xml.XAppLogV01;
 import org.savapage.core.jpa.xml.XConfigPropertyV01;
+import org.savapage.core.jpa.xml.XCostChangeV01;
 import org.savapage.core.jpa.xml.XDeviceAttrV01;
 import org.savapage.core.jpa.xml.XDeviceV01;
 import org.savapage.core.jpa.xml.XDocInOutV01;
@@ -295,6 +296,9 @@ public final class DbTools implements ServiceEntryPoint {
 
             // since V01.00
             AccountVoucherV01.class,
+
+            // since V01.07
+            CostChangeV01.class,
 
             // since V01.00
             AccountTrxV01.class,
@@ -443,6 +447,9 @@ public final class DbTools implements ServiceEntryPoint {
 
             // since V01.00
             XAccountVoucherV01.class,
+            // since V01.07
+            XCostChangeV01.class,
+
             // since V01.00
             XAccountTrxV01.class,
 
@@ -523,6 +530,8 @@ public final class DbTools implements ServiceEntryPoint {
             AccountTrx.TABLE_NAME,
             // since V01.00
             AccountVoucher.TABLE_NAME,
+            // since V01.07
+            CostChange.TABLE_NAME,
             // since V01.00
             Device.TABLE_NAME,
             // since V01.00
@@ -899,6 +908,24 @@ public final class DbTools implements ServiceEntryPoint {
                         ConfigManager.getServerHome()) + ";create=true";
             } else {
                 url = jdbcUrl;
+
+                final String jdbcUser;
+
+                // Mantis #879
+                final boolean jdbcUserFromConfigManager = true;
+
+                if (jdbcUserFromConfigManager) {
+                    jdbcUser = ConfigManager.getPostgreSQLUser();
+                } else {
+                    // Mantis #879: the EMF returns value "****", why?
+                    jdbcUser = theEmf.getProperties()
+                            .get(DbConfig.JPA_JDBC_USER).toString();
+                }
+
+                settingsMap.put(Environment.USER, jdbcUser);
+
+                settingsMap.put(Environment.PASS, theEmf.getProperties()
+                        .get(DbConfig.JPA_JDBC_PASSWORD).toString());
             }
 
             settingsMap.put(Environment.URL, url);
@@ -1142,11 +1169,11 @@ public final class DbTools implements ServiceEntryPoint {
             exportFile = fileExport.getAbsolutePath();
         }
 
-        XMLWriter writer = null;
+        XMLStreamWriter writer = null;
 
         try {
 
-            SimpleDateFormat dateFormat = new SimpleDateFormat();
+            final SimpleDateFormat dateFormat = new SimpleDateFormat();
             dateFormat.applyPattern("yyyy-MM-dd'T'HH-mm-ss");
 
             /*
@@ -1161,32 +1188,34 @@ public final class DbTools implements ServiceEntryPoint {
                     FilenameUtils.getBaseName(exportFile) + ".xml");
             zout.putNextEntry(ze);
 
-            writer = new XMLWriter(zout, OutputFormat.createPrettyPrint());
+            final XMLOutputFactory factory = XMLOutputFactory.newInstance();
+
+            writer = factory.createXMLStreamWriter(zout, "UTF-8");
 
             /*
              * XML document
              */
-            Document document = DocumentHelper.createDocument();
+            writer.writeStartDocument("UTF-8", "1.0");
 
             /*
              * Root element
              */
-            Element rootElement = document.addElement("data");
+            writer.writeStartElement("data");
 
             dateFormat.applyPattern("yyyy-MM-dd'T'HH:mm:ss");
             final String exportTime = dateFormat.format(dateExport).toString();
 
-            rootElement.addAttribute(XML_ATTR_APP_VERSION_MAJOR,
+            writer.writeAttribute(XML_ATTR_APP_VERSION_MAJOR,
                     VersionInfo.VERSION_A_MAJOR);
-            rootElement.addAttribute(XML_ATTR_APP_VERSION_MINOR,
+            writer.writeAttribute(XML_ATTR_APP_VERSION_MINOR,
                     VersionInfo.VERSION_B_MINOR);
-            rootElement.addAttribute(XML_ATTR_APP_VERSION_REVISION,
+            writer.writeAttribute(XML_ATTR_APP_VERSION_REVISION,
                     VersionInfo.VERSION_C_REVISION);
-            rootElement.addAttribute(XML_ATTR_APP_VERSION_BUILD,
-                    VersionInfo.VERSION_D_BUILD);
-            rootElement.addAttribute(XML_ATTR_APP_SCHEMA_VERSION,
+            writer.writeAttribute(XML_ATTR_APP_VERSION_BUILD,
+                    VersionInfo.VERSION_E_BUILD);
+            writer.writeAttribute(XML_ATTR_APP_SCHEMA_VERSION,
                     VersionInfo.DB_SCHEMA_VERSION_MAJOR);
-            rootElement.addAttribute(XML_ATTR_APP_SCHEMA_VERSION_MINOR,
+            writer.writeAttribute(XML_ATTR_APP_SCHEMA_VERSION_MINOR,
                     VersionInfo.DB_SCHEMA_VERSION_MINOR);
 
             /*
@@ -1196,22 +1225,22 @@ public final class DbTools implements ServiceEntryPoint {
              * We need the schema version from the database, because may be this
              * is a backup-before-upgrade.
              */
-            rootElement.addAttribute(XML_ATTR_SCHEMA_VERSION,
+            writer.writeAttribute(XML_ATTR_SCHEMA_VERSION,
                     getDbSchemaVersion());
 
-            rootElement.addAttribute(XML_ATTR_EXPORT_DATETIME, exportTime);
+            writer.writeAttribute(XML_ATTR_EXPORT_DATETIME, exportTime);
 
             //
             final DbVersionInfo dbVersionInfo = cm.getDbVersionInfo();
 
-            rootElement.addAttribute(XML_ATTR_DB_PRODUCT_NAME,
+            writer.writeAttribute(XML_ATTR_DB_PRODUCT_NAME,
                     dbVersionInfo.getProdName());
-            rootElement.addAttribute(XML_ATTR_DB_PRODUCT_VERSION,
+            writer.writeAttribute(XML_ATTR_DB_PRODUCT_VERSION,
                     dbVersionInfo.getProdVersion());
 
-            rootElement.addAttribute(XML_ATTR_DB_VERSION_MAJOR,
+            writer.writeAttribute(XML_ATTR_DB_VERSION_MAJOR,
                     String.valueOf(dbVersionInfo.getMajorVersion()));
-            rootElement.addAttribute(XML_ATTR_DB_VERSION_MINOR,
+            writer.writeAttribute(XML_ATTR_DB_VERSION_MINOR,
                     String.valueOf(dbVersionInfo.getMinorVersion()));
 
             /*
@@ -1222,18 +1251,32 @@ public final class DbTools implements ServiceEntryPoint {
              */
             for (Class<?> objClass : getSchemaEntitiesForXml(
                     getDbSchemaVersion())) {
-                exportDbTable(em, queryMaxResults, rootElement, objClass);
+                exportDbTable(em, queryMaxResults, writer, objClass);
             }
 
-            writer.write(document);
+            writer.writeEndElement(); // </data>
+            writer.writeEndDocument();
 
+            writer.flush();
+            writer.close();
+
+            zout.closeEntry();
+            zout.flush();
+            zout.close();
+
+            writer = null;
+
+        } catch (XMLStreamException e) {
+            throw new IOException(e.getMessage(), e);
         } finally {
-
             if (writer != null) {
-                writer.close();
+                try {
+                    writer.close();
+                } catch (XMLStreamException e) {
+                    LOGGER.error("Close failed: " + e.getMessage());
+                }
             }
         }
-
         return new File(exportFile);
     }
 
@@ -1284,13 +1327,13 @@ public final class DbTools implements ServiceEntryPoint {
      *            The JPA EntityManager.
      * @param queryMaxResults
      *            The maximum number of rows in each query result set.
-     * @param rootElement
-     *            The XML root element.
+     * @param writer
+     *            The {@link XMLStreamWriter}.
      * @param objClass
      *            The class of the JPA entity to export.
      */
     private static void exportDbTable(final EntityManager em,
-            final int queryMaxResults, final Element rootElement,
+            final int queryMaxResults, final XMLStreamWriter writer,
             final Class<?> objClass) {
 
         final SimpleDateFormat xmlDateFormat =
@@ -1305,9 +1348,8 @@ public final class DbTools implements ServiceEntryPoint {
             final BeanInfo binfo =
                     java.beans.Introspector.getBeanInfo(objClass);
 
-            final Element entityElement = rootElement.addElement("entity");
-
-            entityElement.addAttribute("name", entityClassNameSimple);
+            writer.writeStartElement("entity");
+            writer.writeAttribute("name", entityClassNameSimple);
 
             if (LOGGER.isTraceEnabled()) {
                 LOGGER.trace("Creating export query for ["
@@ -1349,17 +1391,13 @@ public final class DbTools implements ServiceEntryPoint {
                  */
                 for (final XEntityVersion obj : list) {
 
-                    final Element rowElement =
-                            entityElement.addElement(obj.xmlName());
+                    writer.writeStartElement(obj.xmlName());
 
                     for (final PropertyDescriptor descr : binfo
                             .getPropertyDescriptors()) {
 
                         final String propName = descr.getName();
 
-                        /*
-                         *
-                         */
                         if (propName.equals("class")) {
                             continue;
                         }
@@ -1384,7 +1422,7 @@ public final class DbTools implements ServiceEntryPoint {
 
                             boolean isSimpleType = false;
 
-                            for (Class<?> cls : SIMPLE_JPA_TYPES) {
+                            for (final Class<?> cls : SIMPLE_JPA_TYPES) {
                                 if (propClass.equals(cls)) {
                                     isSimpleType = true;
                                     break;
@@ -1400,19 +1438,25 @@ public final class DbTools implements ServiceEntryPoint {
                         }
 
                         if (text != null) {
-                            final Element propElement =
-                                    rowElement.addElement(propName);
-                            propElement.setText(text);
+                            writer.writeStartElement(propName);
+                            writer.writeCharacters(text);
+                            writer.writeEndElement();
                         }
                     }
+                    writer.writeEndElement(); // </>
                 }
+
+                writer.flush(); // !!
+
                 resultListSizeWlk = list.size();
                 startPositionWlk += resultListSizeWlk;
             }
+
+            writer.writeEndElement(); // </entity>
+
         } catch (Exception e) {
             throw new SpException(e);
         }
-
     }
 
     /**
@@ -1443,8 +1487,6 @@ public final class DbTools implements ServiceEntryPoint {
      *            The exported XML file to import.
      * @param listener
      *            The {@link DbProcessListener}.
-     * @param actor
-     *            The actor.
      */
     public static void importDb(final File exportedFile,
             final DbProcessListener listener) {
@@ -1497,30 +1539,44 @@ public final class DbTools implements ServiceEntryPoint {
         DaoBatchCommitter batchCommitter = null;
 
         try {
-
             fin = new FileInputStream(exportedFile);
             zin = new ZipInputStream(fin);
 
             final ZipEntry ze = zin.getNextEntry();
 
             if (ze == null) {
-                /*
-                 * Empty zip file
-                 */
+                // Empty zip file
                 zin.close();
                 return;
             }
 
-            final SAXReader reader = new SAXReader();
-            final Document document = reader.read(zin);
+            final XMLInputFactory factory = XMLInputFactory.newInstance();
+            final XMLStreamReader reader = factory.createXMLStreamReader(zin);
+
+            if (reader.getEventType() != XMLStreamReader.START_DOCUMENT) {
+                throw new IllegalStateException("No XML Document.");
+            }
+
+            if (!reader.hasNext()) {
+                throw new IllegalStateException("XML document is empty.");
+            }
 
             /*
-             * Root
+             * Read root element, and schema version.
              */
-            final Element rootElement = document.getRootElement();
+            int readerPosition = reader.next();
+
+            if (readerPosition != XMLStreamReader.START_ELEMENT) {
+                throw new IllegalStateException("XML document is empty.");
+            }
 
             final String xmlSchemaVersion =
-                    rootElement.attributeValue(XML_ATTR_SCHEMA_VERSION);
+                    reader.getAttributeValue("", XML_ATTR_SCHEMA_VERSION);
+
+            if (StringUtils.isBlank(xmlSchemaVersion)) {
+                throw new IllegalStateException(
+                        "Unknown database schema version.");
+            }
 
             /*
              * IMPORTANT: close the context, i.e. the EntityManager, before
@@ -1534,9 +1590,6 @@ public final class DbTools implements ServiceEntryPoint {
              */
             initDb(xmlSchemaVersion, listener, false);
 
-            /**
-             *
-             */
             listener.onLogEvent("Importing ...");
 
             batchCommitter = ServiceContext.getDaoContext()
@@ -1545,57 +1598,22 @@ public final class DbTools implements ServiceEntryPoint {
             batchCommitter.open();
 
             /*
-             * Iterate the entities.
+             * Read entities.
              */
-            @SuppressWarnings("unchecked")
-            final Iterator<Element> iterEntity = rootElement.elementIterator();
+            readerPosition = reader.next();
 
-            while (iterEntity.hasNext()) {
-
-                final Element elementEntity = iterEntity.next();
-
-                final String entityClassName =
-                        elementEntity.attributeValue("name");
-
-                final Class<?> entityClass =
-                        getEntityClassFromXmlAttr(entityClassName);
-
-                /*
-                 * Iterate the entity rows
-                 */
-                @SuppressWarnings("unchecked")
-                Iterator<Element> iterRow = elementEntity.elementIterator();
-
-                int count = 0;
-
-                while (iterRow.hasNext()) {
-
-                    importDbRowFromXml(iterRow.next(), entityClass);
-
-                    batchCommitter.increment();
-                    count++;
-                }
-
+            while (readerPosition == XMLStreamReader.START_ELEMENT) {
+                readerPosition =
+                        importDbEntityFromXml(reader, batchCommitter, listener);
                 batchCommitter.commit();
-
-                if (count > 0) {
-
-                    final String msg = String.format("%20s : %d",
-                            ((XEntityVersion) entityClass.newInstance())
-                                    .xmlName(),
-                            count);
-
-                    listener.onLogEvent(msg);
-                }
-
             }
 
-        } catch (Exception e) {
+            reader.close();
 
+        } catch (Exception e) {
             if (batchCommitter != null) {
                 batchCommitter.rollback();
             }
-
             throw new SpException(e);
 
         } finally {
@@ -1636,20 +1654,132 @@ public final class DbTools implements ServiceEntryPoint {
 
             try {
                 daoContext.beginTransaction();
-
                 cm.saveDbConfigKey(Key.COMMUNITY_VISITOR_START_DATE,
                         savedVisitorStartDate, actor);
-
                 daoContext.commit();
-
             } finally {
                 daoContext.rollback();
             }
+        }
+        listener.onLogEvent("Import finished.");
+    }
 
+    /**
+     * Imports the XML data of {@link XEntityVersion} into the current database.
+     *
+     * @param reader
+     *            The {@link XMLStreamReader}.
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
+     * @param listener
+     *            The {@link DbProcessListener}.
+     * @return The current {@link XMLStreamReader#getEventType()} of the reader.
+     * @throws Exception
+     *             When an error occurs.
+     */
+    private static int importDbEntityFromXml(final XMLStreamReader reader,
+            final DaoBatchCommitter batchCommitter,
+            final DbProcessListener listener) throws Exception {
+
+        final String entityClassName = reader.getAttributeValue("", "name");
+        final Class<?> entityClass = getEntityClassFromXmlAttr(entityClassName);
+
+        int count = 0;
+
+        int readerPosition = reader.next();
+
+        while (readerPosition == XMLStreamReader.START_ELEMENT) {
+            readerPosition = importDbEntityRowFromXml(reader, entityClass);
+            count++;
+            batchCommitter.increment();
         }
 
-        listener.onLogEvent("Import finished.");
+        if (count > 0) {
+            listener.onLogEvent(String.format("%20s : %d",
+                    ((XEntityVersion) entityClass.newInstance()).xmlName(),
+                    count));
+        }
 
+        return reader.next();
+    }
+
+    /**
+     * Imports the XML data of an {@link XEntityVersion} row into the current
+     * database.
+     *
+     * @param reader
+     *            The {@link XMLStreamReader}.
+     * @param entityClass
+     *            The class of type {@link XEntityVersion}.
+     * @return The current {@link XMLStreamReader#getEventType()} of the reader.
+     * @throws Exception
+     *             When an error occurs.
+     */
+    private static int importDbEntityRowFromXml(final XMLStreamReader reader,
+            final Class<?> entityClass) throws Exception {
+
+        final Map<String, String> properties = new HashMap<String, String>();
+        final StringBuilder value = new StringBuilder();
+
+        int readerPosition = reader.next();
+
+        while (readerPosition == XMLStreamReader.START_ELEMENT) {
+
+            final String propName = reader.getLocalName();
+
+            value.setLength(0);
+            readerPosition = importDbEntityRowColumnFromXml(reader, value);
+
+            final String propText = value.toString();
+
+            final PropertyDescriptor desc =
+                    new PropertyDescriptor(propName, entityClass);
+
+            final Class<?> propClass = desc.getPropertyType();
+
+            for (final Class<?> clsWlk : SIMPLE_JPA_TYPES) {
+                if (propClass.equals(clsWlk)) {
+                    properties.put(propName, propText);
+                    break;
+                }
+            }
+        }
+
+        final EntityManager em = DaoContextImpl.peekEntityManager();
+        final Entity objEntity = (Entity) entityClass.newInstance();
+
+        if (!properties.isEmpty()) {
+            BeanUtils.populate(objEntity, properties);
+        }
+        em.persist(objEntity);
+
+        return reader.next();
+    }
+
+    /**
+     * Imports (appends) the characters of the current XML element to the
+     * "result" {@link StringBuilder}.
+     *
+     * @param reader
+     *            The {@link XMLStreamReader}.
+     * @param result
+     *            {@link StringBuilder} to append the characters to.
+     * @return The current {@link XMLStreamReader#getEventType()} of the reader.
+     * @throws XMLStreamException
+     *             When XML stream error.
+     */
+    private static int importDbEntityRowColumnFromXml(
+            final XMLStreamReader reader, final StringBuilder result)
+            throws XMLStreamException {
+
+        int readerPosition = reader.next();
+
+        while (readerPosition == XMLStreamReader.CHARACTERS) {
+            result.append(reader.getText());
+            readerPosition = reader.next();
+        }
+
+        return reader.next();
     }
 
     /**
@@ -1685,60 +1815,6 @@ public final class DbTools implements ServiceEntryPoint {
         }
 
         return Class.forName(fullClassName);
-    }
-
-    /**
-     * Imports an XML element representing a database row.
-     *
-     * @param elementRow
-     *            The XML element.
-     * @param entityClass
-     *            The Entity class.
-     * @throws Exception
-     */
-    private static void importDbRowFromXml(final Element elementRow,
-            final Class<?> entityClass) throws Exception {
-
-        final EntityManager em = DaoContextImpl.peekEntityManager();
-
-        final Entity objEntity = (Entity) entityClass.newInstance();
-
-        /*
-         * Iterate the row columns and populate the bean.
-         */
-        @SuppressWarnings("unchecked")
-        final Iterator<Element> iterProp = elementRow.elementIterator();
-        final Map<String, String> properties = new HashMap<String, String>();
-
-        while (iterProp.hasNext()) {
-
-            final Element wlk = iterProp.next();
-            final String propName = wlk.getName();
-            final String propText = wlk.getText();
-
-            final PropertyDescriptor desc =
-                    new PropertyDescriptor(propName, entityClass);
-
-            final Class<?> propClass = desc.getPropertyType();
-
-            // boolean isSimpleType = false;
-
-            for (final Class<?> clsWlk : SIMPLE_JPA_TYPES) {
-
-                if (propClass.equals(clsWlk)) {
-                    properties.put(propName, propText);
-                    // isSimpleType = true;
-                    break;
-                }
-            }
-
-        }
-
-        if (!properties.isEmpty()) {
-            BeanUtils.populate(objEntity, properties);
-        }
-
-        em.persist(objEntity);
     }
 
     /**

@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,14 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.dao.impl;
+
+import java.util.List;
 
 import javax.persistence.NoResultException;
 import javax.persistence.TypedQuery;
@@ -36,11 +38,16 @@ import org.savapage.core.jpa.UserAccount;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class UserAccountDaoImpl extends GenericDaoImpl<UserAccount>
         implements UserAccountDao {
+
+    @Override
+    protected String getCountQuery() {
+        return "SELECT COUNT(T.id) FROM UserAccount T";
+    }
 
     @Override
     public UserAccount findByUserId(final Long id,
@@ -162,6 +169,33 @@ public final class UserAccountDaoImpl extends GenericDaoImpl<UserAccount>
         }
 
         return userAccount;
+    }
+
+    @Override
+    public List<UserAccount> findByUserId(final Long id) {
+
+        /*
+         * select s from UserAccount s where s.user.id=:id
+         */
+        final CriteriaBuilder criteriaBuilder =
+                getEntityManager().getCriteriaBuilder();
+
+        final CriteriaQuery<UserAccount> criteriaQuery =
+                criteriaBuilder.createQuery(UserAccount.class);
+
+        final Root<UserAccount> from = criteriaQuery.from(UserAccount.class);
+
+        final Path<User> pathUser = from.join("user").get("id");
+
+        final Predicate predicate = criteriaBuilder.equal(pathUser, id);
+        criteriaQuery.where(predicate);
+
+        final CriteriaQuery<UserAccount> select = criteriaQuery.select(from);
+
+        final TypedQuery<UserAccount> typedQuery =
+                getEntityManager().createQuery(select);
+
+        return typedQuery.getResultList();
     }
 
 }

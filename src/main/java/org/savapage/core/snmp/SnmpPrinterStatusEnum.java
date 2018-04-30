@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -25,8 +25,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
+ * See <a href="http://oid-info.com/get/1.3.6.1.2.1.25.3.5.1.1">OID</a>.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public enum SnmpPrinterStatusEnum {
@@ -63,19 +64,19 @@ public enum SnmpPrinterStatusEnum {
     private final String uiText;
 
     /**
-   *
-   */
+    *
+    */
     private static class Lookup {
 
         /**
-       *
-       */
+        *
+        */
         private final Map<Integer, SnmpPrinterStatusEnum> enumLookup =
                 new HashMap<Integer, SnmpPrinterStatusEnum>();
 
         /**
-       *
-       */
+        *
+        */
         public Lookup() {
             for (SnmpPrinterStatusEnum value : SnmpPrinterStatusEnum.values()) {
                 enumLookup.put(value.value, value);

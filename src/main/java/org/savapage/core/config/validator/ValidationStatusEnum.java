@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -32,49 +32,34 @@ public enum ValidationStatusEnum {
      */
     OK,
 
-    /**
-     * .
-     */
+    /** */
+    ERROR_ACCESS_DENIED,
+
+    /** */
     ERROR_EMPTY,
 
-    /**
-     * .
-     */
+    /** */
     ERROR_ENUM,
 
-    /**
-     * .
-     */
+    /** */
     ERROR_SYNTAX,
 
-    /**
-     * .
-     */
+    /** */
     ERROR_YN,
 
-    /**
-     * .
-     */
+    /** */
     ERROR_LOCALE,
 
-    /**
-     * .
-     */
+    /** */
     ERROR_CURRENCY,
 
-    /**
-     * .
-     */
+    /** */
     ERROR_NOT_NUMERIC,
 
-    /**
-     * .
-     */
+    /** */
     ERROR_NOT_DECIMAL,
 
-    /**
-     * .
-     */
+    /** */
     ERROR_RANGE
 
 }

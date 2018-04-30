@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -70,6 +70,20 @@ public interface ServiceFactory {
      * @return The singleton.
      */
     AccountVoucherService getAccountVoucherService();
+
+    /**
+     * Gets the {@link AtomFeedService} singleton.
+     *
+     * @return The singleton.
+     */
+    AtomFeedService getAtomFeedService();
+
+    /**
+     * Gets the {@link ConfigPropertyService} singleton.
+     *
+     * @return The singleton.
+     */
+    ConfigPropertyService getConfigPropertyService();
 
     /**
      * Gets the {@link DeviceService} singleton.
@@ -128,6 +142,13 @@ public interface ServiceFactory {
     PaperCutService getPaperCutService();
 
     /**
+     * Gets the {@link PGPPublicKeyService} singleton.
+     *
+     * @return The singleton.
+     */
+    PGPPublicKeyService getPGPPublicKeyService();
+
+    /**
      * Gets the {@link PrintDelegationService} singleton.
      *
      * @return The singleton.
@@ -182,6 +203,13 @@ public interface ServiceFactory {
      * @return The singleton.
      */
     SmartschoolProxyService getSmartSchoolProxyService();
+
+    /**
+     * Gets the {@link SnmpRetrieveService} singleton.
+     *
+     * @return The singleton.
+     */
+    SnmpRetrieveService getSnmpRetrieveService();
 
     /**
      * Gets the {@link SOfficeService} singleton.

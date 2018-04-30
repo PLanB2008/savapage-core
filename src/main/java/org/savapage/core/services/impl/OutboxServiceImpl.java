@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -42,14 +42,13 @@ import java.util.Set;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
 import org.apache.commons.lang3.time.DurationFormatUtils;
 import org.savapage.core.SpException;
-import org.savapage.core.concurrent.ReadWriteLockEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
-import org.savapage.core.dao.DaoContext;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.doc.DocContent;
@@ -63,11 +62,13 @@ import org.savapage.core.outbox.OutboxInfoDto.OutboxAccountTrxInfo;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxAccountTrxInfoSet;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
 import org.savapage.core.pdf.PdfCreateInfo;
+import org.savapage.core.pdf.PdfPageRotateHelper;
 import org.savapage.core.pdf.PdfPrintCollector;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq.Status;
 import org.savapage.core.print.proxy.ProxyPrintDocReq;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
+import org.savapage.core.services.JobTicketService;
 import org.savapage.core.services.OutboxService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.AccountTrxInfo;
@@ -319,11 +320,18 @@ public final class OutboxServiceImpl extends AbstractService
 
         final OutboxJobDto job = new OutboxJobDto();
 
-        if (createInfo != null) {
-            job.setFile(createInfo.getPdfFile().getName());
+        if (createInfo == null) {
+            // Copy job
+            job.setFillerPages(0);
+        } else {
+            // Print job
             job.setFillerPages(createInfo.getBlankFillerPages());
-            job.setSheets(calNumberOfSheets(request, createInfo));
+            job.setFile(createInfo.getPdfFile().getName());
         }
+
+        job.setSheets(PdfPrintCollector.calcNumberOfPrintedSheets(request,
+                job.getFillerPages()));
+
         job.setPrinter(request.getPrinterName());
         job.setJobName(request.getJobName());
         job.setComment(request.getComment());
@@ -336,8 +344,16 @@ public final class OutboxServiceImpl extends AbstractService
         job.setSubmitTime(submitDate.getTime());
         job.setExpiryTime(expiryDate.getTime());
         job.setFitToPage(request.getFitToPage());
-        job.setLandscape(request.getLandscape());
-        job.setPdfOrientation(request.getPdfOrientation());
+
+        if (createInfo != null && createInfo.getPdfOrientationInfo() != null) {
+            job.setPdfOrientation(createInfo.getPdfOrientationInfo());
+            job.setLandscape(PdfPageRotateHelper
+                    .isSeenAsLandscape(createInfo.getPdfOrientationInfo()));
+        } else {
+            job.setPdfOrientation(request.getPdfOrientation());
+            job.setLandscape(request.getLandscape());
+        }
+
         job.setDrm(request.isDrm());
         job.putOptionValues(request.getOptionValues());
         job.setUuidPageCount(uuidPageCount);
@@ -430,23 +446,6 @@ public final class OutboxServiceImpl extends AbstractService
     }
 
     /**
-     * Calculates the number of sheets as requested in the
-     * {@link AbstractProxyPrintReq} request.
-     *
-     * @param request
-     *            The request.
-     * @param createInfo
-     *            The {@link PdfCreateInfo} with the PDF file to be printed by
-     *            the Job Ticket.
-     * @return The number of sheets.
-     */
-    private static int calNumberOfSheets(final AbstractProxyPrintReq request,
-            final PdfCreateInfo createInfo) {
-        return PdfPrintCollector.calcNumberOfPrintedSheets(request,
-                createInfo.getBlankFillerPages());
-    }
-
-    /**
      * Creates a unique outbox PDF file path.
      *
      * @param userId
@@ -485,6 +484,16 @@ public final class OutboxServiceImpl extends AbstractService
         }
 
         return jobs;
+    }
+
+    @Override
+    public OutboxJobDto getOutboxJob(final String userId,
+            final String pdfFilename) {
+        final OutboxInfoDto outboxInfo = readOutboxInfo(userId);
+        if (outboxInfo == null || outboxInfo.getJobs() == null) {
+            return null;
+        }
+        return outboxInfo.getJobs().get(pdfFilename);
     }
 
     @Override
@@ -826,13 +835,16 @@ public final class OutboxServiceImpl extends AbstractService
                 .getTransactions()) {
 
             /*
-             * INVARIANT: Account MUST be active?
+             * INVARIANT: Account MUST be present.
              */
             final Account account =
                     accountDAO().findById(sourceTrxInfo.getAccountId());
 
-            if (account.getDeleted()) {
-                // TODO
+            if (account == null) {
+                throw new IllegalStateException(String.format(
+                        "Account [%d] [%s] not found.",
+                        sourceTrxInfo.getAccountId(), StringUtils
+                                .defaultString(sourceTrxInfo.getExtDetails())));
             }
 
             //
@@ -898,8 +910,11 @@ public final class OutboxServiceImpl extends AbstractService
         final OutboxInfoDto outboxInfo =
                 pruneOutboxInfo(user.getUserId(), expiryRef);
 
-        for (final OutboxJobDto dto : jobTicketService()
-                .getTickets(user.getId())) {
+        final JobTicketService.JobTicketFilter filter =
+                new JobTicketService.JobTicketFilter();
+        filter.setUserId(user.getId());
+
+        for (final OutboxJobDto dto : jobTicketService().getTickets(filter)) {
             outboxInfo.addJob(dto.getFile(), dto);
         }
 
@@ -983,33 +998,14 @@ public final class OutboxServiceImpl extends AbstractService
             statusNew = ExternalSupplierStatusEnum.PENDING_COMPLETE;
         }
 
+        docLogService().updateExternalStatus(docLog, statusNew);
+
         if (LOGGER.isTraceEnabled()) {
             LOGGER.trace(String.format(
                     "DocLog from External Supplier [%s] Account [%s] "
                             + "ID [%s]: changed external status [%s] to [%s]",
                     supplier.toString(), accountToFind, supplierId,
                     statusCurrent.toString(), statusNew.toString()));
-        }
-
-        final DaoContext daoCtx = ServiceContext.getDaoContext();
-        final boolean adhocTransaction = !daoCtx.isTransactionActive();
-
-        if (adhocTransaction) {
-            ReadWriteLockEnum.DATABASE_READONLY.setReadLock(true);
-            daoCtx.beginTransaction();
-        }
-        try {
-            docLog.setExternalStatus(statusNew.toString());
-            docLogDAO().update(docLog);
-            if (adhocTransaction) {
-                daoCtx.commit();
-            }
-
-        } finally {
-            if (adhocTransaction) {
-                daoCtx.rollback();
-                ReadWriteLockEnum.DATABASE_READONLY.setReadLock(false);
-            }
         }
     }
 

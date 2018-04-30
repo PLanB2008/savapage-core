@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part+of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -25,6 +25,8 @@ import org.savapage.core.services.AccessControlService;
 import org.savapage.core.services.AccountVoucherService;
 import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.AppLogService;
+import org.savapage.core.services.AtomFeedService;
+import org.savapage.core.services.ConfigPropertyService;
 import org.savapage.core.services.DeviceService;
 import org.savapage.core.services.DocLogService;
 import org.savapage.core.services.EcoPrintPdfTaskService;
@@ -32,6 +34,7 @@ import org.savapage.core.services.EmailService;
 import org.savapage.core.services.InboxService;
 import org.savapage.core.services.JobTicketService;
 import org.savapage.core.services.OutboxService;
+import org.savapage.core.services.PGPPublicKeyService;
 import org.savapage.core.services.PrintDelegationService;
 import org.savapage.core.services.PrinterGroupService;
 import org.savapage.core.services.PrinterService;
@@ -40,6 +43,7 @@ import org.savapage.core.services.QueueService;
 import org.savapage.core.services.RfIdReaderService;
 import org.savapage.core.services.SOfficeService;
 import org.savapage.core.services.ServiceFactory;
+import org.savapage.core.services.SnmpRetrieveService;
 import org.savapage.core.services.StatefulService;
 import org.savapage.core.services.UserGroupService;
 import org.savapage.core.services.UserService;
@@ -85,6 +89,15 @@ public final class ServiceFactoryImpl implements ServiceFactory {
 
     private static class AppLogServiceHolder {
         public static final AppLogService SERVICE = new AppLogServiceImpl();
+    }
+
+    private static class AtomFeedServiceHolder {
+        public static final AtomFeedService SERVICE = new AtomFeedServiceImpl();
+    }
+
+    private static class ConfigPropertyServiceHolder {
+        public static final ConfigPropertyService SERVICE =
+                new ConfigPropertyServiceImpl();
     }
 
     private static class DeviceServiceHolder {
@@ -139,6 +152,11 @@ public final class ServiceFactoryImpl implements ServiceFactory {
                 new RfIdReaderServiceImpl();
     }
 
+    private static class PGPPublicKeyServiceHolder {
+        public static final PGPPublicKeyServiceImpl SERVICE =
+                new PGPPublicKeyServiceImpl();
+    }
+
     private static class PrintDelegationServiceHolder {
         public static final PrintDelegationService SERVICE =
                 new PrintDelegationServiceImpl();
@@ -173,10 +191,20 @@ public final class ServiceFactoryImpl implements ServiceFactory {
                 new SmartschoolProxyServiceImpl();
     }
 
+    private static class SnmpRetrieveServiceHolder {
+        public static final SnmpRetrieveService SERVICE =
+                new SnmpRetrieveServiceImpl();
+    }
+
     private final static StatefulService statefullServices[] =
-            new StatefulService[] { EcoPrintPdfTaskServiceHolder.SERVICE,
-                    JobTicketServiceHolder.SERVICE,
-                    SOfficeServiceHolder.SERVICE };
+            new StatefulService[] { //
+                    AtomFeedServiceHolder.SERVICE, //
+                    EcoPrintPdfTaskServiceHolder.SERVICE, //
+                    JobTicketServiceHolder.SERVICE, //
+                    SOfficeServiceHolder.SERVICE, //
+                    EmailServiceHolder.SERVICE, //
+                    SnmpRetrieveServiceHolder.SERVICE //
+            };
 
     @Override
     public AccessControlService getAccessControlService() {
@@ -194,8 +222,18 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     }
 
     @Override
+    public ConfigPropertyService getConfigPropertyService() {
+        return ConfigPropertyServiceHolder.SERVICE;
+    }
+
+    @Override
     public AppLogService getAppLogService() {
         return AppLogServiceHolder.SERVICE;
+    }
+
+    @Override
+    public AtomFeedService getAtomFeedService() {
+        return AtomFeedServiceHolder.SERVICE;
     }
 
     @Override
@@ -254,6 +292,11 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     }
 
     @Override
+    public PGPPublicKeyService getPGPPublicKeyService() {
+        return PGPPublicKeyServiceHolder.SERVICE;
+    }
+
+    @Override
     public PrinterGroupService getPrinterGroupService() {
         return PrinterGroupServiceHolder.SERVICE;
     }
@@ -286,6 +329,11 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     @Override
     public SmartschoolProxyService getSmartSchoolProxyService() {
         return SmartSchoolProxyServiceHolder.SERVICE;
+    }
+
+    @Override
+    public SnmpRetrieveService getSnmpRetrieveService() {
+        return SnmpRetrieveServiceHolder.SERVICE;
     }
 
     @Override

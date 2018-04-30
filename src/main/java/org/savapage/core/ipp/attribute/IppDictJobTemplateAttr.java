@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -277,11 +277,18 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
      */
     public static final String ATTR_OUTPUT_BIN = "output-bin";
 
-    /**
-    *
-    */
+    /** */
     public static final String ORG_SAVAPAGE_ATTR_LANDSCAPE =
             ORG_SAVAPAGE_ATTR_PFX + "landscape";
+
+    /**
+     * (Boolean) 180 degrees rotation of "Finished Page". [PWG5100.3]: "One side
+     * of a sheet in a Finished Document, i.e., one side of a sheet as perceived
+     * by a person after any cutting, folding, and/or booklet making" making.
+     * ... The lay term is 'page'."
+     */
+    public static final String ORG_SAVAPAGE_ATTR_INT_PAGE_ROTATE180 =
+            ORG_SAVAPAGE_INT_ATTR_PFX + "page-rotate180";
 
     /**
      * .
@@ -303,6 +310,18 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
             ORG_SAVAPAGE_ATTR_PFX_FINISHINGS + "ext";
 
     /**
+     * Custom SavaPage IPP Job template attribute for job-sheets.
+     */
+    public static final String ORG_SAVAPAGE_ATTR_JOB_SHEETS =
+            ORG_SAVAPAGE_ATTR_PFX + "job-sheets";
+
+    /**
+     * Custom SavaPage IPP Job template attribute for job-sheets media.
+     */
+    public static final String ORG_SAVAPAGE_ATTR_JOB_SHEETS_MEDIA =
+            ORG_SAVAPAGE_ATTR_JOB_SHEETS + "-media";
+
+    /**
      * The Job Ticket media attributes related to {@link #ATTR_MEDIA}.
      */
     public static final String[] JOBTICKET_ATTR_MEDIA =
@@ -316,10 +335,16 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
             new String[] { ATTR_MEDIA_COLOR };
 
     /**
-     * .
+     * Job Tickets attributes for set of a copy.
      */
     public static final String[] JOBTICKET_ATTR_COPY =
             new String[] { ORG_SAVAPAGE_ATTR_COVER_TYPE };
+
+    /**
+     * Job Tickets attributes for set of copies.
+     */
+    public static final String[] JOBTICKET_ATTR_SET = new String[] {
+            ORG_SAVAPAGE_ATTR_JOB_SHEETS, ORG_SAVAPAGE_ATTR_JOB_SHEETS_MEDIA };
 
     /**
      * .
@@ -332,7 +357,7 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
      */
     private static final String[][] JOBTICKET_ATTR_ARRAYS =
             { JOBTICKET_ATTR_MEDIA, JOBTICKET_ATTR_COPY,
-                    JOBTICKET_ATTR_FINISHINGS_EXT };
+                    JOBTICKET_ATTR_FINISHINGS_EXT, JOBTICKET_ATTR_SET };
 
     /**
      * IPP Attributes that makes a Job Ticket for settlement only: array of
@@ -441,6 +466,8 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
             ATTR_PRINT_COLOR_MODE,
             /* */
             ATTR_PRINTER_RESOLUTION,
+            /* */
+            ORG_SAVAPAGE_ATTR_INT_PAGE_ROTATE180,
             /* */
             ATTR_NUMBER_UP };
 
@@ -1101,6 +1128,18 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
             }
         }
         return false;
+    }
+
+    /**
+     * Checks if an IPP option holds {@code media} choices.
+     *
+     * @param keyword
+     *            The IPP option keyword.
+     * @return {@code true} if IPP option holds {@code media} choices.
+     */
+    public static boolean isMediaAttr(final String keyword) {
+        return keyword.equals(ATTR_MEDIA)
+                || keyword.equals(ORG_SAVAPAGE_ATTR_JOB_SHEETS_MEDIA);
     }
 
     /**

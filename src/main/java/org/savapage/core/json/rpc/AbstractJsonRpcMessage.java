@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -31,17 +31,21 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 /**
  * Common for JSON-RPC Request and Response.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-@JsonPropertyOrder({ "jsonrpc", "id" })
+@JsonPropertyOrder({ AbstractJsonRpcMessage.ATTR_JSONRPC,
+        AbstractJsonRpcMessage.ATTR_ID })
 @JsonInclude(Include.NON_NULL)
 public abstract class AbstractJsonRpcMessage extends JsonAbstractBase {
 
-    @JsonProperty("jsonrpc")
+    public static final String ATTR_JSONRPC = "jsonrpc";
+    public static final String ATTR_ID = "id";
+
+    @JsonProperty(AbstractJsonRpcMessage.ATTR_JSONRPC)
     private String jsonrpc = JsonRpcConfig.RPC_VERSION;
 
-    @JsonProperty("id")
+    @JsonProperty(AbstractJsonRpcMessage.ATTR_ID)
     private String id;
 
     public String getJsonrpc() {

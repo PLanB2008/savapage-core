@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,6 +24,7 @@ package org.savapage.core.services;
 import java.io.File;
 import java.io.IOException;
 import java.util.Date;
+import java.util.Locale;
 import java.util.UUID;
 
 import org.savapage.core.config.IConfigProp;
@@ -131,6 +132,15 @@ public interface UserService {
     String getYubiKeyPubID(User user);
 
     /**
+     * Gets the PGP Public Key ID of a User.
+     *
+     * @param user
+     *            The {@link User}.
+     * @return {@code blank} when not found.
+     */
+    String getPGPPubKeyID(User user);
+
+    /**
      * Gets the Primary email address of a User.
      *
      * @param user
@@ -184,20 +194,26 @@ public interface UserService {
      * @throws IOException
      *             When something went wrong.
      */
-    AbstractJsonRpcMethodResponse setUserProperties(final UserPropertiesDto dto)
+    AbstractJsonRpcMethodResponse setUserProperties(UserPropertiesDto dto)
             throws IOException;
 
     /**
      * Logically deletes a User.
      *
-     * @param userIdToDelete
-     *            The unique user name to delete.
+     * @param uid
+     *            The unique user ID to delete.
      * @return The JSON-RPC Return message (either a result or an error);
-     * @throws IOException
-     *             When something went wrong.
      */
-    AbstractJsonRpcMethodResponse deleteUser(final String userIdToDelete)
-            throws IOException;
+    AbstractJsonRpcMethodResponse deleteUser(String uid);
+
+    /**
+     * Erases all instances of a user ID (both active and deleted).
+     *
+     * @param uid
+     *            The user ID to erase.
+     * @return The JSON-RPC Return message (either a result or an error);
+     */
+    AbstractJsonRpcMethodResponse eraseUser(String uid);
 
     /**
      * Logically deletes a user and auto-corrects the inconsistent situation
@@ -215,8 +231,8 @@ public interface UserService {
      * @throws IOException
      *             When something went wrong.
      */
-    AbstractJsonRpcMethodResponse deleteUserAutoCorrect(
-            final String userIdToDelete) throws IOException;
+    AbstractJsonRpcMethodResponse deleteUserAutoCorrect(String userIdToDelete)
+            throws IOException;
 
     /**
      * Lists Users sorted by user name.
@@ -278,6 +294,7 @@ public interface UserService {
      * </p>
      *
      * @param publicID
+     *            Public YubiKey ID.
      * @return The User or {@code null} when not found.
      */
     User findUserByYubiKeyPubID(String publicID);
@@ -294,7 +311,7 @@ public interface UserService {
      *            The {@link UUID}.
      * @return The User or {@code null} when not found.
      */
-    User findUserByNumberUuid(final String number, final UUID uuid);
+    User findUserByNumberUuid(String number, UUID uuid);
 
     /**
      * Add/Replace the Primary Card to/of the {@link User}.
@@ -464,7 +481,7 @@ public interface UserService {
      *            The {@link UserAttrEnum} to search for.
      * @return The (un-encrypted) value string or {@code null} when not found.
      */
-    String getUserAttrValue(final User user, final UserAttrEnum attrEnum);
+    String getUserAttrValue(User user, UserAttrEnum attrEnum);
 
     /**
      * Removes an attribute from the User's list of attributes AND from the
@@ -493,7 +510,7 @@ public interface UserService {
      * @param value
      *            The value.
      */
-    void addUserAttr(User user, UserAttrEnum name, final String value);
+    void addUserAttr(User user, UserAttrEnum name, String value);
 
     /**
      * Adds the {@link UserAttrEnum#UUID} to the User's list of attributes and
@@ -655,6 +672,7 @@ public interface UserService {
      *            The {@link User}.
      * @return The {@link PdfProperties}.
      * @throws Exception
+     *             When errors.
      */
     PdfProperties getPdfProperties(User user) throws Exception;
 
@@ -672,5 +690,26 @@ public interface UserService {
      *             When JSON things go wrong.
      */
     void setPdfProperties(User user, PdfProperties objProps) throws IOException;
+
+    /**
+     * Checks if user is erased.
+     *
+     * @param user
+     *            The {@link User}.
+     * @return {@code true} when user is erased.
+     */
+    boolean isErased(User user);
+
+    /**
+     * Gets the UI string for userId. If user is erased, an anonymized name is
+     * returned.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param locale
+     *            The locale.
+     * @return The UI string.
+     */
+    String getUserIdUi(User user, Locale locale);
 
 }

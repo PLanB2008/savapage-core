@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -194,6 +194,11 @@ public class IppKeyword extends AbstractIppAttrSyntax {
     public static final String PRINT_SCALING_FILL = "fill";
 
     // ------------------------------------------------------------------------
+    // output-bin
+    // ------------------------------------------------------------------------
+    public static final String OUTPUT_BIN_AUTO = "auto";
+
+    // ------------------------------------------------------------------------
     // media-source
     // ------------------------------------------------------------------------
     public static final String MEDIA_SOURCE_AUTO = "auto";
@@ -224,6 +229,9 @@ public class IppKeyword extends AbstractIppAttrSyntax {
     public static final String NUMBER_UP_6 = "6";
     public static final String NUMBER_UP_9 = "9";
     public static final String NUMBER_UP_16 = "16";
+
+    public static final String[] ARRAY_NUMBER_UP = { NUMBER_UP_1, NUMBER_UP_2,
+            NUMBER_UP_4, NUMBER_UP_6, NUMBER_UP_9, NUMBER_UP_16 };
 
     // ------------------------------------------------------------------------
     // number-up-layout : https://www.cups.org/doc/options.html
@@ -269,6 +277,11 @@ public class IppKeyword extends AbstractIppAttrSyntax {
      */
     public static final String NUMBER_UP_LAYOUT_TBRL = "tbrl";
 
+    public static final String[] ARRAY_NUMBER_UP_LAYOUT = {
+            NUMBER_UP_LAYOUT_BTLR, NUMBER_UP_LAYOUT_BTRL, NUMBER_UP_LAYOUT_LRBT,
+            NUMBER_UP_LAYOUT_LRTB, NUMBER_UP_LAYOUT_RLBT, NUMBER_UP_LAYOUT_RLTB,
+            NUMBER_UP_LAYOUT_TBLR, NUMBER_UP_LAYOUT_TBRL };
+
     // ------------------------------------------------------------------------
     // orientation-requested : https://www.cups.org/doc/options.html
     // ------------------------------------------------------------------------
@@ -277,6 +290,12 @@ public class IppKeyword extends AbstractIppAttrSyntax {
      * {@link IppDictJobTemplateAttr#CUPS_ATTR_ORIENTATION_REQUESTED}.
      */
     public static final String ORIENTATION_REQUESTED_PORTRAIT = "3";
+
+    /**
+     * An alias for {@link #ORIENTATION_REQUESTED_PORTRAIT}.
+     */
+    public static final String ORIENTATION_REQUESTED_0_DEGREES =
+            ORIENTATION_REQUESTED_PORTRAIT;
 
     /**
      * landscape orientation (90 degrees). See
@@ -314,6 +333,20 @@ public class IppKeyword extends AbstractIppAttrSyntax {
     public static final String ORIENTATION_REQUESTED_180_DEGREES =
             ORIENTATION_REQUESTED_REVERSE_PORTRAIT;
 
+    public static final String[] ARRAY_ORIENTATION_REQUESTED =
+            { ORIENTATION_REQUESTED_LANDSCAPE, ORIENTATION_REQUESTED_PORTRAIT,
+                    ORIENTATION_REQUESTED_REVERSE_LANDSCAPE,
+                    ORIENTATION_REQUESTED_REVERSE_PORTRAIT };
+
+    // ------------------------------------------------------------------------
+    // internal
+    // ------------------------------------------------------------------------
+    public static final String ORG_SAVAPAGE_ATTR_INT_PAGE_ROTATE180_OFF =
+            IppBoolean.FALSE;
+
+    public static final String ORG_SAVAPAGE_ATTR_INT_PAGE_ROTATE180_ON =
+            IppBoolean.TRUE;
+
     // ------------------------------------------------------------------------
     // finishings
     // ------------------------------------------------------------------------
@@ -336,6 +369,15 @@ public class IppKeyword extends AbstractIppAttrSyntax {
             "glue";
     public static final String ORG_SAVAPAGE_ATTR_FINISHINGS_EXTERNAL_FOLDER =
             "folder";
+
+    // ------------------------------------------------------------------------
+    // org.savapage-job-sheets
+    // ------------------------------------------------------------------------
+    public static final String ORG_SAVAPAGE_ATTR_JOB_SHEETS_NONE = "none";
+    public static final String ORG_SAVAPAGE_ATTR_JOB_SHEETS_START =
+            "job-start-sheet";
+    public static final String ORG_SAVAPAGE_ATTR_JOB_SHEETS_END =
+            "job-end-sheet";
 
     /**
      * The generic 'non' value for all org.savapage.ext-* options.
@@ -397,4 +439,55 @@ public class IppKeyword extends AbstractIppAttrSyntax {
         writeUsAscii(ostr, value);
     }
 
+    /**
+     * Checks value of {@link IppDictJobTemplateAttr#ATTR_NUMBER_UP}.
+     *
+     * @param value
+     *            The candidate value.
+     * @return {@code true} when valid.
+     */
+    public static boolean checkNumberUp(final String value) {
+        return checkKeywordValue(ARRAY_NUMBER_UP, value);
+    }
+
+    /**
+     * Checks value of
+     * {@link IppDictJobTemplateAttr#CUPS_ATTR_ORIENTATION_REQUESTED}.
+     *
+     * @param value
+     *            The candidate value.
+     * @return {@code true} when valid.
+     */
+    public static boolean checkOrientationRequested(final String value) {
+        return checkKeywordValue(ARRAY_ORIENTATION_REQUESTED, value);
+    }
+
+    /**
+     * Checks value of
+     * {@link IppDictJobTemplateAttr#CUPS_ATTR_NUMBER_UP_LAYOUT}.
+     *
+     * @param value
+     *            The candidate value.
+     * @return {@code true} when valid.
+     */
+    public static boolean checkNumberUpLayout(final String value) {
+        return checkKeywordValue(ARRAY_NUMBER_UP_LAYOUT, value);
+    }
+
+    /**
+     * @param validValues
+     *            Array of valid values.
+     * @param value
+     *            The candidate value.
+     * @return {@code true} when valid.
+     */
+    private static boolean checkKeywordValue(final String[] validValues,
+            final String value) {
+        for (final String valueWlk : validValues) {
+            if (valueWlk.equals(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

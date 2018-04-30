@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,13 +21,17 @@
  */
 package org.savapage.core.snmp;
 
+import java.util.Locale;
+
+import org.savapage.core.util.LocaleHelper;
+
 /**
  * The name of the color of this The name of the color of this colorant using
  * standardized string names from ISO 10175 (DPA) and ISO 10180 (SPDL).
  *
  * <a href="http://tools.ietf.org/html/rfc1759.html">RFC1759</a>
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public enum SnmpPrtMarkerColorantValueEnum {
@@ -35,12 +39,12 @@ public enum SnmpPrtMarkerColorantValueEnum {
     /**
      * .
      */
-    OTHER("other"),
+    OTHER("silver"),
 
     /**
      * .
      */
-    UNKNOWN("unknown"),
+    UNKNOWN("silver"),
 
     /**
      * .
@@ -50,57 +54,67 @@ public enum SnmpPrtMarkerColorantValueEnum {
     /**
      * .
      */
-    RED("red"),
+    RED("#FD1F08"),
 
     /**
      * .
      */
-    GREEN("green"),
+    GREEN("#00A885"),
 
     /**
      * .
      */
-    BLUE("blue"),
+    BLUE("#2C82C9"),
 
     /**
      * .
      */
-    CYAN("cyan"),
+    CYAN("#00A0C6"),
 
     /**
      * .
      */
-    MAGENTA("magenta"),
+    MAGENTA("#DE0184"),
 
     /**
      * .
      */
-    YELLOW("yellow"),
+    YELLOW("#FDDF05"),
 
     /**
      * .
      */
-    BLACK("black");
+    BLACK("#0A0A0A");
 
     /**
      * .
      */
-    private final String uiText;
+    private final String htmlColor;
 
     /**
      *
-     * @param uiText
+     * @param color
+     *            The HTML color;
      */
-    private SnmpPrtMarkerColorantValueEnum(final String uiText) {
-        this.uiText = uiText;
+    SnmpPrtMarkerColorantValueEnum(final String color) {
+        this.htmlColor = color;
     }
 
     /**
      *
-     * @return The UI text.
+     * @return A "user friendly" HTML color string like "#123456".
      */
-    public String getUiText() {
-        return this.uiText;
+    public String getHtmlColor() {
+        return htmlColor;
+    }
+
+    /**
+     * @param locale
+     *            The {@link Locale}.
+     * @return The localized text.
+     */
+    public String uiText(final Locale locale) {
+        return LocaleHelper.uiText(this, locale);
     }
 
 }

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -86,13 +86,13 @@ public abstract class PaperCutPrintMonitorPattern
     /**
      * .
      */
-    private static final PaperCutService PAPERCUT_SERVICE =
+    protected static final PaperCutService PAPERCUT_SERVICE =
             ServiceContext.getServiceFactory().getPaperCutService();
 
     /**
      * .
      */
-    private static final ProxyPrintService PROXY_PRINT_SERVICE =
+    protected static final ProxyPrintService PROXY_PRINT_SERVICE =
             ServiceContext.getServiceFactory().getProxyPrintService();
 
     /**
@@ -581,7 +581,7 @@ public abstract class PaperCutPrintMonitorPattern
         /*
          * Create PaperCut transactions.
          */
-        final PaperCutAccountAdjustPattern accountAdjustPattern =
+        final PaperCutAccountAdjustPrint accountAdjustPattern =
                 new PaperCutAccountAdjustPrint(papercutServerProxy, this,
                         this.getLogger());
 
@@ -601,6 +601,12 @@ public abstract class PaperCutPrintMonitorPattern
             docLogIn.setTransactions(null);
             DOC_LOG_DAO.update(docLogIn);
         }
+
+        /*
+         * Overwrite the zero cost(original) values with the charged cost.
+         */
+        docLogOut.setCost(weightTotalCost);
+        docLogOut.setCostOriginal(weightTotalCost);
 
         DOC_LOG_DAO.update(docLogOut);
     }

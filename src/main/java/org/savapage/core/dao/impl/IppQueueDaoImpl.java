@@ -29,6 +29,7 @@ import javax.persistence.Query;
 
 import org.savapage.core.dao.IppQueueDao;
 import org.savapage.core.dao.enums.ReservedIppQueueEnum;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.jpa.IppQueue;
 
 /**
@@ -38,6 +39,11 @@ import org.savapage.core.jpa.IppQueue;
  */
 public final class IppQueueDaoImpl extends GenericDaoImpl<IppQueue>
         implements IppQueueDao {
+
+    @Override
+    protected String getCountQuery() {
+        return "SELECT COUNT(T.id) FROM IppQueue T";
+    }
 
     @Override
     public void resetTotals(final Date resetDate, final String resetBy) {
@@ -80,8 +86,7 @@ public final class IppQueueDaoImpl extends GenericDaoImpl<IppQueue>
     }
 
     @Override
-    public int pruneQueues() {
-
+    public int pruneQueues(final DaoBatchCommitter batchCommitter) {
         /*
          * NOTE: We do NOT use bulk delete with JPQL since we want the option to
          * roll back the deletions as part of a transaction, and we want to use
@@ -91,19 +96,20 @@ public final class IppQueueDaoImpl extends GenericDaoImpl<IppQueue>
          */
         int nCount = 0;
 
-        final String jpql = "SELECT Q FROM IppQueue Q WHERE Q.deleted = true "
-                + "AND Q.printsIn IS EMPTY";
+        final String jpql =
+                "SELECT Q.id FROM IppQueue Q WHERE Q.deleted = true "
+                        + "AND Q.printsIn IS EMPTY";
 
         final Query query = getEntityManager().createQuery(jpql);
 
         @SuppressWarnings("unchecked")
-        final List<IppQueue> list = query.getResultList();
+        final List<Long> list = query.getResultList();
 
-        for (final IppQueue queue : list) {
-            this.delete(queue);
+        for (final Long id : list) {
+            this.delete(this.findById(id));
             nCount++;
+            batchCommitter.increment();
         }
-
         return nCount;
     }
 

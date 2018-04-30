@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,6 +29,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import javax.print.attribute.standard.MediaSizeName;
 
@@ -36,6 +37,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.dao.enums.ACLRoleEnum;
 import org.savapage.core.dao.enums.PrintModeEnum;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dto.IppMediaCostDto;
 import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.dto.ProxyPrinterCostDto;
@@ -51,6 +53,7 @@ import org.savapage.core.ipp.client.IppConnectException;
 import org.savapage.core.ipp.client.IppNotificationRecipient;
 import org.savapage.core.ipp.helpers.IppOptionMap;
 import org.savapage.core.ipp.operation.IppStatusCode;
+import org.savapage.core.jpa.CostChange;
 import org.savapage.core.jpa.Device;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.PrintOut;
@@ -81,9 +84,11 @@ import org.savapage.core.services.helpers.InboxSelectScopeEnum;
 import org.savapage.core.services.helpers.PageScalingEnum;
 import org.savapage.core.services.helpers.PrinterAttrLookup;
 import org.savapage.core.services.helpers.ProxyPrintOutboxResult;
+import org.savapage.core.services.helpers.SnmpPrinterQueryDto;
 import org.savapage.core.services.helpers.SyncPrintJobsResult;
 import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.snmp.SnmpConnectException;
+import org.savapage.ext.papercut.PaperCutException;
 
 /**
  * Service for Proxy Printing.
@@ -179,7 +184,8 @@ public interface ProxyPrintService {
 
     /**
      *
-     * @param cupsTime The CUPS time (seconds from epoch).
+     * @param cupsTime
+     *            The CUPS time (seconds from epoch).
      * @return The CUPS date.
      */
     Date getCupsDate(Integer cupsTime);
@@ -237,6 +243,15 @@ public interface ProxyPrintService {
     JsonProxyPrinter getCachedPrinter(String printerName);
 
     /**
+     * Gets the host part of the CUPS printer device URI.
+     *
+     * @param printerName
+     *            The printer name.
+     * @return The host part of the URI, or {@code null} when inapplicable.
+     */
+    String getCachedPrinterHost(String printerName);
+
+    /**
      * Gets a copy of the JsonPrinter from the printer cache.
      * <p>
      * <b>Note</b>: a copy is returned so the caller can manipulate the
@@ -261,10 +276,12 @@ public interface ProxyPrintService {
      *            The user {@link Locale}.
      * @param printerName
      *            The printer name.
+     * @param isExtended
+     *            {@code true} if this is an extended copy.
      * @return {@code null} when the printer is no longer part of the cache.
      */
     JsonPrinterDetail getPrinterDetailUserCopy(Locale locale,
-            String printerName);
+            String printerName, boolean isExtended);
 
     /**
      * Gets a user copy of IPP option for a printer from the printer cache.
@@ -302,7 +319,7 @@ public interface ProxyPrintService {
      *            The IPP keyword.
      * @return {@code null} when printer option is not shown in UI.
      */
-    ProxyPrinterOptGroupEnum getUiOptGroup(final String keywordIpp);
+    ProxyPrinterOptGroupEnum getUiOptGroup(String keywordIpp);
 
     /**
      * Localizes the texts in all printer options.
@@ -322,8 +339,7 @@ public interface ProxyPrintService {
      * @param option
      *            The {@link JsonProxyPrinterOpt}.
      */
-    void localizePrinterOpt(final Locale locale,
-            final JsonProxyPrinterOpt option);
+    void localizePrinterOpt(Locale locale, JsonProxyPrinterOpt option);
 
     /**
      * Localizes an IPP option keyword.
@@ -479,8 +495,8 @@ public interface ProxyPrintService {
      * </p>
      * <p>
      * HOWEVER, in practice we cannot depend CUPS is up-and-running, so we opt
-     * for a defensive strategy and lazy init of the printer cache and start
-     * CUPS event subscription in {@link #updatePrinterCache()}.
+     * for a defensive strategy and lazy init the printer cache and lazy start
+     * the CUPS event subscription.
      * </p>
      *
      */
@@ -510,6 +526,10 @@ public interface ProxyPrintService {
 
     /**
      * Initializes the CUPS printer cache when it does not exist.
+     * <p>
+     * <b>Important</b>: This method performs a commit, and re-opens any
+     * transaction this was pending at the start of this method.
+     * </p>
      *
      * @throws IppConnectException
      *             When a connection error occurs.
@@ -520,6 +540,10 @@ public interface ProxyPrintService {
 
     /**
      * Initializes the CUPS printer cache (clearing any existing one).
+     * <p>
+     * <b>Important</b>: This method performs a commit, and re-opens any
+     * transaction this was pending at the start of this method.
+     * </p>
      *
      * @throws IppConnectException
      *             When a connection error occurs.
@@ -549,11 +573,14 @@ public interface ProxyPrintService {
      * creation-time. If there is no match, i.e. when creation times differs, no
      * update is done.
      *
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
      * @return The {@link SyncPrintJobsResult}.
      * @throws IppConnectException
      *             When a connection error occurs.
      */
-    SyncPrintJobsResult syncPrintJobs() throws IppConnectException;
+    SyncPrintJobsResult syncPrintJobs(DaoBatchCommitter batchCommitter)
+            throws IppConnectException;
 
     /**
      * Gets the {@link Printer} object while validating {@link User} access.
@@ -569,7 +596,7 @@ public interface ProxyPrintService {
      *             When access is denied.
      */
     Printer getValidateProxyPrinterAccess(User user, String printerName,
-            final Date refDate) throws ProxyPrintException;
+            Date refDate) throws ProxyPrintException;
 
     /**
      * Checks the printer cache and collects the default printer options, needed
@@ -611,7 +638,7 @@ public interface ProxyPrintService {
      *             When a invariant is violated.
      */
     void proxyPrintPdf(User lockedUser, ProxyPrintDocReq request,
-            final PdfCreateInfo createInfo)
+            PdfCreateInfo createInfo)
             throws IppConnectException, ProxyPrintException;
 
     /**
@@ -718,6 +745,28 @@ public interface ProxyPrintService {
             throws IOException, IppConnectException;
 
     /**
+     * Re-sends PDF job file (and Job Sheet PDF) to CUPS printer, and that is
+     * it. No database action is executed.
+     *
+     * @param request
+     *            The {@link AbstractProxyPrintReq}.
+     * @param job
+     *            The {@link OutboxJobDto}.
+     * @param jsonPrinter
+     *            The printer object.
+     * @param user
+     *            The requesting user.
+     * @param createInfo
+     *            The {@link PdfCreateInfo} with the file to print.
+     * @return The print job data.
+     * @throws IppConnectException
+     *             When IPP connection error.
+     */
+    JsonProxyPrintJob proxyPrintJobTicketResend(AbstractProxyPrintReq request,
+            OutboxJobDto job, JsonProxyPrinter jsonPrinter, String user,
+            PdfCreateInfo createInfo) throws IppConnectException;
+
+    /**
      * Settles a Job Ticket without printing it.
      *
      * @param operator
@@ -740,6 +789,17 @@ public interface ProxyPrintService {
     int settleJobTicket(String operator, User lockedUser, OutboxJobDto job,
             File pdfFileNotToPrint, ThirdPartyEnum extPrinterManager)
             throws IOException;
+
+    /**
+     * Refunds a proxy print in {@link ThirdPartyEnum#PAPERCUT}.
+     *
+     * @param costChange
+     *            The {@link CostChange} of the refund.
+     * @throws PaperCutException
+     *             When logical PaperCut error.
+     */
+    void refundProxyPrintPaperCut(CostChange costChange)
+            throws PaperCutException;
 
     /**
      * Sends Print Job to the CUPS Printer, and updates {@link User},
@@ -883,7 +943,7 @@ public interface ProxyPrintService {
      *            The unique name of the printer.
      * @return {@code true} if manual media-source is supported.
      */
-    boolean hasMediaSourceManual(final String printerName);
+    boolean hasMediaSourceManual(String printerName);
 
     /**
      * Checks if printer supports 'auto' media-source.
@@ -892,7 +952,7 @@ public interface ProxyPrintService {
      *            The unique name of the printer.
      * @return {@code true} if 'auto' media-source is supported.
      */
-    boolean hasMediaSourceAuto(final String printerName);
+    boolean hasMediaSourceAuto(String printerName);
 
     /**
      * Checks if the CUPS printer details have been successfully retrieved.
@@ -963,6 +1023,22 @@ public interface ProxyPrintService {
     int clearInbox(User lockedUser, ProxyPrintInboxReq request);
 
     /**
+     * Gets list of SNMP printer queries.
+     *
+     * @return The list of queries (can be empty).
+     */
+    List<SnmpPrinterQueryDto> getSnmpQueries();
+
+    /**
+     * Gets SNMP query for a particular printer.
+     *
+     * @param printerID
+     *            The primary database key of a {@link Printer}.
+     * @return The query, or {@code null} when not found or applicable.
+     */
+    SnmpPrinterQueryDto getSnmpQuery(Long printerID);
+
+    /**
      * Reads SNMP printer info.
      *
      * @param params
@@ -999,6 +1075,36 @@ public interface ProxyPrintService {
      */
     ProxyPrintDocReq createProxyPrintDocReq(User user, OutboxJobDto job,
             PrintModeEnum printMode);
+
+    /**
+     * Validates IPP choices according to generic and proxy printer specific
+     * constraints.
+     *
+     * @param proxyPrinter
+     *            The proxy printer holding the custom rules.
+     * @param ippOptions
+     *            The IPP attribute key/choice pairs.
+     * @return The {@link Set} with conflicting IPP option keywords. When set is
+     *         empty all choices are valid.
+     */
+    Set<String> validateContraints(JsonProxyPrinter proxyPrinter,
+            Map<String, String> ippOptions);
+
+    /**
+     * Validates IPP choices according to generic and proxy printer specific
+     * constraints. When valid, {@code null} is returned. Otherwise, a localized
+     * message is returned.
+     *
+     * @param proxyPrinter
+     *            The proxy printer holding the custom rules.
+     * @param ippOptions
+     *            The IPP attribute key/choice pairs.
+     * @param locale
+     *            The locale for the UI message.
+     * @return The message string, or {@code null} when choices are valid.
+     */
+    String validateContraintsMsg(JsonProxyPrinter proxyPrinter,
+            Map<String, String> ippOptions, Locale locale);
 
     /**
      * Validates IPP choices according to the custom cost rules of the proxy

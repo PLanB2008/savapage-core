@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -59,6 +59,7 @@ import org.savapage.core.LetterheadNotFoundException;
 import org.savapage.core.PerformanceLogger;
 import org.savapage.core.PostScriptDrmException;
 import org.savapage.core.SpException;
+import org.savapage.core.SpInfo;
 import org.savapage.core.circuitbreaker.CircuitStateEnum;
 import org.savapage.core.cometd.AdminPublisher;
 import org.savapage.core.cometd.PubLevelEnum;
@@ -77,6 +78,7 @@ import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.dao.enums.PrintModeEnum;
 import org.savapage.core.dao.enums.PrinterAttrEnum;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dao.helpers.ProxyPrinterName;
 import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.dto.IppMediaSourceMappingDto;
@@ -94,10 +96,12 @@ import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.ipp.client.IppConnectException;
 import org.savapage.core.ipp.client.IppNotificationRecipient;
+import org.savapage.core.ipp.rules.IppRuleConstraint;
 import org.savapage.core.job.SpJobScheduler;
 import org.savapage.core.job.SpJobType;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
+import org.savapage.core.jpa.CostChange;
 import org.savapage.core.jpa.Device;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.DocOut;
@@ -132,6 +136,7 @@ import org.savapage.core.print.proxy.ProxyPrintException;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.print.proxy.ProxyPrinterOptGroupEnum;
+import org.savapage.core.print.proxy.TicketJobSheetDto;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
@@ -146,16 +151,18 @@ import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ProxyPrintCostParms;
 import org.savapage.core.services.helpers.ProxyPrintInboxReqChunker;
 import org.savapage.core.services.helpers.ProxyPrintOutboxResult;
+import org.savapage.core.services.helpers.SnmpPrinterQueryDto;
 import org.savapage.core.services.helpers.SyncPrintJobsResult;
 import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.snmp.SnmpClientSession;
 import org.savapage.core.snmp.SnmpConnectException;
+import org.savapage.core.util.CupsPrinterUriHelper;
 import org.savapage.core.util.DateUtil;
 import org.savapage.core.util.JsonHelper;
 import org.savapage.core.util.MediaUtils;
 import org.savapage.core.util.Messages;
-import org.savapage.ext.papercut.PaperCutAccountAdjustPattern;
 import org.savapage.ext.papercut.PaperCutAccountAdjustPrint;
+import org.savapage.ext.papercut.PaperCutAccountAdjustPrintRefund;
 import org.savapage.ext.papercut.PaperCutAccountResolver;
 import org.savapage.ext.papercut.PaperCutException;
 import org.savapage.ext.papercut.PaperCutServerProxy;
@@ -179,13 +186,156 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
     /**
      *
+     * @author Rijk Ravestein
+     *
      */
-    private final IppNotificationRecipient notificationRecipient;
+    private static final class StandardRuleConstraintList {
+
+        /** */
+        public static final StandardRuleConstraintList INSTANCE =
+                new StandardRuleConstraintList();
+
+        /** */
+        private static final String ALIAS_PFX = "sp";
+
+        /** */
+        private static final String ALIAS_BOOKLET_PFX = "booklet";
+
+        /** */
+        private final List<IppRuleConstraint> rulesBooklet = new ArrayList<>();
+
+        /**
+         * Constructor.
+         */
+        private StandardRuleConstraintList() {
+            addBookletConstraints();
+        }
+
+        /**
+         * Creates a booklet constraint rule.
+         *
+         * @param name
+         *            The rule name.
+         * @param pairBooklet
+         *            The booklet key/value pair.
+         * @param setBookletNegate
+         *            The booklet negate set.
+         * @param ippKeyword
+         *            The constraint IPP keyword.
+         * @param ippValue
+         *            The constraint IPP value.
+         * @return The rule.
+         */
+        private static IppRuleConstraint createBookletConstraintRule(
+                final String name,
+                final ImmutablePair<String, String> pairBooklet,
+                final Set<String> setBookletNegate, final String ippKeyword,
+                final String ippValue) {
+
+            final IppRuleConstraint rule =
+                    new IppRuleConstraint(String.format("%s-%s-%s", ALIAS_PFX,
+                            ALIAS_BOOKLET_PFX, ippValue));
+
+            final List<Pair<String, String>> pairs = new ArrayList<>();
+
+            pairs.add(pairBooklet);
+            pairs.add(new ImmutablePair<String, String>(ippKeyword, ippValue));
+
+            rule.setIppContraints(pairs);
+            rule.setIppNegateSet(setBookletNegate);
+            return rule;
+        }
+
+        /** */
+        private void addBookletConstraints() {
+
+            final ImmutablePair<String, String> pairBooklet =
+                    new ImmutablePair<String, String>(
+                            IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET,
+                            IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET_NONE);
+
+            final Set<String> setBookletNegate = new HashSet<>();
+
+            setBookletNegate.add(
+                    IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET);
+
+            for (final String nUp : new String[] { IppKeyword.NUMBER_UP_1,
+                    IppKeyword.NUMBER_UP_4, IppKeyword.NUMBER_UP_6,
+                    IppKeyword.NUMBER_UP_9 }) {
+
+                this.rulesBooklet.add(createBookletConstraintRule(
+                        String.format("%s-%s-%s-%s", ALIAS_PFX,
+                                ALIAS_BOOKLET_PFX,
+                                IppDictJobTemplateAttr.ATTR_NUMBER_UP, nUp),
+                        pairBooklet, setBookletNegate,
+                        IppDictJobTemplateAttr.ATTR_NUMBER_UP, nUp));
+            }
+
+            this.rulesBooklet.add(createBookletConstraintRule(
+                    String.format("%s-%s-%s", ALIAS_PFX, ALIAS_BOOKLET_PFX,
+                            IppKeyword.SIDES_ONE_SIDED),
+                    pairBooklet, setBookletNegate,
+                    IppDictJobTemplateAttr.ATTR_SIDES,
+                    IppKeyword.SIDES_ONE_SIDED));
+
+            this.rulesBooklet.add(createBookletConstraintRule(
+                    String.format("%s-%s-%s", ALIAS_PFX, ALIAS_BOOKLET_PFX,
+                            "rotate-180-on"),
+                    pairBooklet, setBookletNegate,
+                    IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_INT_PAGE_ROTATE180,
+                    IppKeyword.ORG_SAVAPAGE_ATTR_INT_PAGE_ROTATE180_ON));
+        }
+
+        /**
+         *
+         * @return The pore-defined Booklet constraint rules.
+         */
+        public List<IppRuleConstraint> getRulesBooklet() {
+            return rulesBooklet;
+        }
+    }
 
     /**
-     * True or False option.
+     *
      */
-    // protected static final Integer UI_BOOLEAN = 0;
+    private static final PaperCutAccountResolver PAPERCUT_ACCOUNT_RESOLVER =
+            new PaperCutAccountResolver() {
+
+                @Override
+                public String getUserAccountName() {
+                    return PaperCutPrintMonitor.getAccountNameUser();
+                }
+
+                @Override
+                public String getSharedParentAccountName() {
+                    return PaperCutPrintMonitor.getSharedAccountNameParent();
+                }
+
+                @Override
+                public String getSharedJobsAccountName() {
+                    return PaperCutPrintMonitor.getSharedAccountNameJobs();
+                }
+
+                @Override
+                public String getKlasFromAccountName(final String accountName) {
+                    return PaperCutPrintMonitor
+                            .extractKlasFromAccountName(accountName);
+                }
+
+                @Override
+                public String composeSharedSubAccountName(
+                        final AccountTypeEnum accountType,
+                        final String accountName,
+                        final String accountNameParent) {
+                    return PaperCutPrintMonitor.createSharedSubAccountName(
+                            accountType, accountName, accountNameParent);
+                }
+            };
+
+    /**
+     *
+     */
+    private final IppNotificationRecipient notificationRecipient;
 
     /**
      * Dictionary on printer name. NOTE: the key is in UPPER CASE.
@@ -201,7 +351,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
             new AtomicBoolean(true);
 
     /**
-     *
+     * Common option groups to be added to ALL printers.
      */
     private ArrayList<JsonProxyPrinterOptGroup> commonPrinterOptGroups = null;
 
@@ -232,9 +382,9 @@ public abstract class AbstractProxyPrintService extends AbstractService
     }
 
     /**
-     * URL of the CUPS host, like http://localhost:631
+     * URL of the CUPS host, like {@code http://localhost:631} .
      *
-     * @return
+     * @return The URL.
      */
     private String getDefaultCupsUrl() {
         return "http://" + ConfigManager.getDefaultCupsHost() + ":"
@@ -248,10 +398,18 @@ public abstract class AbstractProxyPrintService extends AbstractService
                 .isCircuitClosed();
     }
 
+    /**
+     * Checks if common option groups are present to be added to ALL printers.
+     *
+     * @return {@code true} when present.
+     */
     protected boolean hasCommonPrinterOptGroups() {
         return commonPrinterOptGroups != null;
     }
 
+    /**
+     * @return Common option groups to be added to ALL printers.
+     */
     protected ArrayList<JsonProxyPrinterOptGroup> getCommonPrinterOptGroups() {
         return commonPrinterOptGroups;
     }
@@ -302,33 +460,16 @@ public abstract class AbstractProxyPrintService extends AbstractService
         }
     }
 
-    /**
-     *
-     */
-    private String defaultPrinterName = null;
-
-    protected boolean hasDefaultPrinterName() {
-        return StringUtils.isNotBlank(defaultPrinterName);
-    }
-
-    protected String getDefaultPrinterName() {
-        return defaultPrinterName;
-    }
-
-    protected void setDefaultPrinterName(String defaultPrinterName) {
-        this.defaultPrinterName = defaultPrinterName;
-    }
-
     @Override
     public final JsonPrinterDetail
             getPrinterDetailCopy(final String printerName) {
-        return this.getPrinterDetailCopy(printerName, null, false);
+        return this.getPrinterDetailCopy(printerName, null, false, true);
     }
 
     @Override
     public final JsonPrinterDetail getPrinterDetailUserCopy(final Locale locale,
-            final String printerName) {
-        return this.getPrinterDetailCopy(printerName, locale, true);
+            final String printerName, final boolean isExtended) {
+        return this.getPrinterDetailCopy(printerName, locale, true, isExtended);
     }
 
     @Override
@@ -389,10 +530,13 @@ public abstract class AbstractProxyPrintService extends AbstractService
      *            The user {@link Locale}.
      * @param isUserCopy
      *            {@code true} if this is a copy for a user.
+     * @param isExtended
+     *            {@code true} if this is an extended copy.
      * @return {@code null} when the printer is no longer part of the cache.
      */
     private JsonPrinterDetail getPrinterDetailCopy(final String printerName,
-            final Locale locale, final boolean isUserCopy) {
+            final Locale locale, final boolean isUserCopy,
+            final boolean isExtended) {
 
         final JsonPrinterDetail printerCopy;
 
@@ -431,11 +575,38 @@ public abstract class AbstractProxyPrintService extends AbstractService
                 pruneUserPrinterIppOptions(cupsPrinter, printerCopy);
             }
 
+            if (!isExtended) {
+                restrictUserPrinterIppOptions(printerCopy);
+            }
+
         } else {
             printerCopy = null;
         }
 
         return printerCopy;
+    }
+
+    /**
+     * Restricts printer IPP options by pruning extended choices.
+     *
+     * @param userPrinter
+     *            The printer to restrict.
+     */
+    private static void
+            restrictUserPrinterIppOptions(final JsonPrinterDetail userPrinter) {
+
+        for (final JsonProxyPrinterOptGroup optGroup : userPrinter
+                .getGroups()) {
+            for (final JsonProxyPrinterOpt opt : optGroup.getOptions()) {
+                final Iterator<JsonProxyPrinterOptChoice> iter =
+                        opt.getChoices().iterator();
+                while (iter.hasNext()) {
+                    if (iter.next().isExtended()) {
+                        iter.remove();
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -783,14 +954,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
         });
 
         final JsonPrinterList printerList = new JsonPrinterList();
-
         printerList.setList(collectedPrinters);
-
-        if (hasDefaultPrinterName()) {
-            printerList
-                    .setDfault(getPrinterDetailCopy(getDefaultPrinterName()));
-        }
-
         return printerList;
     }
 
@@ -924,6 +1088,16 @@ public abstract class AbstractProxyPrintService extends AbstractService
     @Override
     public final JsonProxyPrinter getCachedPrinter(final String printerName) {
         return getCachedCupsPrinter(printerName);
+    }
+
+    @Override
+    public final String getCachedPrinterHost(final String printerName) {
+        final JsonProxyPrinter proxyPrinter =
+                this.getCachedPrinter(printerName);
+        if (proxyPrinter == null) {
+            return null;
+        }
+        return CupsPrinterUriHelper.resolveHost(proxyPrinter.getDeviceUri());
     }
 
     @Override
@@ -1150,8 +1324,10 @@ public abstract class AbstractProxyPrintService extends AbstractService
     }
 
     @Override
-    public final SyncPrintJobsResult syncPrintJobs()
-            throws IppConnectException {
+    public final SyncPrintJobsResult syncPrintJobs(
+            final DaoBatchCommitter batchCommitter) throws IppConnectException {
+
+        SpInfo.instance().log(String.format("| Syncing CUPS jobs ..."));
 
         /*
          * Constants
@@ -1161,10 +1337,18 @@ public abstract class AbstractProxyPrintService extends AbstractService
         /*
          * Init batch.
          */
+        final long startTime = System.currentTimeMillis();
+
         final List<PrintOut> printOutList = printOutDAO().findActiveCupsJobs();
 
+        SpInfo.instance()
+                .log(String.format("|   %s : %d Active PrintOut jobs.",
+                        DateUtil.formatDuration(
+                                System.currentTimeMillis() - startTime),
+                        printOutList.size()));
         //
         final Map<Integer, PrintOut> lookupPrintOut = new HashMap<>();
+
         for (final PrintOut printOut : printOutList) {
             lookupPrintOut.put(printOut.getCupsJobId(), printOut);
         }
@@ -1223,7 +1407,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
             }
 
             /*
-             * EOF, new printer or chunk filled
+             * EOF, new printer or chunk filled to the max.
              */
             if (printOut == null || !printer.equals(printerPrv)
                     || iChunk == nChunkMax) {
@@ -1274,6 +1458,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
                                 cupsJob.getCompletedTime());
 
                         printOutDAO().update(printOutWlk);
+                        jobsUpdated++;
+                        batchCommitter.increment();
 
                         if (LOGGER.isTraceEnabled()) {
                             LOGGER.trace("printer [" + printerPrv + "] job ["
@@ -1281,7 +1467,6 @@ public abstract class AbstractProxyPrintService extends AbstractService
                                     + cupsJob.getJobState() + "] completed ["
                                     + cupsJob.getCompletedTime() + "]");
                         }
-                        jobsUpdated++;
                     }
 
                 }
@@ -1309,7 +1494,9 @@ public abstract class AbstractProxyPrintService extends AbstractService
                 printOutWlk.setCupsCompletedTime(null);
                 printOutWlk.setCupsJobState(
                         IppJobStateEnum.IPP_JOB_COMPLETED.asInteger());
+
                 printOutDAO().update(printOutWlk);
+                batchCommitter.increment();
             }
         }
 
@@ -1318,6 +1505,13 @@ public abstract class AbstractProxyPrintService extends AbstractService
             LOGGER.debug("Syncing [" + jobsActive + "] active PrintOut jobs "
                     + "with CUPS : updated [" + jobsUpdated + "], not found ["
                     + jobsNotFound + "]");
+        }
+
+        if (jobsActive > 0) {
+            SpInfo.instance().log(String.format("|      : %d PrintOut updated.",
+                    jobsUpdated));
+            SpInfo.instance().log(String.format(
+                    "|      : %d PrintOut not found in CUPS.", jobsNotFound));
         }
 
         return new SyncPrintJobsResult(jobsActive, jobsUpdated, jobsNotFound);
@@ -1445,25 +1639,93 @@ public abstract class AbstractProxyPrintService extends AbstractService
     public final void lazyInitPrinterCache()
             throws IppConnectException, IppSyntaxException {
 
-        if (!this.isFirstTimeCupsContact.get()) {
-            return;
-        }
-
-        try {
-            updatePrinterCache();
-        } catch (MalformedURLException | URISyntaxException e) {
-            throw new IppConnectException(e);
+        if (this.isFirstTimeCupsContact.get()) {
+            initPrinterCache(true);
         }
     }
 
     @Override
     public final void initPrinterCache()
             throws IppConnectException, IppSyntaxException {
+        initPrinterCache(false);
+    }
+
+    /**
+     * Initializes the CUPS printer cache (clearing any existing one).
+     * <p>
+     * <b>Important</b>: This method performs a commit, and re-opens any
+     * transaction this was pending at the start of this method.
+     * </p>
+     *
+     * @param isLazyInit
+     *            {@code true} if this is a lazy init update.
+     * @throws IppConnectException
+     *             When a connection error occurs.
+     * @throws IppSyntaxException
+     *             When a syntax error.
+     */
+    private void initPrinterCache(final boolean isLazyInit)
+            throws IppConnectException, IppSyntaxException {
+
+        final DaoContext ctx = ServiceContext.getDaoContext();
+        final boolean currentTrxActive = ctx.isTransactionActive();
+
+        if (!currentTrxActive) {
+            ctx.beginTransaction();
+        }
 
         try {
-            updatePrinterCache();
+            final Set<String> newCupsPrinterNameKeys =
+                    updatePrinterCache(isLazyInit);
+
+            ctx.commit();
+
+            if (!newCupsPrinterNameKeys.isEmpty()) {
+
+                SpInfo.instance()
+                        .log(String.format("%d new CUPS printer(s) detected.",
+                                newCupsPrinterNameKeys.size()));
+
+                if (ConfigManager.instance()
+                        .isConfigValue(Key.PRINTER_SNMP_ENABLE)) {
+                    evaluateSnmpRetrieve(newCupsPrinterNameKeys);
+                }
+            }
+
         } catch (MalformedURLException | URISyntaxException e) {
             throw new IppConnectException(e);
+        } finally {
+            if (ctx.isTransactionActive()) {
+                ctx.rollback();
+            }
+            if (currentTrxActive) {
+                ctx.beginTransaction();
+            }
+        }
+    }
+
+    /**
+     *
+     * @param newCupsPrinterNameKeys
+     */
+    private void
+            evaluateSnmpRetrieve(final Set<String> newCupsPrinterNameKeys) {
+
+        if (newCupsPrinterNameKeys.size() == this.cupsPrinterCache.size()) {
+
+            snmpRetrieveService().retrieveAll();
+
+        } else {
+
+            final Set<URI> uris = new HashSet<>();
+
+            for (final String key : newCupsPrinterNameKeys) {
+                uris.add(this.getCachedCupsPrinter(key).getDeviceUri());
+            }
+
+            if (!uris.isEmpty()) {
+                snmpRetrieveService().probeSnmpRetrieve(uris);
+            }
         }
     }
 
@@ -1490,19 +1752,32 @@ public abstract class AbstractProxyPrintService extends AbstractService
      * re-activated.</li>
      * </ul>
      *
+     * @param isLazyInit
+     *            {@code true} if this is a lazy init update.
+     * @return The newly identified CUPS printer name keys in
+     *         {@link #cupsPrinterCache}.
      * @throws URISyntaxException
+     *             When URI syntax error.
      * @throws MalformedURLException
+     *             When URL malformed.
      * @throws IppConnectException
      *             When a connection error occurs.
      * @throws IppSyntaxException
      *             When a syntax error.
      */
-    protected synchronized final void updatePrinterCache()
-            throws MalformedURLException, IppConnectException,
-            URISyntaxException, IppSyntaxException {
+    private synchronized Set<String> updatePrinterCache(
+            final boolean isLazyInit) throws MalformedURLException,
+            IppConnectException, URISyntaxException, IppSyntaxException {
+
+        final Set<String> newCupsPrinterNameKeys = new HashSet<>();
 
         final boolean firstTimeCupsContact =
                 this.isFirstTimeCupsContact.getAndSet(false);
+
+        // Concurrent lazy init try.
+        if (isLazyInit && !firstTimeCupsContact) {
+            return newCupsPrinterNameKeys;
+        }
 
         final boolean connectedToCupsPrv =
                 !firstTimeCupsContact && isConnectedToCups();
@@ -1528,11 +1803,6 @@ public abstract class AbstractProxyPrintService extends AbstractService
         }
 
         /*
-         * Go on ....
-         */
-        String defaultPrinter = null;
-
-        /*
          * Mark all currently cached printers as 'not present'.
          */
         final Map<String, Boolean> printersPresent = new HashMap<>();
@@ -1545,6 +1815,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
          * Traverse the CUPS printers.
          */
         final Date now = new Date();
+        final MutableBoolean lazyCreatedDbPrinter = new MutableBoolean();
 
         final boolean remoteCupsEnabled = ConfigManager.instance()
                 .isConfigValue(Key.CUPS_IPP_REMOTE_ENABLED);
@@ -1573,17 +1844,11 @@ public abstract class AbstractProxyPrintService extends AbstractService
                     this.cupsPrinterCache.get(cupsPrinterKey);
 
             /*
-             * Is this a new printer?
+             * Is printer already part of the cache?
              */
             if (cachedCupsPrinter == null) {
 
-                /*
-                 * New cached object.
-                 */
-                if (LOGGER.isInfoEnabled()) {
-                    LOGGER.info("CUPS printer [" + cupsPrinter.getName()
-                            + "] detected");
-                }
+                LOGGER.info("CUPS printer [{}] detected", cupsPrinterKey);
                 /*
                  * Add the extra groups.
                  */
@@ -1594,11 +1859,15 @@ public abstract class AbstractProxyPrintService extends AbstractService
             }
 
             /*
-             * Assign the replicated database printer + lazy create printer in
-             * database.
+             * Assign the (lazy created) printer in database to proxy printer
+             * CUPS definition.
              */
-            this.assignDbPrinter(cupsPrinter,
-                    printerDAO().findByNameInsert(cupsPrinter.getName()));
+            this.assignDbPrinter(cupsPrinter, printerDAO()
+                    .findByNameInsert(cupsPrinterKey, lazyCreatedDbPrinter));
+
+            if (lazyCreatedDbPrinter.isTrue()) {
+                newCupsPrinterNameKeys.add(cupsPrinterKey);
+            }
 
             /*
              * Undo the logical delete (if present).
@@ -1618,26 +1887,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
             /*
              * Update the cache.
              */
-            this.cupsPrinterCache.put(cupsPrinter.getName(), cupsPrinter);
-
+            this.cupsPrinterCache.put(cupsPrinterKey, cupsPrinter);
             cachedCupsPrinter = cupsPrinter;
-
-            if (printerService()
-                    .canPrinterBeUsed(cachedCupsPrinter.getDbPrinter())) {
-                /*
-                 * Native default printer found that can be used.
-                 */
-                if (cachedCupsPrinter.getDfault()) {
-                    defaultPrinter = cachedCupsPrinter.getName();
-                }
-                /*
-                 * If no native default printer found (yet), set the first
-                 * printer that can be used as default.
-                 */
-                if (defaultPrinter == null) {
-                    defaultPrinter = cachedCupsPrinter.getName();
-                }
-            }
         }
 
         /*
@@ -1650,14 +1901,17 @@ public abstract class AbstractProxyPrintService extends AbstractService
                 final JsonProxyPrinter removed =
                         this.cupsPrinterCache.remove(entry.getKey());
 
-                if (LOGGER.isInfoEnabled()) {
-                    LOGGER.info("removed CUPS printer [" + removed.getName()
-                            + "] detected");
-                }
+                LOGGER.info("removed CUPS printer [{}] detected",
+                        removed.getName());
             }
         }
 
-        setDefaultPrinterName(defaultPrinter);
+        if (isLazyInit) {
+            SpInfo.instance().log(String.format("| %s CUPS printers retrieved.",
+                    cupsPrinters.size()));
+        }
+
+        return newCupsPrinterNameKeys;
     }
 
     @Override
@@ -1995,6 +2249,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
             supplierData.setCostMedia(job.getCostResult().getCostMedia());
             supplierData.setCostCopy(job.getCostResult().getCostCopy());
+            supplierData.setCostSet(job.getCostResult().getCostSet());
             supplierData.setOperator(operator);
 
             docLog.setExternalData(supplierData.dataAsString());
@@ -2018,7 +2273,36 @@ public abstract class AbstractProxyPrintService extends AbstractService
          * Print.
          */
         if (isProxyPrint) {
+
+            final TicketJobSheetDto jobSheetDto;
+            final File pdfTicketJobSheet;
+
+            if (isJobTicket) {
+
+                jobSheetDto = jobTicketService()
+                        .getTicketJobSheet(printReq.createIppOptionMap());
+
+                pdfTicketJobSheet = this.getTicketJobSheetPdf(job, jobSheetDto,
+                        lockedUser.getUserId());
+            } else {
+                jobSheetDto = null;
+                pdfTicketJobSheet = null;
+            }
+
+            if (pdfTicketJobSheet != null && jobSheetDto
+                    .getSheet() == TicketJobSheetDto.Sheet.START) {
+                proxyPrintJobSheet(printReq, job, lockedUser.getUserId(),
+                        jobSheetDto, pdfTicketJobSheet);
+            }
+
             proxyPrint(lockedUser, printReq, docLog, createInfo);
+
+            if (jobSheetDto != null
+                    && jobSheetDto.getSheet() == TicketJobSheetDto.Sheet.END) {
+                proxyPrintJobSheet(printReq, job, lockedUser.getUserId(),
+                        jobSheetDto, pdfTicketJobSheet);
+            }
+
         } else {
             settleProxyPrint(lockedUser, printReq, docLog, createInfo);
         }
@@ -2066,51 +2350,29 @@ public abstract class AbstractProxyPrintService extends AbstractService
     private void settleProxyPrintPaperCut(final DocLog docLog, final int copies,
             final ProxyPrintCostDto cost) throws PaperCutException {
 
-        final PaperCutAccountResolver accountResolver =
-                new PaperCutAccountResolver() {
+        final PaperCutServerProxy serverProxy =
+                PaperCutServerProxy.create(ConfigManager.instance(), true);
 
-                    @Override
-                    public String getUserAccountName() {
-                        return PaperCutPrintMonitor.getAccountNameUser();
-                    }
+        final PaperCutAccountAdjustPrint adjustPattern =
+                new PaperCutAccountAdjustPrint(serverProxy,
+                        PAPERCUT_ACCOUNT_RESOLVER, LOGGER);
 
-                    @Override
-                    public String getSharedParentAccountName() {
-                        return PaperCutPrintMonitor
-                                .getSharedAccountNameParent();
-                    }
+        adjustPattern.process(docLog, docLog, false, cost.getCostTotal(),
+                copies);
+    }
 
-                    @Override
-                    public String getSharedJobsAccountName() {
-                        return PaperCutPrintMonitor.getSharedAccountNameJobs();
-                    }
-
-                    @Override
-                    public String
-                            getKlasFromAccountName(final String accountName) {
-                        return PaperCutPrintMonitor
-                                .extractKlasFromAccountName(accountName);
-                    }
-
-                    @Override
-                    public String composeSharedSubAccountName(
-                            final AccountTypeEnum accountType,
-                            final String accountName,
-                            final String accountNameParent) {
-                        return PaperCutPrintMonitor.createSharedSubAccountName(
-                                accountType, accountName, accountNameParent);
-                    }
-                };
+    @Override
+    public void refundProxyPrintPaperCut(final CostChange costChange)
+            throws PaperCutException {
 
         final PaperCutServerProxy serverProxy =
                 PaperCutServerProxy.create(ConfigManager.instance(), true);
 
-        final PaperCutAccountAdjustPattern adjustPattern =
-                new PaperCutAccountAdjustPrint(serverProxy, accountResolver,
-                        LOGGER);
+        final PaperCutAccountAdjustPrintRefund adjustPattern =
+                new PaperCutAccountAdjustPrintRefund(serverProxy,
+                        PAPERCUT_ACCOUNT_RESOLVER, LOGGER);
 
-        adjustPattern.process(docLog, docLog, false, cost.getCostTotal(),
-                copies);
+        adjustPattern.process(costChange);
     }
 
     /**
@@ -2406,6 +2668,69 @@ public abstract class AbstractProxyPrintService extends AbstractService
                 extPrinterManager == ThirdPartyEnum.PAPERCUT);
     }
 
+    /**
+     * Creates a (temporary) Job Sheet PDF file.
+     * <p>
+     * Note: The media source of {@link TicketJobSheetDto} is set from the
+     * requested job sheet media source.
+     * </p>
+     *
+     * @param job
+     *            The job ticket.
+     * @param jobSheetDto
+     *            The job sheet info
+     * @param user
+     *            The user.
+     * @return {@code null} when no job sheet is applicable.
+     */
+    private File getTicketJobSheetPdf(final OutboxJobDto job,
+            final TicketJobSheetDto jobSheetDto, final String user) {
+
+        final File file;
+
+        if (jobSheetDto.getSheet() == TicketJobSheetDto.Sheet.NONE) {
+            file = null;
+        } else {
+            jobSheetDto.setMediaSourceOption(job.getMediaSourceJobSheet());
+            file = jobTicketService().createTicketJobSheet(user, job,
+                    jobSheetDto);
+        }
+        return file;
+    }
+
+    @Override
+    public final JsonProxyPrintJob proxyPrintJobTicketResend(
+            final AbstractProxyPrintReq request, final OutboxJobDto job,
+            final JsonProxyPrinter jsonPrinter, final String user,
+            final PdfCreateInfo createInfo) throws IppConnectException {
+
+        /*
+         * Job Sheet?
+         */
+        final TicketJobSheetDto jobSheetDto = jobTicketService()
+                .getTicketJobSheet(request.createIppOptionMap());
+
+        final File pdfTicketJobSheet =
+                this.getTicketJobSheetPdf(job, jobSheetDto, user);
+
+        if (pdfTicketJobSheet != null
+                && jobSheetDto.getSheet() == TicketJobSheetDto.Sheet.START) {
+            proxyPrintJobSheet(request, job, user, jobSheetDto,
+                    pdfTicketJobSheet);
+        }
+
+        final JsonProxyPrintJob printJob = proxyPrintService()
+                .sendPdfToPrinter(request, jsonPrinter, user, createInfo);
+
+        if (pdfTicketJobSheet != null
+                && jobSheetDto.getSheet() == TicketJobSheetDto.Sheet.END) {
+            proxyPrintJobSheet(request, job, user, jobSheetDto,
+                    pdfTicketJobSheet);
+        }
+
+        return printJob;
+    }
+
     @Override
     public final int settleJobTicket(final String operator,
             final User lockedUser, final OutboxJobDto job,
@@ -2440,6 +2765,15 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
         final Date perfStartTime = PerformanceLogger.startTime();
 
+        /*
+         * Make sure the CUPS printer is cached.
+         */
+        try {
+            this.lazyInitPrinterCache();
+        } catch (Exception e) {
+            throw new ProxyPrintException(e);
+        }
+
         final User cardUser = getValidateUserOfCard(cardNumber);
 
         if (!outboxService().isOutboxPresent(cardUser.getUserId())) {
@@ -2460,15 +2794,6 @@ public abstract class AbstractProxyPrintService extends AbstractService
         final List<OutboxJobDto> jobs =
                 outboxService().getOutboxJobs(lockedUser.getUserId(),
                         printerNames, ServiceContext.getTransactionDate());
-
-        /*
-         * Make sure the CUPS printer is cached.
-         */
-        try {
-            this.lazyInitPrinterCache();
-        } catch (Exception e) {
-            throw new ProxyPrintException(e);
-        }
 
         /*
          * Check printer access and total costs first (all-or-none).
@@ -2697,7 +3022,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
             /*
              * Chunk!
              */
-            this.chunkProxyPrintRequest(user, printReq, PageScalingEnum.NONE,
+            this.chunkProxyPrintRequest(user, printReq, PageScalingEnum.FIT,
                     false, null);
 
             final ProxyPrintCostParms costParms = new ProxyPrintCostParms(null);
@@ -2846,6 +3171,84 @@ public abstract class AbstractProxyPrintService extends AbstractService
     }
 
     /**
+     * Prints a Job Sheet and deletes the PDF job sheet afterwards.
+     *
+     * @param reqMain
+     *            The print request of the main job.
+     * @param job
+     *            The {@link OutboxJobDto}.
+     * @param user
+     *            The unique user id.
+     * @param jobSheetDto
+     *            Job Sheet info.
+     * @param pdfJobSheet
+     *            The Job sheet PDF file.
+     * @throws IppConnectException
+     *             When printing fails.
+     */
+    private void proxyPrintJobSheet(final AbstractProxyPrintReq reqMain,
+            final OutboxJobDto job, final String user,
+            final TicketJobSheetDto jobSheetDto, final File pdfJobSheet)
+            throws IppConnectException {
+
+        final JsonProxyPrinter printer =
+                this.getJsonProxyPrinterCopy(reqMain.getPrinterName());
+
+        if (printer == null) {
+            throw new IllegalStateException(String.format(
+                    "Printer [%s] not found.", reqMain.getPrinterName()));
+        } else if (printer.getDbPrinter().getDeleted()) {
+            throw new IllegalStateException(String.format(
+                    "Printer [%s] is deleted.", reqMain.getPrinterName()));
+        } else if (printer.getDbPrinter().getDisabled()) {
+            throw new IllegalStateException(String.format(
+                    "Printer [%s] is disabled.", reqMain.getPrinterName()));
+        }
+
+        try {
+            final PdfCreateInfo createInfo = new PdfCreateInfo(pdfJobSheet);
+
+            final ProxyPrintDocReq reqBanner =
+                    new ProxyPrintDocReq(PrintModeEnum.TICKET);
+
+            reqBanner.setNumberOfCopies(1);
+            reqBanner.setFitToPage(Boolean.TRUE);
+
+            reqBanner.setJobName(
+                    String.format("Ticket-Banner-%s", job.getTicketNumber()));
+
+            final Map<String, String> options = new HashMap<>();
+
+            options.put(IppDictJobTemplateAttr.ATTR_MEDIA,
+                    jobSheetDto.getMediaOption());
+            options.put(IppDictJobTemplateAttr.ATTR_MEDIA_SOURCE,
+                    jobSheetDto.getMediaSourceOption());
+            options.put(IppDictJobTemplateAttr.ATTR_OUTPUT_BIN,
+                    reqMain.getOptionValues()
+                            .get(IppDictJobTemplateAttr.ATTR_OUTPUT_BIN));
+
+            // Overrule printer defaults.
+            options.put(IppDictJobTemplateAttr.ATTR_SIDES,
+                    IppKeyword.SIDES_ONE_SIDED);
+            options.put(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE,
+                    IppKeyword.PRINT_COLOR_MODE_MONOCHROME);
+            options.put(IppDictJobTemplateAttr.ATTR_JOB_SHEETS,
+                    IppKeyword.ATTR_JOB_SHEETS_NONE);
+
+            //
+            reqBanner.setOptionValues(options);
+
+            // final JsonProxyPrintJob printJob =
+            this.sendPdfToPrinter(reqBanner, printer, user, createInfo);
+
+        } finally {
+            if (pdfJobSheet != null && pdfJobSheet.exists()) {
+                pdfJobSheet.delete();
+            }
+        }
+    }
+
+    /**
      * Sends PDF file to the CUPS Printer, and updates {@link User},
      * {@link Printer} and global {@link IConfigProp} statistics.
      * <p>
@@ -2935,6 +3338,8 @@ public abstract class AbstractProxyPrintService extends AbstractService
         /*
          * Set the parameters for this single PDF file.
          */
+        costParms.setNumberOfSheets(PdfPrintCollector.calcNumberOfPrintedSheets(
+                request, createInfo.getBlankFillerPages()));
         costParms.setNumberOfPages(request.getNumberOfPages());
         costParms.setLogicalNumberOfPages(createInfo.getLogicalJobPages());
         costParms.setIppMediaOption(request.getMediaOption());
@@ -3154,11 +3559,11 @@ public abstract class AbstractProxyPrintService extends AbstractService
             pdfRequest.setApplyLetterhead(true);
             pdfRequest.setForPrinting(true);
 
-            // Reserved for future use.
-            pdfRequest.setForPrintingFillerPages(false);
-
             pdfRequest.setPrintDuplex(request.isDuplex());
             pdfRequest.setPrintNup(request.getNup());
+
+            pdfRequest.setForPrintingFillerPages(
+                    request.isDuplex() || request.getNup() > 0);
 
             final PdfCreateInfo createInfo = outputProducer()
                     .generatePdf(pdfRequest, uuidPageCount, docLog);
@@ -3416,6 +3821,66 @@ public abstract class AbstractProxyPrintService extends AbstractService
     }
 
     @Override
+    public final List<SnmpPrinterQueryDto> getSnmpQueries() {
+        return getSnmpQueries(null);
+    }
+
+    @Override
+    public final SnmpPrinterQueryDto getSnmpQuery(final Long printerID) {
+        final List<SnmpPrinterQueryDto> list = getSnmpQueries(printerID);
+        if (list.isEmpty()) {
+            return null;
+        }
+        return list.get(0);
+    }
+
+    /**
+     * Gets list of SNMP printer queries.
+     *
+     * @param printerID
+     *            The primary database key of a {@link Printer}, or {@code null}
+     *            for all printers.
+     *
+     * @return The list of queries (can be empty).
+     */
+    private List<SnmpPrinterQueryDto> getSnmpQueries(final Long printerID) {
+
+        final List<SnmpPrinterQueryDto> list = new ArrayList<>();
+
+        for (final JsonProxyPrinter printer : this.cupsPrinterCache.values()) {
+
+            final Printer dbPrinter = printer.getDbPrinter();
+
+            if (printerID != null && !dbPrinter.getId().equals(printerID)) {
+                continue;
+            }
+
+            if (dbPrinter.getDeleted() || dbPrinter.getDisabled()) {
+                continue;
+            }
+
+            final String host =
+                    CupsPrinterUriHelper.resolveHost(printer.getDeviceUri());
+
+            if (host != null) {
+
+                final SnmpPrinterQueryDto dto = new SnmpPrinterQueryDto();
+
+                dto.setUriHost(host);
+                dto.setPrinter(dbPrinter);
+
+                list.add(dto);
+            }
+
+            if (printerID != null) {
+                break;
+            }
+
+        }
+        return list;
+    }
+
+    @Override
     public final AbstractJsonRpcMessage readSnmp(final ParamsPrinterSnmp params)
             throws SnmpConnectException {
 
@@ -3428,24 +3893,14 @@ public abstract class AbstractProxyPrintService extends AbstractService
             final JsonProxyPrinter printer = this.getCachedPrinter(printerName);
 
             /*
-             * INVARIANT: printer MUST present in cache.
+             * INVARIANT: printer MUST be present in cache.
              */
             if (printer == null) {
                 return JsonRpcMethodError.createBasicError(Code.INVALID_REQUEST,
                         "Printer [" + printerName + "] is unknown.", null);
             }
 
-            final URI printerUri = printer.getPrinterUri();
-
-            if (printerUri != null) {
-
-                final String scheme = printerUri.getScheme();
-
-                if (scheme != null && (scheme.endsWith("socket")
-                        || scheme.equalsIgnoreCase("ipp"))) {
-                    host = printerUri.getHost();
-                }
-            }
+            host = CupsPrinterUriHelper.resolveHost(printer.getDeviceUri());
 
         } else {
             host = params.getHost();
@@ -3478,8 +3933,14 @@ public abstract class AbstractProxyPrintService extends AbstractService
         }
 
         //
-        final PrinterSnmpDto dto = PrinterSnmpReader.read(host, port, community,
-                params.getVersion());
+        final ConfigManager cm = ConfigManager.instance();
+
+        final PrinterSnmpReader snmpReader = new PrinterSnmpReader(
+                cm.getConfigInt(Key.PRINTER_SNMP_READ_RETRIES),
+                cm.getConfigInt(Key.PRINTER_SNMP_READ_TIMEOUT_MSECS));
+
+        final PrinterSnmpDto dto =
+                snmpReader.read(host, port, community, params.getVersion());
 
         final ResultPrinterSnmp data = new ResultPrinterSnmp();
 
@@ -3513,11 +3974,84 @@ public abstract class AbstractProxyPrintService extends AbstractService
     }
 
     @Override
+    public final Set<String> validateContraints(
+            final JsonProxyPrinter proxyPrinter,
+            final Map<String, String> ippOptions) {
+
+        final Set<String> keywords = new HashSet<>();
+
+        if (ConfigManager.instance()
+                .isConfigValue(Key.IPP_EXT_CONSTRAINT_BOOKLET_ENABLE)) {
+
+            validateContraints(ippOptions,
+                    StandardRuleConstraintList.INSTANCE.getRulesBooklet(),
+                    keywords);
+        }
+
+        if (proxyPrinter.hasCustomRulesConstraint()) {
+            validateContraints(ippOptions,
+                    proxyPrinter.getCustomRulesConstraint(), keywords);
+        }
+        return keywords;
+    }
+
+    /**
+     * Validates IPP choices according to constraints.
+     *
+     * @param ippOptions
+     *            The IPP attribute key/choice pairs.
+     * @param rules
+     *            The constraint rules.
+     * @param keywords
+     *            The {@link Set} to append conflicting IPP option keywords on.
+     * @return The {@link Set} with conflicting IPP option keywords.
+     */
+    public final Set<String> validateContraints(
+            final Map<String, String> ippOptions,
+            final List<IppRuleConstraint> rules, final Set<String> keywords) {
+
+        for (final IppRuleConstraint rule : rules) {
+            if (rule.doesRuleApply(ippOptions)) {
+                for (final Pair<String, String> pair : rule
+                        .getIppContraints()) {
+                    keywords.add(pair.getKey());
+                }
+            }
+        }
+        return keywords;
+    }
+
+    @Override
+    public final String validateContraintsMsg(
+            final JsonProxyPrinter proxyPrinter,
+            final Map<String, String> ippOptions, final Locale locale) {
+
+        final Set<String> conflictingIppKeywords =
+                this.validateContraints(proxyPrinter, ippOptions);
+
+        if (conflictingIppKeywords.isEmpty()) {
+            return null;
+        }
+
+        final StringBuilder builder = new StringBuilder();
+
+        for (final String attrKeyword : conflictingIppKeywords) {
+            builder.append("\"")
+                    .append(this.localizePrinterOpt(locale, attrKeyword))
+                    .append("\"").append(", ");
+        }
+
+        return localize(locale, "msg-user-print-out-incompatible-options",
+                StringUtils.removeEnd(builder.toString(), ", "));
+    }
+
+    @Override
     public final String validateCustomCostRules(
             final JsonProxyPrinter proxyPrinter,
             final Map<String, String> ippOptions, final Locale locale) {
+
         /*
-         * Media
+         * Media: if cost rules are present, a rule MUST be found.
          */
         if (proxyPrinter.hasCustomCostRulesMedia()) {
 
@@ -3538,34 +4072,45 @@ public abstract class AbstractProxyPrintService extends AbstractService
             }
         }
 
-        // Copy
+        final StringBuilder msg = new StringBuilder();
+
+        /*
+         * Copy Sheet Rules are NOT used to validate IPP options.
+         */
+
+        /*
+         * If Copy Cost Rules are present, AND a Job Ticket Copy option or
+         * Custom finishing option is chosen, a cost rule MUST be present.
+         *
+         * IMPORTANT: this validation is deprecated and is replaced by
+         * SPConstraint.
+         */
         if (proxyPrinter.hasCustomCostRulesCopy()) {
 
-            // Merge the Job Ticket options with the custom user options.
-            final String[][] copyOptions =
-                    IppDictJobTemplateAttr.JOBTICKET_ATTR_COPY_V_NONE;
+            /*
+             * Collect all Job Ticket Copy options and Custom finishing options
+             * with their NONE choice.
+             */
+            final List<String[]> copyOptionsNone = new ArrayList<>();
 
-            final List<String[]> copyOptionsAll = new ArrayList<>();
-
-            for (final String[] attrArray : copyOptions) {
-                copyOptionsAll.add(attrArray);
+            for (final String[] attrArray : IppDictJobTemplateAttr.JOBTICKET_ATTR_COPY_V_NONE) {
+                copyOptionsNone.add(attrArray);
             }
 
             for (final Entry<String, String> entry : ippOptions.entrySet()) {
                 if (IppDictJobTemplateAttr.isCustomExtAttr(entry.getKey())) {
-                    copyOptionsAll.add(new String[] { entry.getKey(),
+                    copyOptionsNone.add(new String[] { entry.getKey(),
                             IppKeyword.ORG_SAVAPAGE_EXT_ATTR_NONE });
                 }
             }
 
-            //
-            StringBuilder msg = null;
-
-            for (final String[] attrArray : copyOptionsAll) {
+            // Validate.
+            for (final String[] attrArray : copyOptionsNone) {
 
                 final String ippKey = attrArray[0];
                 final String ippChoice = ippOptions.get(ippKey);
 
+                // Skip when option not found, or NONE choice?
                 if (ippChoice == null || ippChoice.equals(attrArray[1])) {
                     continue;
                 }
@@ -3574,15 +4119,13 @@ public abstract class AbstractProxyPrintService extends AbstractService
                         new ImmutablePair<>(ippKey, ippChoice);
 
                 final Boolean isValid = proxyPrinter
-                        .isCustomCostOptionValid(option, ippOptions);
+                        .isCustomCopyCostOptionValid(option, ippOptions);
 
                 if (isValid == null || isValid.booleanValue()) {
                     continue;
                 }
 
-                if (msg == null) {
-                    msg = new StringBuilder();
-                } else {
+                if (msg.length() > 0) {
                     msg.append(", ");
                 }
 
@@ -3592,12 +4135,12 @@ public abstract class AbstractProxyPrintService extends AbstractService
                                 ippChoice))
                         .append("\"");
             }
+        }
 
-            if (msg != null) {
-                return localize(locale,
-                        "msg-user-print-out-validation-finishing-warning",
-                        msg.toString());
-            }
+        if (msg.length() > 0) {
+            return localize(locale,
+                    "msg-user-print-out-validation-finishing-warning",
+                    msg.toString());
         }
 
         return null;

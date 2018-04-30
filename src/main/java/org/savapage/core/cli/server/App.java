@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -94,40 +94,28 @@ public final class App extends AbstractApp {
      */
     private static final AbstractAppApi[] APP_API_LIST = new AbstractAppApi[] {
             //
-            new CliAddInternalUser(),
-            //
-            new CliAddUserGroup(),
-            //
-            new CliChangeBaseCurrency(),
-            //
-            new CliDeleteUser(),
-            //
-            new CliDeleteUserGroup(),
-            //
-            new CliListUsers(),
-            //
-            new CliListUserGroups(),
-            //
-            new CliListUserGroupMembers(),
-            //
-            new CliListUserGroupMemberships(),
-            //
-            new CliListUserSourceGroups(),
-            //
-            new CliListUserSourceGroupMembers(),
-            //
-            new CliListUserSourceGroupNesting(),
-            //
-            new CliPrinterAccessControl(),
-            //
-            new CliPrinterSnmp(),
-            //
-            new CliSetUserProperties(),
-            //
-            new CliSetUserGroupProperties(),
-            //
-            new CliSyncUserGroup()
-            //
+            new CliAddInternalUser(), //
+            new CliAddUserGroup(), //
+            new CliChangeBaseCurrency(), //
+            new CliDeleteUser(), //
+            new CliDeleteUserGroup(), //
+            new CliEraseUser(), //
+            new CliGetConfigProperty(), //
+            new CliListUsers(), //
+            new CliListUserGroups(), //
+            new CliListUserGroupMembers(), //
+            new CliListUserGroupMemberships(), //
+            new CliListUserSourceGroups(), //
+            new CliListUserSourceGroupMembers(), //
+            new CliListUserSourceGroupNesting(), //
+            new CliPrinterAccessControl(), //
+            new CliPrinterSnmp(), //
+            new CliSetConfigProperty(), //
+            new CliSetUserProperties(), //
+            new CliSetUserGroupProperties(), //
+            new CliSyncUserGroup(), //
+            new CliSyncUsersAndGroups(), //
+            new CliSystemStatus() //
     };
 
     @Override

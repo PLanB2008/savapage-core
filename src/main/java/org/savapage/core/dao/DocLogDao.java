@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,20 +24,27 @@ package org.savapage.core.dao;
 import java.util.Date;
 import java.util.List;
 
+import javax.persistence.TypedQuery;
+
 import org.savapage.core.dao.enums.DocLogProtocolEnum;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.jpa.AccountTrx;
+import org.savapage.core.jpa.AccountVoucher;
 import org.savapage.core.jpa.DocIn;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.DocOut;
+import org.savapage.core.jpa.PosPurchase;
+import org.savapage.core.jpa.PosPurchaseItem;
+import org.savapage.core.jpa.User;
 
 /**
  *
  * @author Rijk Ravestein
  *
  */
-public interface DocLogDao extends GenericDao<DocLog> {
+public interface DocLogDao extends UserErasableDao<DocLog> {
 
     /**
      * Field identifiers used for select and sort.
@@ -166,35 +173,63 @@ public interface DocLogDao extends GenericDao<DocLog> {
      *
      * @return The DocLog instance from the database, or null when not found.
      */
-    DocLog findByUuid(final Long userId, final String uuid);
+    DocLog findByUuid(Long userId, String uuid);
+
+    /**
+     * Deletes {@link AccountTrx} instances dating from daysBackInTime and
+     * older.
+     * <ul>
+     * <li>For each deleted {@link AccountTrx}, associated
+     * {@link PosPurchaseItem} instances are deleted.</li>
+     * <li>Related {@link AccountVoucher} and {@link PosPurchase} are cleaned
+     * with {@link AccountTrxDao#cleanOrphaned(DaoBatchCommitter)}.</li>
+     * <li>All deletes are committed.</li>
+     * </ul>
+     *
+     * @param dateBackInTime
+     *            The date criterion.
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
+     * @return The number of deleted {@link AccountTrx} instances.
+     */
+    int cleanAccountTrxHistory(Date dateBackInTime,
+            DaoBatchCommitter batchCommitter);
 
     /**
      * Removes {@link DocLog} instances dating from daysBackInTime and older
      * which DO have a {@link DocOut} association.
-     * <p>
-     * Note: For each removed {@link DocLog} the associated {@link DocOut}
-     * instance and {@link AccountTrx} instances are deleted by cascade.
-     * </p>
+     * <ul>
+     * <li>Associated (orphaned) {@link DocOut} instances are deleted as
+     * well.</li>
+     * <li>All deletes are committed.</li>
+     * </ul>
      *
      * @param dateBackInTime
      *            The date criterion.
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
      * @return The number of deleted instances.
      */
-    int cleanDocOutHistory(Date dateBackInTime);
+    int cleanDocOutHistory(Date dateBackInTime,
+            DaoBatchCommitter batchCommitter);
 
     /**
      * Removes {@link DocLog} instances dating from daysBackInTime and older
      * which DO have a {@link DocIn} association.
-     * <p>
-     * Note: For each removed {@link DocLog} the associated {@link DocIn}
-     * instance and {@link AccountTrx} instances are deleted by cascade.
-     * </p>
+     * <ul>
+     * <li>Associated (orphaned) {@link DocIn} instances are deleted as
+     * well.</li>
+     * <li>All deletes are committed.</li>
+     * </ul>
      *
      * @param dateBackInTime
      *            The date criterion.
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
      * @return The number of deleted instances.
      */
-    int cleanDocInHistory(Date dateBackInTime);
+    int cleanDocInHistory(Date dateBackInTime,
+            DaoBatchCommitter batchCommitter);
 
     /**
      * Updates a {@link DocLog} instance with new external supplier data, and
@@ -223,4 +258,14 @@ public interface DocLogDao extends GenericDao<DocLog> {
      */
     boolean updateExtSupplier(Long docLogId, ExternalSupplierEnum extSupplier,
             ExternalSupplierStatusEnum extStatus, String documentTitle);
+
+    /**
+     * Creates a {@link TypedQuery} to use for export.
+     *
+     * @param user
+     *            The user
+     * @return The a {@link TypedQuery}.
+     */
+    TypedQuery<DocLog> getExportQuery(User user);
+
 }

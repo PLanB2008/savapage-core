@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -28,6 +28,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.NoSuchAlgorithmException;
+import java.util.List;
 import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.UUID;
@@ -37,16 +39,18 @@ import javax.activation.DataSource;
 import javax.inject.Singleton;
 import javax.mail.Message;
 import javax.mail.MessagingException;
-import javax.mail.Multipart;
 import javax.mail.PasswordAuthentication;
 import javax.mail.SendFailedException;
 import javax.mail.internet.InternetAddress;
 import javax.mail.internet.MimeBodyPart;
 import javax.mail.internet.MimeMessage;
 import javax.mail.internet.MimeMultipart;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.savapage.core.SpInfo;
 import org.savapage.core.circuitbreaker.CircuitBreaker;
 import org.savapage.core.circuitbreaker.CircuitBreakerException;
 import org.savapage.core.circuitbreaker.CircuitBreakerOperation;
@@ -59,6 +63,13 @@ import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.services.EmailService;
 import org.savapage.core.services.helpers.email.EmailMsgParms;
 import org.savapage.core.util.FileSystemHelper;
+import org.savapage.lib.pgp.PGPPublicKeyInfo;
+import org.savapage.lib.pgp.PGPSecretKeyInfo;
+import org.savapage.lib.pgp.mime.PGPBodyPartEncrypter;
+import org.savapage.lib.pgp.mime.PGPBodyPartSigner;
+import org.savapage.lib.pgp.mime.PGPMimeMultipart;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -69,6 +80,10 @@ import org.savapage.core.util.FileSystemHelper;
 @Singleton
 public final class EmailServiceImpl extends AbstractService
         implements EmailService {
+
+    /** */
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(EmailServiceImpl.class);
 
     /**
      *
@@ -84,6 +99,13 @@ public final class EmailServiceImpl extends AbstractService
      * .
      */
     private static final String MIME_FILE_GLOB = "*." + MIME_FILE_SUFFIX;
+
+    /**
+     * Specifies the SSL protocols that will be enabled for SSL connections. The
+     * property value is a whitespace separated list of tokens acceptable to the
+     * javax.net.ssl.SSLSocket.setEnabledProtocols method.
+     */
+    private String smtpSSLProtocols;
 
     /**
      * Creates a session for <i>writing</i> the MIME message file.
@@ -151,12 +173,22 @@ public final class EmailServiceImpl extends AbstractService
             };
         }
 
-        if (security.equalsIgnoreCase(IConfigProp.SMTP_SECURITY_V_STARTTLS)) {
+        final boolean isSTARTTLS =
+                security.equalsIgnoreCase(IConfigProp.SMTP_SECURITY_V_STARTTLS);
+        final boolean isSSLTLS =
+                security.equalsIgnoreCase(IConfigProp.SMTP_SECURITY_V_SSL);
+
+        if (isSTARTTLS) {
             props.put("mail.smtp.starttls.enable", "true");
-        } else if (security.equalsIgnoreCase(IConfigProp.SMTP_SECURITY_V_SSL)) {
+        } else if (isSSLTLS) {
             props.put("mail.smtp.socketFactory.port", port);
             props.put("mail.smtp.socketFactory.class",
                     "javax.net.ssl.SSLSocketFactory");
+        }
+
+        if ((isSTARTTLS || isSSLTLS)
+                && StringUtils.isNotBlank(this.smtpSSLProtocols)) {
+            props.put("mail.smtp.ssl.protocols", this.smtpSSLProtocols);
         }
 
         /*
@@ -242,13 +274,10 @@ public final class EmailServiceImpl extends AbstractService
         // date
         msg.setSentDate(new java.util.Date());
 
-        // create and fill the first message part
-        final MimeBodyPart mbp1 = new MimeBodyPart();
-        mbp1.setText(msgParms.getBody());
-        mbp1.setHeader("Content-Type", msgParms.getContentType());
-
-        // create the Multipart and its parts to it
-        final Multipart mp;
+        /*
+         * Create the Multipart and its parts to it.
+         */
+        final MimeMultipart mp;
 
         if (msgParms.getCidMap().isEmpty()) {
             mp = new MimeMultipart();
@@ -256,9 +285,13 @@ public final class EmailServiceImpl extends AbstractService
             mp = new MimeMultipart(MIME_MULTIPART_SUBTYPE_RELATED);
         }
 
+        // create and fill the first message part
+        final MimeBodyPart mbp1 = new MimeBodyPart();
+        mbp1.setText(msgParms.getBody());
+        mbp1.setHeader("Content-Type", msgParms.getContentType());
+
         mp.addBodyPart(mbp1);
 
-        //
         if (msgParms.getFileAttach() != null) {
 
             final MimeBodyPart mbp2 = new MimeBodyPart();
@@ -292,10 +325,46 @@ public final class EmailServiceImpl extends AbstractService
             mp.addBodyPart(mbp);
         }
 
-        // add the Multipart to the message
-        msg.setContent(mp);
-
+        msg.setContent(applyPgpMime(mp, msgParms.getPublicKeyList()));
         return msg;
+    }
+
+    /**
+     * Applies PGP/MIME on the vanilla MimeMultipart when PGP/MIME parameters
+     * are present.
+     *
+     * @param mp
+     *            The vanilla MimeMultipart.
+     * @param publicKeyList
+     *            The List of PGP public keys to sign with.
+     * @return The part to be used in the mail message, which is either the
+     *         vanilla message, or the vanilla message processed (signed and
+     *         optionally encrypted) to PGP/MIME.
+     * @throws MessagingException
+     *             When MIME message error.
+     */
+    private MimeMultipart applyPgpMime(final MimeMultipart mp,
+            final List<PGPPublicKeyInfo> publicKeyList)
+            throws MessagingException {
+
+        final PGPSecretKeyInfo secretKeyInfo =
+                ConfigManager.instance().getPGPSecretKeyInfo();
+
+        if (secretKeyInfo == null || !ConfigManager.instance()
+                .isConfigValue(Key.MAIL_PGP_MIME_SIGN)) {
+            return mp;
+        }
+
+        if (publicKeyList == null || publicKeyList.isEmpty() || !ConfigManager
+                .instance().isConfigValue(Key.MAIL_PGP_MIME_ENCRYPT)) {
+            final PGPBodyPartSigner signer =
+                    new PGPBodyPartSigner(secretKeyInfo);
+            return PGPMimeMultipart.create(mp, signer);
+        }
+
+        final PGPBodyPartEncrypter encrypter =
+                new PGPBodyPartEncrypter(secretKeyInfo, publicKeyList);
+        return PGPMimeMultipart.create(mp, encrypter);
     }
 
     /**
@@ -407,6 +476,35 @@ public final class EmailServiceImpl extends AbstractService
     @Override
     public String getOutboxMimeFileGlob() {
         return MIME_FILE_GLOB;
+    }
+
+    @Override
+    public void start() {
+
+        try {
+            final SSLContext ctx = SSLContext.getDefault();
+            final SSLParameters params = ctx.getDefaultSSLParameters();
+
+            final StringBuilder protocols = new StringBuilder();
+            for (final String protocol : params.getProtocols()) {
+                protocols.append(" ").append(protocol);
+            }
+            this.smtpSSLProtocols = protocols.toString().trim();
+
+            SpInfo.instance().log(String.format("SSL Mail protocols [%s]",
+                    this.smtpSSLProtocols));
+
+        } catch (NoSuchAlgorithmException e) {
+            LOGGER.warn(String.format("No SSL Mail protocols found: %s",
+                    e.getMessage()));
+            this.smtpSSLProtocols = null;
+        }
+
+    }
+
+    @Override
+    public void shutdown() {
+        // no code intended.
     }
 
 }

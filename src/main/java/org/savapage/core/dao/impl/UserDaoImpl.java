@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,11 +26,19 @@ import java.util.List;
 
 import javax.persistence.NoResultException;
 import javax.persistence.Query;
+import javax.persistence.TypedQuery;
+import javax.persistence.criteria.CriteriaBuilder;
+import javax.persistence.criteria.CriteriaQuery;
+import javax.persistence.criteria.Root;
 
 import org.savapage.core.SpException;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.enums.ReservedUserGroupEnum;
+import org.savapage.core.dao.enums.UserGroupAttrEnum;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
+import org.savapage.core.jpa.AccountTrx;
 import org.savapage.core.jpa.User;
+import org.savapage.core.jpa.tools.DbSimpleEntity;
 import org.savapage.core.services.ServiceContext;
 
 /**
@@ -44,6 +52,11 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
      *
      */
     public UserDaoImpl() {
+    }
+
+    @Override
+    protected String getCountQuery() {
+        return "SELECT COUNT(T.id) FROM User T";
     }
 
     @Override
@@ -75,13 +88,29 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
         return user;
     }
 
+    /**
+     *
+     * @param jpql
+     */
+    private void appendAclJoin(final StringBuilder jpql) {
+
+        jpql.append(" LEFT JOIN UserAttr UA ON UA.user = U "
+                + "AND UA.name = :roleName");
+
+        jpql.append(" LEFT JOIN UserGroupMember UGM ON UGM.user = U");
+
+        jpql.append(" LEFT JOIN UserGroupAttr UGA ON UGA.userGroup = UGM.group "
+                + "AND UGA.name = :roleNameGroup");
+    }
+
     @Override
     public long getListCount(final ListFilter filter) {
 
         final StringBuilder jpql =
                 new StringBuilder(JPSQL_STRINGBUILDER_CAPACITY);
 
-        jpql.append("SELECT COUNT(U.id) FROM ");
+        jpql.append("SELECT COUNT(*) FROM User X WHERE X.id IN "
+                + "(SELECT DISTINCT U.id FROM ");
 
         if (filter.getUserGroupId() == null) {
             jpql.append("User U");
@@ -89,11 +118,17 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
             jpql.append("UserGroupMember M JOIN M.user U JOIN M.group G");
         }
 
+        if (filter.getAclFilter() != null) {
+            appendAclJoin(jpql);
+        }
+
         if (filter.getContainingEmailText() != null) {
             jpql.append(" JOIN U.emails E");
         }
 
         applyListFilter(jpql, filter);
+
+        jpql.append(")");
 
         final Query query = createListQuery(jpql, filter);
         final Number countResult = (Number) query.getSingleResult();
@@ -120,6 +155,10 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
             jpql.append("User U");
         } else {
             jpql.append("UserGroupMember M JOIN M.user U JOIN M.group G");
+        }
+
+        if (filter.getAclFilter() != null) {
+            appendAclJoin(jpql);
         }
 
         if (filter.getContainingEmailText() == null) {
@@ -253,6 +292,47 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
             where.append(" U.deleted = :selDeleted");
         }
 
+        if (filter.getAclFilter() != null) {
+            if (nWhere > 0) {
+                where.append(" AND");
+            }
+            nWhere++;
+
+            where.append("(");
+
+            if (filter.getAclFilter().isAclUserExternal()
+                    || filter.getAclFilter().isAclUserInternal()) {
+
+                where.append("(" + "UA.name = null AND UGA.name = null");
+
+                if (filter.getAclFilter().isAclUserExternal()
+                        && filter.getAclFilter().isAclUserInternal()) {
+                    // All users are authorized by default.
+
+                } else if (filter.getAclFilter().isAclUserExternal()) {
+                    // Only external users are authorized by default.
+                    where.append(" AND U.internal = false");
+                } else if (filter.getAclFilter().isAclUserInternal()) {
+                    // Only internal users are authorized by default.
+                    where.append(" AND U.internal = true");
+                }
+
+                where.append(") OR");
+
+            }
+
+            where.append(" (UA.name != null AND UA.value LIKE :jsonRole"
+                    + " AND UA.value LIKE :jsonRoleValue)");
+
+            where.append(" OR (UA.name = null AND UGA.value LIKE :jsonRole"
+                    + " AND UGA.value LIKE :jsonRoleValue)");
+
+            where.append(" OR (UA.name != null AND UA.value NOT LIKE :jsonRole"
+                    + " AND UGA.value LIKE :jsonRoleValue)");
+
+            where.append(")");
+        }
+
         if (nWhere > 0) {
             jpql.append(" WHERE ").append(where.toString());
         }
@@ -270,6 +350,26 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
             final ListFilter filter) {
 
         final Query query = getEntityManager().createQuery(jpql.toString());
+
+        if (filter.getAclFilter() != null) {
+
+            query.setParameter("roleName",
+                    UserGroupAttrEnum.ACL_ROLES.getName());
+
+            query.setParameter("roleNameGroup",
+                    UserGroupAttrEnum.ACL_ROLES.getName());
+
+            /*
+             * INVARIANT: JSON string does NOT contain whitespace.
+             */
+            final String jsonRole = String.format("\"%s\"",
+                    filter.getAclFilter().getAclRole().toString());
+
+            query.setParameter("jsonRole", String.format("%%%s%%", jsonRole));
+            query.setParameter("jsonRoleValue", String.format("%%%s:%s%%",
+                    jsonRole, Boolean.TRUE.toString()));
+
+        }
 
         if (filter.getUserGroupId() != null) {
             query.setParameter("userGroupId", filter.getUserGroupId());
@@ -327,31 +427,62 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
         query.executeUpdate();
     }
 
+    /**
+     * Counts the number of user {@link AccountTrx} instances.
+     *
+     * @param userDbKey
+     *            The database primary key of a {@link User}.
+     * @return The count.
+     */
+    private long getUserAccountTrxCount(final Long userDbKey) {
+        final String jpql = "SELECT COUNT(TRX.id) FROM "
+                + DbSimpleEntity.USER_ACCOUNT + " UA" + " JOIN "
+                + DbSimpleEntity.ACCOUNT_TRX + " TRX "
+                + "ON TRX.account = UA.account" + " WHERE UA.user = :user";
+
+        final Query query = getEntityManager().createQuery(jpql);
+        query.setParameter("user", userDbKey);
+
+        final Number countResult = (Number) query.getSingleResult();
+        return countResult.longValue();
+    }
+
     @Override
-    public int pruneUsers() {
+    public int pruneUsers(final DaoBatchCommitter batchCommitter) {
         /*
          * NOTE: We do NOT use bulk delete with JPQL since we want the option to
          * roll back the deletions as part of a transaction, and we want to use
-         * cascade deletion. Therefore we use the remove() method in
-         * EntityManager to delete individual records instead (so cascaded
-         * deleted are triggered).
+         * CASCADE deletion.
+         *
+         * Therefore we use the remove() method in EntityManager to delete
+         * individual records instead (so CASCADED deletes are triggered).
          */
-        int nCount = 0;
+        int nDeleted = 0;
 
-        final String jpql = "SELECT U FROM User U WHERE U.deleted = true "
+        final String jpql = "SELECT U.id FROM User U WHERE U.deleted = true "
                 + "AND U.docLog IS EMPTY";
 
         final Query query = getEntityManager().createQuery(jpql);
 
         @SuppressWarnings("unchecked")
-        final List<User> list = query.getResultList();
+        final List<Long> list = query.getResultList();
 
-        for (final User user : list) {
-            this.delete(user);
-            nCount++;
+        for (final Long id : list) {
+            /*
+             * Do NOT delete a user when AccountTrx are present. Reason: when
+             * printing was charged via Delegated Print, no DocLog are present
+             * for this user. Or, user could have redeemed a voucher, and never
+             * have printed. Ergo: When AccountTrx are completely cleaned, user
+             * can be deleted.
+             */
+            if (getUserAccountTrxCount(id) > 0) {
+                continue;
+            }
+            this.delete(this.findById(id));
+            nDeleted++;
+            batchCommitter.increment();
         }
-
-        return nCount;
+        return nDeleted;
     }
 
     @Override
@@ -399,6 +530,27 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
     @Override
     public User findActiveUserByUserId(final String userId) {
         return readUser(userId, null, null, null);
+    }
+
+    @Override
+    public List<User> findDeletedUsersByUserId(final String userId) {
+
+        /*
+         * SELECT U FROM User U WHERE U.userId = :userId AND U.deleted = true
+         */
+        final CriteriaBuilder cb = getEntityManager().getCriteriaBuilder();
+        final CriteriaQuery<User> criteriaQuery = cb.createQuery(User.class);
+        final Root<User> root = criteriaQuery.from(User.class);
+
+        criteriaQuery.where(cb.and(cb.equal(root.get("userId"), userId),
+                cb.equal(root.get("deleted"), Boolean.TRUE)));
+
+        final CriteriaQuery<User> select = criteriaQuery.select(root);
+
+        final TypedQuery<User> typedQuery =
+                getEntityManager().createQuery(select);
+
+        return typedQuery.getResultList();
     }
 
     @Override

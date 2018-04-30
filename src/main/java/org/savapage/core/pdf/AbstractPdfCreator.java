@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -39,7 +39,9 @@ import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.inbox.InboxInfoDto.InboxJob;
 import org.savapage.core.inbox.InboxInfoDto.InboxJobRange;
 import org.savapage.core.inbox.LetterheadInfo;
+import org.savapage.core.inbox.PdfOrientationInfo;
 import org.savapage.core.inbox.RangeAtom;
+import org.savapage.core.ipp.rules.IppRuleNumberUp;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.DocOut;
 import org.savapage.core.jpa.PdfOut;
@@ -85,6 +87,8 @@ public abstract class AbstractPdfCreator {
 
     private boolean isForPrinting = false;
 
+    private int printNup;
+
     /**
      * For future use, for now: do NOT encrypt since
      * {@link PdfPrintCollector#collect(ProxyPrintSheetsCalcParms, boolean, File, File)}
@@ -118,11 +122,25 @@ public abstract class AbstractPdfCreator {
     protected LetterheadInfo.LetterheadJob myLetterheadJob = null;
 
     /**
+     * The {@link PdfOrientationInfo} of the first page of first job, used to
+     * find the {@link IppRuleNumberUp}.
+     */
+    protected PdfOrientationInfo firstPageOrientationInfo;
+
+    /**
      *
      * @return {@code true} when PDF is created for proxy printing.
      */
     protected boolean isForPrinting() {
         return this.isForPrinting;
+    }
+
+    /**
+     *
+     * @return Get print number-up.
+     */
+    protected int getPrintNup() {
+        return this.printNup;
     }
 
     /**
@@ -194,11 +212,14 @@ public abstract class AbstractPdfCreator {
     /**
      *
      * @param jobPfdName
-     * @param rotation
+     *            PDF name.
+     * @param userRotate
+     *            The user rotate for the job.
      * @throws Exception
+     *             When errors.
      */
-    protected abstract void onInitJob(final String jobPfdName,
-            final Integer rotation) throws Exception;
+    protected abstract void onInitJob(String jobPfdName, Integer userRotate)
+            throws Exception;
 
     /**
      *
@@ -337,11 +358,15 @@ public abstract class AbstractPdfCreator {
         this.useEcoPdfShadow = createReq.isEcoPdfShadow();
 
         this.pdfFile = createReq.getPdfFile();
+
         this.isForPrinting = createReq.isForPrinting();
+        this.printNup = createReq.getPrintNup();
 
         this.isGrayscalePdf = createReq.isGrayscale();
 
         this.removeGraphics = createReq.isRemoveGraphics();
+
+        this.firstPageOrientationInfo = null;
 
         /*
          * INVARIANT: if PDF is meant for export, DRM-restricted content is not
@@ -717,8 +742,10 @@ public abstract class AbstractPdfCreator {
         }
 
         final PdfCreateInfo createInfo = new PdfCreateInfo(generatedPdf);
+
         createInfo.setBlankFillerPages(totFillerPages);
         createInfo.setLogicalJobPages(logicalJobPages);
+        createInfo.setPdfOrientationInfo(this.firstPageOrientationInfo);
 
         return createInfo;
     }

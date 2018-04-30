@@ -40,6 +40,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -68,6 +69,7 @@ import org.savapage.core.dto.UserAccountingDto;
 import org.savapage.core.dto.UserDto;
 import org.savapage.core.dto.UserEmailDto;
 import org.savapage.core.dto.UserPropertiesDto;
+import org.savapage.core.i18n.AdverbEnum;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.User;
@@ -91,6 +93,7 @@ import org.savapage.core.services.UserService;
 import org.savapage.core.users.CommonUser;
 import org.savapage.core.users.IUserSource;
 import org.savapage.core.users.conf.InternalGroupList;
+import org.savapage.core.util.DateUtil;
 import org.savapage.core.util.EmailValidator;
 import org.savapage.core.util.JsonHelper;
 import org.savapage.core.util.NumberUtil;
@@ -547,6 +550,7 @@ public final class UserServiceImpl extends AbstractService
 
         dto.setId(this.getPrimaryIdNumber(user));
         dto.setYubiKeyPubId(this.getYubiKeyPubID(user));
+        dto.setPgpPubKeyId(this.getPGPPubKeyID(user));
         dto.setEmail(this.getPrimaryEmailAddress(user));
         dto.setCard(this.getPrimaryCardNumber(user));
 
@@ -696,9 +700,25 @@ public final class UserServiceImpl extends AbstractService
         final String primaryEmail = userDto.getEmail();
 
         /*
+         * PGP Public Key ID.
+         */
+        String pgpPubKeyId = userDto.getPgpPubKeyId();
+        if (pgpPubKeyId != null) {
+            pgpPubKeyId = pgpPubKeyId.toUpperCase();
+        }
+        final boolean hasPgpPubKeyId = StringUtils.isNotBlank(pgpPubKeyId);
+
+        if (hasPgpPubKeyId) {
+            JsonRpcMethodError error = validatePGPPubKeyID(pgpPubKeyId);
+            if (error != null) {
+                return error;
+            }
+        }
+
+        /*
          * PIN
          */
-        String pin = userDto.getPin();
+        final String pin = userDto.getPin();
         final boolean hasPIN = StringUtils.isNotBlank(pin);
 
         if (hasPIN) {
@@ -937,7 +957,7 @@ public final class UserServiceImpl extends AbstractService
 
             userDAO().create(jpaUser);
 
-            if (hasPIN || hasUuid) {
+            if (hasPIN || hasUuid || hasPgpPubKeyId) {
                 /*
                  * For a new User a create (persist()) is needed first, cause we
                  * need the generated primary key to encrypt the PIN / UUID.
@@ -947,6 +967,10 @@ public final class UserServiceImpl extends AbstractService
                 }
                 if (hasUuid) {
                     this.encryptStoreUserAttr(jpaUser, UserAttrEnum.UUID, uuid);
+                }
+                if (hasPgpPubKeyId) {
+                    this.setUserAttrValue(jpaUser, UserAttrEnum.PGP_PUBKEY_ID,
+                            pgpPubKeyId);
                 }
 
                 userDAO().update(jpaUser);
@@ -962,6 +986,10 @@ public final class UserServiceImpl extends AbstractService
                 this.removeUserAttr(jpaUser, UserAttrEnum.UUID);
             }
 
+            if (!hasPgpPubKeyId) {
+                this.removeUserAttr(jpaUser, UserAttrEnum.PGP_PUBKEY_ID);
+            }
+
             userDAO().update(jpaUser);
 
             if (!jpaUser.getPerson()) {
@@ -974,6 +1002,11 @@ public final class UserServiceImpl extends AbstractService
 
             if (hasUuid) {
                 this.encryptStoreUserAttr(jpaUser, UserAttrEnum.UUID, uuid);
+            }
+
+            if (hasPgpPubKeyId) {
+                this.setUserAttrValue(jpaUser, UserAttrEnum.PGP_PUBKEY_ID,
+                        pgpPubKeyId);
             }
         }
 
@@ -1121,7 +1154,7 @@ public final class UserServiceImpl extends AbstractService
     }
 
     /**
-     * Perform the final actions after a user delete.
+     * Perform the final actions after a user delete (clean SafePages).
      *
      * @param userIdToDelete
      *            The unique user name to delete.
@@ -1152,19 +1185,54 @@ public final class UserServiceImpl extends AbstractService
     }
 
     @Override
-    public AbstractJsonRpcMethodResponse deleteUser(final String userIdToDelete)
-            throws IOException {
+    public AbstractJsonRpcMethodResponse deleteUser(final String uid) {
 
-        final User user = userDAO().lockByUserId(userIdToDelete);
-
+        final User user = userDAO().lockByUserId(uid);
         if (user == null) {
-            return createError("msg-user-not-found", userIdToDelete);
+            return createError("msg-user-not-found", uid);
         }
 
-        this.performLogicalDelete(user);
+        final AbstractJsonRpcMethodResponse rsp = this.deleteUser(user);
+        if (rsp.isError()) {
+            return rsp;
+        }
         userDAO().update(user);
+        return rsp;
+    }
 
-        return this.deleteUserFinalAction(userIdToDelete);
+    /**
+     * Logically deletes a user.
+     *
+     * @param user
+     *            The user.
+     * @return The JSON-RPC Return message (either a result or an error);
+     */
+    private AbstractJsonRpcMethodResponse deleteUser(final User user) {
+        this.performLogicalDelete(user);
+        return this.deleteUserFinalAction(user.getUserId());
+    }
+
+    @Override
+    public AbstractJsonRpcMethodResponse eraseUser(final String uid) {
+
+        // Erase active user.
+        final User user = userDAO().lockByUserId(uid);
+        if (user != null) {
+            final AbstractJsonRpcMethodResponse rsp = this.deleteUser(user);
+            if (rsp.isError()) {
+                return rsp;
+            }
+            this.performErase(user);
+            userDAO().update(user);
+        }
+
+        // Erase deleted users.
+        for (final User userWlk : userDAO().findDeletedUsersByUserId(uid)) {
+            this.performErase(userWlk);
+            userDAO().update(userWlk);
+        }
+
+        return JsonRpcMethodResult.createOkResult();
     }
 
     @Override
@@ -1234,6 +1302,18 @@ public final class UserServiceImpl extends AbstractService
         } catch (Exception e) {
             return createError("msg-user-uuid-invalid");
         }
+        return null;
+    }
+
+    /**
+     * TODO: Checks if PGP Public Key ID is valid.
+     *
+     * @param pubKeyId
+     *            The PGP Public Key ID.
+     * @return {@code null} if valid.
+     */
+    private JsonRpcMethodError validatePGPPubKeyID(final String pubKeyId) {
+        // TODO
         return null;
     }
 
@@ -2205,6 +2285,27 @@ public final class UserServiceImpl extends AbstractService
     }
 
     @Override
+    public String getPGPPubKeyID(final User user) {
+
+        final String publicID;
+
+        final UserAttr attr =
+                userAttrDAO().findByName(user, UserAttrEnum.PGP_PUBKEY_ID);
+
+        if (attr == null) {
+            publicID = null;
+        } else {
+            publicID = attr.getValue();
+        }
+
+        if (StringUtils.isBlank(publicID)) {
+            return "";
+        }
+
+        return publicID;
+    }
+
+    @Override
     public String getPrimaryEmailAddress(final User user) {
 
         String address = null;
@@ -2361,6 +2462,61 @@ public final class UserServiceImpl extends AbstractService
     }
 
     /**
+     * Removes all User group memberships from the database.
+     *
+     * @param user
+     *            The {@link User}.
+     */
+    private void removeAllGroupMemberShips(final User user) {
+
+        final List<UserGroupMember> memberships = user.getGroupMembership();
+
+        if (memberships != null) {
+            for (final UserGroupMember membership : memberships) {
+                userGroupMemberDAO().delete(membership);
+            }
+            memberships.clear();
+        }
+    }
+
+    /**
+     * Removes identifying {@link UserAttr} from the database.
+     *
+     * @param user
+     *            The {@link User}.
+     */
+    private void eraseUserAttr(final User user) {
+
+        final List<UserAttr> attrList = user.getAttributes();
+        if (attrList == null) {
+            return;
+        }
+        final Iterator<UserAttr> iter = attrList.iterator();
+
+        while (iter.hasNext()) {
+
+            final UserAttr attr = iter.next();
+
+            switch (UserAttrEnum.asEnum(attr.getName())) {
+            case ACL_OIDS_ADMIN:
+            case ACL_OIDS_USER:
+            case ACL_ROLES:
+            case BITCOIN_PAYMENT_ADDRESS:
+            case INTERNAL_PASSWORD:
+            case PIN:
+            case PGP_PUBKEY_ID:
+            case PDF_PROPS:
+            case UUID:
+                userAttrDAO().delete(attr);
+                iter.remove();
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
+    /**
      * Removes all User ID Numbers from the database.
      *
      * @param user
@@ -2385,6 +2541,7 @@ public final class UserServiceImpl extends AbstractService
 
         user.setDeleted(true);
         user.setDeletedDate(trxDate);
+
         user.setModifiedBy(ServiceContext.getActor());
         user.setModifiedDate(trxDate);
 
@@ -2399,19 +2556,81 @@ public final class UserServiceImpl extends AbstractService
             for (final UserAccount userAccount : userAccountList) {
 
                 final Account account = userAccount.getAccount();
-
                 final AccountTypeEnum accountType =
                         AccountTypeEnum.valueOf(account.getAccountType());
 
-                if (accountType != Account.AccountTypeEnum.SHARED) {
+                if (accountType == Account.AccountTypeEnum.SHARED) {
+                    continue;
+                }
 
-                    account.setDeleted(true);
-                    account.setDeletedDate(trxDate);
-                    account.setModifiedBy(ServiceContext.getActor());
-                    account.setModifiedDate(trxDate);
+                account.setDeleted(true);
+                account.setDeletedDate(trxDate);
+                account.setModifiedBy(ServiceContext.getActor());
+                account.setModifiedDate(trxDate);
+            }
+        }
+    }
+
+    /**
+     * Erases a user.
+     *
+     * @param user
+     *            The user.
+     */
+    private void performErase(final User user) {
+
+        final Date trxDate = ServiceContext.getTransactionDate();
+
+        user.setModifiedBy(ServiceContext.getActor());
+        user.setModifiedDate(trxDate);
+
+        user.setUserId(User.ERASED_USER_ID);
+        user.setExternalUserName(User.ERASED_EXTERNAL_USER_NAME);
+
+        user.setFullName(null);
+        user.setDepartment(null);
+        user.setOffice(null);
+
+        eraseUserAttr(user);
+
+        final List<UserAccount> userAccountList = user.getAccounts();
+
+        if (userAccountList != null) {
+
+            for (final UserAccount userAccount : userAccountList) {
+
+                final Account account = userAccount.getAccount();
+                final AccountTypeEnum accountType =
+                        AccountTypeEnum.valueOf(account.getAccountType());
+
+                if (accountType == Account.AccountTypeEnum.SHARED) {
+                    continue;
+                }
+
+                account.setModifiedBy(ServiceContext.getActor());
+                account.setModifiedDate(trxDate);
+
+                account.setName(Account.ERASED_ACCOUNT_NAME);
+                account.setNameLower(Account.ERASED_ACCOUNT_NAME);
+                account.setNotes(null);
+                account.setPin(null);
+
+                if (account.getSubName() != null) {
+                    account.setSubName(Account.ERASED_ACCOUNT_NAME);
+                    account.setSubNameLower(Account.ERASED_ACCOUNT_NAME);
+                    account.setSubPin(null);
                 }
             }
         }
+
+        accountTrxDAO().eraseUser(user);
+        costChangeDAO().eraseUser(user);
+        purchaseDAO().eraseUser(user);
+
+        docLogDAO().eraseUser(user);
+        docInDAO().eraseUser(user);
+        docOutDAO().eraseUser(user);
+        pdfOutDAO().eraseUser(user);
     }
 
     @Override
@@ -2966,4 +3185,19 @@ public final class UserServiceImpl extends AbstractService
                 objProps.stringify());
     }
 
+    @Override
+    public boolean isErased(final User user) {
+        return user.getDeleted()
+                && user.getUserId().equals(User.ERASED_USER_ID);
+    }
+
+    @Override
+    public String getUserIdUi(final User user, final Locale locale) {
+        if (this.isErased(user)) {
+            return String.format("%s-%s",
+                    AdverbEnum.ANONYMOUS.uiText(locale).toLowerCase(),
+                    DateUtil.dateAsIso8601(user.getModifiedDate()));
+        }
+        return user.getUserId();
+    }
 }

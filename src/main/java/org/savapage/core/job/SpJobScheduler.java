@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -27,25 +27,32 @@ import static org.quartz.TriggerBuilder.newTrigger;
 
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
+import org.apache.commons.lang3.EnumUtils;
 import org.quartz.CronTrigger;
 import org.quartz.Job;
 import org.quartz.JobBuilder;
 import org.quartz.JobDataMap;
 import org.quartz.JobDetail;
+import org.quartz.JobExecutionContext;
 import org.quartz.JobKey;
 import org.quartz.Scheduler;
 import org.quartz.SchedulerException;
 import org.quartz.SimpleTrigger;
+import org.quartz.Trigger;
 import org.quartz.impl.StdSchedulerFactory;
 import org.quartz.simpl.PropertySettingJobFactory;
 import org.savapage.core.SpException;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
+import org.savapage.core.jpa.Printer;
 import org.savapage.core.print.gcp.GcpPrinter;
 import org.savapage.core.print.imap.ImapPrinter;
 import org.savapage.core.util.DateUtil;
+import org.savapage.core.util.JsonHelper;
 import org.savapage.ext.smartschool.SmartschoolPrinter;
 import org.savapage.ext.smartschool.job.SmartschoolPrintMonitorJob;
 import org.slf4j.Logger;
@@ -66,6 +73,8 @@ public final class SpJobScheduler {
     private final List<JobDetail> myWeeklyJobs = new ArrayList<>();
     private final List<JobDetail> myMonthlyJobs = new ArrayList<>();
     private final List<JobDetail> myDailyMaintJobs = new ArrayList<>();
+
+    private JobDetail myAtomFeedJob;
 
     /**
      * The SingletonHolder is loaded on the first execution of
@@ -141,7 +150,11 @@ public final class SpJobScheduler {
              * not have members.
              */
             scheduleOneShotJob(SpJobType.APP_LOG_CLEAN, 1L);
-            scheduleOneShotJob(SpJobType.DOC_LOG_CLEAN, 1L);
+
+            if (ConfigManager.isCleanUpDocLogAtStart()) {
+                scheduleOneShotJob(SpJobType.DOC_LOG_CLEAN, 1L);
+            }
+
             scheduleOneShotJob(SpJobType.PRINTER_GROUP_CLEAN, 1L);
 
             /*
@@ -190,6 +203,11 @@ public final class SpJobScheduler {
     public void scheduleJobs(final IConfigProp.Key configKey) {
 
         switch (configKey) {
+        case FEED_ATOM_ADMIN_SCHEDULE:
+            final List<JobDetail> jobs = new ArrayList<>();
+            jobs.add(myAtomFeedJob);
+            scheduleJobs(jobs, configKey);
+            break;
         case SCHEDULE_HOURLY:
             scheduleJobs(myHourlyJobs, configKey);
             break;
@@ -238,7 +256,7 @@ public final class SpJobScheduler {
                 interruptGcpListener();
 
                 /*
-                 * Wait for PaperCut Prit Monitor to finish...
+                 * Wait for PaperCut Print Monitor to finish...
                  */
                 interruptPaperCutPrintMonitor();
 
@@ -279,6 +297,10 @@ public final class SpJobScheduler {
         JobDataMap data = null;
 
         switch (jobType) {
+
+        case ATOM_FEED:
+            jobClass = org.savapage.core.job.AtomFeedJob.class;
+            break;
 
         case CUPS_SUBS_RENEW:
             jobClass = org.savapage.core.job.CupsSubsRenew.class;
@@ -350,6 +372,10 @@ public final class SpJobScheduler {
             jobClass = org.savapage.core.job.PrinterGroupClean.class;
             break;
 
+        case PRINTER_SNMP:
+            jobClass = org.savapage.core.job.PrinterSnmpJob.class;
+            break;
+
         case SMARTSCHOOL_PRINT_MONITOR_JOB:
             jobClass =
                     org.savapage.ext.smartschool.job.SmartschoolPrintMonitorJob.class;
@@ -372,19 +398,23 @@ public final class SpJobScheduler {
      *
      */
     private void initJobDetails() {
-        //
+
         myHourlyJobs
                 .add(createJob(SpJobType.CUPS_SUBS_RENEW, JOB_GROUP_SCHEDULED));
 
-        //
         myWeeklyJobs.add(createJob(SpJobType.DB_BACKUP, JOB_GROUP_SCHEDULED));
 
-        //
-        myDailyJobs.add(createJob(SpJobType.SYNC_USERS, JOB_GROUP_SCHEDULED));
-        myDailyJobs.add(createJob(SpJobType.CHECK_MEMBERSHIP_CARD,
-                JOB_GROUP_SCHEDULED));
-        myDailyJobs.add(
-                createJob(SpJobType.PRINTER_GROUP_CLEAN, JOB_GROUP_SCHEDULED));
+        for (final SpJobType jobType : EnumSet.of(SpJobType.SYNC_USERS,
+                SpJobType.CHECK_MEMBERSHIP_CARD,
+                SpJobType.PRINTER_GROUP_CLEAN)) {
+            myDailyJobs.add(createJob(jobType, JOB_GROUP_SCHEDULED));
+        }
+
+        for (final SpJobType jobType : EnumSet.of(SpJobType.PRINTER_SNMP)) {
+            myDailyMaintJobs.add(createJob(jobType, JOB_GROUP_SCHEDULED));
+        }
+
+        myAtomFeedJob = createJob(SpJobType.ATOM_FEED, JOB_GROUP_SCHEDULED);
     }
 
     /**
@@ -399,6 +429,8 @@ public final class SpJobScheduler {
         scheduleJobs(IConfigProp.Key.SCHEDULE_WEEKLY);
         scheduleJobs(IConfigProp.Key.SCHEDULE_MONTHLY);
         scheduleJobs(IConfigProp.Key.SCHEDULE_DAILY_MAINT);
+
+        scheduleJobs(IConfigProp.Key.FEED_ATOM_ADMIN_SCHEDULE);
     }
 
     /**
@@ -459,13 +491,75 @@ public final class SpJobScheduler {
     }
 
     /**
+     * Schedule SNMP retrieval for a hosts.
+     *
+     * @param hosts
+     *            The set of host addresses.
+     * @param secondsFromNow
+     */
+    public void scheduleOneShotPrinterSnmp(final Set<String> hosts,
+            final long secondsFromNow) {
+
+        this.scheduleOneShotPrinterSnmp(PrinterSnmpJob.ATTR_HOST_SET,
+                JsonHelper.stringifyStringSet(hosts), secondsFromNow);
+    }
+
+    /**
+     * Schedule SNMP retrieval for a single printer.
+     *
+     * @param printerID
+     *            The primary database key of a {@link Printer}.
+     * @param secondsFromNow
+     */
+    public void scheduleOneShotPrinterSnmp(final Long printerID,
+            final long secondsFromNow) {
+        this.scheduleOneShotPrinterSnmp(PrinterSnmpJob.ATTR_PRINTER_ID,
+                printerID, secondsFromNow);
+    }
+
+    /**
+     * Schedule SNMP retrieval for a all printers.
+     *
+     * @param secondsFromNow
+     */
+    public void scheduleOneShotPrinterSnmp(final long secondsFromNow) {
+        this.scheduleOneShotPrinterSnmp(null, null, secondsFromNow);
+    }
+
+    /**
+     *
+     * @param key
+     *            The key for the job context.
+     * @param value
+     *            The value.
+     * @param secondsFromNow
+     */
+    private void scheduleOneShotPrinterSnmp(final String key,
+            final Object value, final long secondsFromNow) {
+
+        final JobDataMap data = new JobDataMap();
+
+        if (key != null) {
+            data.put(key, value);
+        }
+
+        final JobDetail job = newJob(org.savapage.core.job.PrinterSnmpJob.class)
+                .withIdentity(SpJobType.PRINTER_SNMP.toString(),
+                        JOB_GROUP_ONESHOT)
+                .usingJobData(data).build();
+
+        rescheduleOneShotJob(job,
+                secondsFromNow * DateUtil.DURATION_MSEC_SECOND);
+    }
+
+    /**
      *
      * @param requestingUser
      * @param subscriptionId
      * @param secondsFromNow
      */
-    public void scheduleOneShotIppNotifications(String requestingUser,
-            String subscriptionId, long secondsFromNow) {
+    public void scheduleOneShotIppNotifications(final String requestingUser,
+            final String subscriptionId, final long secondsFromNow) {
 
         final JobDataMap data = new JobDataMap();
         data.put(IppGetNotifications.ATTR_REQUESTING_USER, requestingUser);
@@ -486,7 +580,8 @@ public final class SpJobScheduler {
      *
      * @param milliSecondsFromNow
      */
-    public void scheduleOneShotEmailOutboxMonitor(long milliSecondsFromNow) {
+    public void
+            scheduleOneShotEmailOutboxMonitor(final long milliSecondsFromNow) {
 
         final JobDataMap data = new JobDataMap();
 
@@ -503,7 +598,8 @@ public final class SpJobScheduler {
      *
      * @param milliSecondsFromNow
      */
-    public void scheduleOneShotPaperCutPrintMonitor(long milliSecondsFromNow) {
+    public void scheduleOneShotPaperCutPrintMonitor(
+            final long milliSecondsFromNow) {
 
         final JobDataMap data = new JobDataMap();
 
@@ -540,7 +636,7 @@ public final class SpJobScheduler {
      * @param milliSecondsFromNow
      */
     public void scheduleOneShotSmartSchoolPrintMonitor(final boolean simulate,
-            long milliSecondsFromNow) {
+            final long milliSecondsFromNow) {
 
         final JobDataMap data = new JobDataMap();
 
@@ -562,7 +658,7 @@ public final class SpJobScheduler {
      *
      * @param milliSecondsFromNow
      */
-    public void scheduleOneShotGcpListener(long milliSecondsFromNow) {
+    public void scheduleOneShotGcpListener(final long milliSecondsFromNow) {
 
         final JobDataMap data = new JobDataMap();
 
@@ -579,7 +675,7 @@ public final class SpJobScheduler {
      * @param milliSecondsFromNow
      */
     public void scheduleOneShotGcpPollForAuthCode(final String pollingUrl,
-            final Integer tokenDuration, long milliSecondsFromNow) {
+            final Integer tokenDuration, final long milliSecondsFromNow) {
 
         final JobDataMap data = new JobDataMap();
 
@@ -592,6 +688,60 @@ public final class SpJobScheduler {
                 .usingJobData(data).build();
 
         rescheduleOneShotJob(job, milliSecondsFromNow);
+    }
+
+    /**
+     *
+     * @param jobType
+     * @return
+     */
+    private static JobKey createScheduledJobKey(final SpJobType jobType) {
+        return new JobKey(jobType.toString(), JOB_GROUP_SCHEDULED);
+    }
+
+    /**
+     * Gets the Trigger of a scheduled job.
+     *
+     * @param jobType
+     *            The Job type.
+     * @return The trigger, or .
+     */
+    private static Trigger getScheduledTrigger(final SpJobType jobType) {
+
+        final JobKey jobKey = createScheduledJobKey(jobType);
+
+        final Scheduler scheduler = instance().myScheduler;
+
+        try {
+
+            @SuppressWarnings("unchecked")
+            final List<Trigger> triggers =
+                    (List<Trigger>) scheduler.getTriggersOfJob(jobKey);
+
+            if (triggers == null || triggers.isEmpty()) {
+                return null;
+            }
+            return triggers.get(0);
+
+        } catch (SchedulerException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
+    }
+
+    /**
+     * Gets the next fire time of a scheduled job.
+     *
+     * @param jobType
+     *            The Job type.
+     * @return Next fire time, or null when not found.
+     */
+    public static Date getNextScheduledTime(final SpJobType jobType) {
+
+        final Trigger trigger = getScheduledTrigger(jobType);
+        if (trigger == null) {
+            return null;
+        }
+        return trigger.getNextFireTime();
     }
 
     /**
@@ -706,17 +856,76 @@ public final class SpJobScheduler {
      * Interrupts running job type with a group.
      *
      * @param typeOfJob
+     *            The job type.
      * @param group
+     *            The job group.
      * @return {@code true} if at least one instance of the identified job was
      *         found and interrupted.
      */
-    public boolean interruptJob(final SpJobType typeOfJob, final String group) {
+    private boolean interruptJob(final SpJobType typeOfJob,
+            final String group) {
         try {
             return myScheduler
                     .interrupt(new JobKey(typeOfJob.toString(), group));
         } catch (SchedulerException e) {
             throw new SpException(e.getMessage(), e);
         }
+    }
+
+    /**
+     *
+     * @param jobTypes
+     *            Set of job types.
+     * @return {@code true} if one of the jobs in the set is currently
+     *         executing.
+     */
+    public static boolean
+            isJobCurrentlyExecuting(final EnumSet<SpJobType> jobTypes) {
+
+        final Scheduler scheduler = instance().myScheduler;
+
+        try {
+            for (final JobExecutionContext ctx : scheduler
+                    .getCurrentlyExecutingJobs()) {
+
+                final SpJobType jobType = EnumUtils.getEnum(SpJobType.class,
+                        ctx.getTrigger().getJobKey().getName());
+
+                if (jobType != null && jobTypes.contains(jobType)) {
+                    return true;
+                }
+            }
+        } catch (SchedulerException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * Checks if job is executing to do an SNMP retrieve for all printers.
+     *
+     * @return {@code true} when SNMP retrieve for all printers is executing,
+     *         {@code false} if not.
+     */
+    public static boolean isAllPrinterSnmpJobExecuting() {
+
+        final Scheduler scheduler = instance().myScheduler;
+
+        try {
+            for (final JobExecutionContext ctx : scheduler
+                    .getCurrentlyExecutingJobs()) {
+
+                final SpJobType jobType = EnumUtils.getEnum(SpJobType.class,
+                        ctx.getTrigger().getJobKey().getName());
+
+                if (jobType != null && jobType.equals(SpJobType.PRINTER_SNMP)) {
+                    return PrinterSnmpJob.isAllPrinters(ctx);
+                }
+            }
+        } catch (SchedulerException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
+        return false;
     }
 
     /**
@@ -762,7 +971,7 @@ public final class SpJobScheduler {
 
         long startTime = System.currentTimeMillis() + milliSecondsFromNow;
 
-        SimpleTrigger trigger = (SimpleTrigger) newTrigger()
+        final SimpleTrigger trigger = (SimpleTrigger) newTrigger()
                 .withIdentity("once." + jobName, jobGroup)
                 .startAt(new Date(startTime)).forJob(jobName, jobGroup).build();
 
@@ -789,9 +998,10 @@ public final class SpJobScheduler {
                  * Example: Unable to store Job : 'DEFAULT.DbBackup', because
                  * one already exists with this identification.
                  */
-                final String msg = "Error scheduling one-shot job [" + jobName
-                        + "][" + jobGroup + "] : " + e.getMessage();
-                throw new SpException(msg, e);
+                final String msg = String.format(
+                        "Error scheduling one-shot job [%s] [%s] : %s",
+                        jobGroup, jobName, e.getMessage());
+                throw new IllegalStateException(msg, e);
             }
         }
     }
@@ -808,7 +1018,7 @@ public final class SpJobScheduler {
         final String jobName = job.getKey().getName();
         final String jobGroup = job.getKey().getGroup();
 
-        CronTrigger trigger = createTrigger(jobName, jobGroup, configKey);
+        final CronTrigger trigger = createTrigger(jobName, jobGroup, configKey);
 
         if (trigger != null) {
             try {
@@ -843,8 +1053,8 @@ public final class SpJobScheduler {
      * @param jobName
      * @param jobGroup
      * @param configKey
-     *            The string representation this value is used as key for the
-     *            trigger.
+     *            The string representation of this value is used as part of the
+     *            key for the trigger.
      * @return
      */
     private CronTrigger createTrigger(String jobName, String jobGroup,
@@ -875,10 +1085,4 @@ public final class SpJobScheduler {
                 .startNow().withSchedule(cronSchedule(cronExp)).build();
     }
 
-    /*
-     * private void reportCronParseError(String expression, String configKey) {
-     * getApplicationLogManager().log(getClass(), ApplicationLogLevelEnum.ERROR,
-     * "TaskSchedulerImpl.unable-to-parse-cron-expression", new String[] {
-     * expression, configKey }); }
-     */
 }

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -138,7 +138,8 @@ public final class AccessControlServiceImpl extends AbstractService
      * @return {@code true} when authorized, {@code false} when not,
      *         {@code null} when undetermined.
      */
-    private static Boolean isGroupAuthorized(final UserGroup group,
+    @Override
+    public Boolean isGroupAuthorized(final UserGroup group,
             final ACLRoleEnum role) {
 
         final UserGroupAttr groupAttr = userGroupAttrDAO().findByName(group,
@@ -326,10 +327,10 @@ public final class AccessControlServiceImpl extends AbstractService
     }
 
     @Override
-    public boolean hasUserPermission(final User user, final ACLOidEnum oid,
+    public boolean hasPermission(final User user, final ACLOidEnum oid,
             final ACLPermissionEnum perm) {
 
-        final Integer privileges = getUserPrivileges(user, oid);
+        final Integer privileges = getPrivileges(user, oid);
 
         if (privileges == null) {
             return true;
@@ -339,9 +340,9 @@ public final class AccessControlServiceImpl extends AbstractService
     }
 
     @Override
-    public boolean hasUserAccess(final User user, final ACLOidEnum oid) {
+    public boolean hasAccess(final User user, final ACLOidEnum oid) {
 
-        final Integer privileges = getUserPrivileges(user, oid);
+        final Integer privileges = getPrivileges(user, oid);
 
         if (privileges == null) {
             return true;
@@ -351,7 +352,7 @@ public final class AccessControlServiceImpl extends AbstractService
     }
 
     @Override
-    public boolean hasUserPermission(final List<ACLPermissionEnum> perms,
+    public boolean hasPermission(final List<ACLPermissionEnum> perms,
             final ACLPermissionEnum permRequested) {
 
         for (final ACLPermissionEnum perm : perms) {
@@ -363,10 +364,10 @@ public final class AccessControlServiceImpl extends AbstractService
     }
 
     @Override
-    public List<ACLPermissionEnum> getUserPermission(final User user,
+    public List<ACLPermissionEnum> getPermission(final User user,
             final ACLOidEnum oid) {
 
-        final Integer userPrivileges = getUserPrivileges(user, oid);
+        final Integer userPrivileges = getPrivileges(user, oid);
 
         if (userPrivileges == null) {
             return null;
@@ -375,16 +376,21 @@ public final class AccessControlServiceImpl extends AbstractService
     }
 
     @Override
-    public Integer getUserPrivileges(final User user, final ACLOidEnum oid) {
+    public Integer getPrivileges(final User user, final ACLOidEnum oid) {
+
+        if (oid.isAdminRole()
+                && ConfigManager.isInternalAdmin(user.getUserId())) {
+            return null;
+        }
 
         Integer userPrivileges =
-                getUserPrivileges(user, UserAttrEnum.ACL_OIDS_USER, oid);
+                getUserPrivileges(user, UserAttrEnum.valueOf(oid), oid);
 
         if (userPrivileges != null) {
             return userPrivileges;
         }
 
-        final UserGroupAttrEnum groupAttrEnum = UserGroupAttrEnum.ACL_OIDS_USER;
+        final UserGroupAttrEnum groupAttrEnum = UserGroupAttrEnum.valueOf(oid);
 
         /*
          * Check Group Memberships (explicit).

@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -25,9 +25,15 @@ import org.savapage.core.jpa.PrinterGroup;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
+ *
  */
 public enum SpJobType {
+
+    /**
+     * .
+     */
+    ATOM_FEED,
 
     /**
      * CUPS event subscription renewal.
@@ -90,7 +96,12 @@ public enum SpJobType {
     PRINTER_GROUP_CLEAN,
 
     /**
-     * SmartSchool.
+     *
+     */
+    PRINTER_SNMP,
+
+    /**
+     * @deprecated SmartSchool.
      */
     SMARTSCHOOL_PRINT_MONITOR_JOB,
 

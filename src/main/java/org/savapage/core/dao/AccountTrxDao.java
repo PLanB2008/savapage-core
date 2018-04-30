@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -24,10 +24,15 @@ package org.savapage.core.dao;
 import java.util.Date;
 import java.util.List;
 
+import javax.persistence.TypedQuery;
+
 import org.savapage.core.dao.enums.AccountTrxTypeEnum;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.AccountTrx;
 import org.savapage.core.jpa.AccountVoucher;
+import org.savapage.core.jpa.PosPurchase;
+import org.savapage.core.jpa.PosPurchaseItem;
 import org.savapage.core.jpa.User;
 
 /**
@@ -35,7 +40,7 @@ import org.savapage.core.jpa.User;
  * @author Rijk Ravestein
  *
  */
-public interface AccountTrxDao extends GenericDao<AccountTrx> {
+public interface AccountTrxDao extends UserErasableDao<AccountTrx> {
 
     /**
      * Field identifiers used for select and sort.
@@ -130,7 +135,6 @@ public interface AccountTrxDao extends GenericDao<AccountTrx> {
         public void setContainingCommentText(String containingCommentText) {
             this.containingCommentText = containingCommentText;
         }
-
     }
 
     /**
@@ -158,7 +162,7 @@ public interface AccountTrxDao extends GenericDao<AccountTrx> {
      *            The {@link ListFilter}.
      * @return The number of filtered instances.
      */
-    long getListCount(final ListFilter filter);
+    long getListCount(ListFilter filter);
 
     /**
      *
@@ -169,22 +173,47 @@ public interface AccountTrxDao extends GenericDao<AccountTrx> {
      * @param sortAscending
      * @return The list.
      */
-    List<AccountTrx> getListChunk(final ListFilter filter,
-            final Integer startPosition, final Integer maxResults,
-            final Field orderBy, final boolean sortAscending);
+    List<AccountTrx> getListChunk(ListFilter filter, Integer startPosition,
+            Integer maxResults, Field orderBy, boolean sortAscending);
 
     /**
      * Removes {@link AccountTrx} instances dating from daysBackInTime and
      * older.
-     * <p>
-     * Note: For each removed {@link AccountTrx} any associated
-     * {@link AccountVoucher} instance is deleted by cascade.
-     * </p>
+     * <ul>
+     * <li>For each deleted {@link AccountTrx}, associated
+     * {@link PosPurchaseItem} instances are deleted. Related
+     * {@link AccountVoucher} and {@link PosPurchase} must be cleaned with
+     * {@link #cleanOrphaned(DaoBatchCommitter)}</li>
+     * <li>All deletes are committed.</li>
+     * </ul>
      *
      * @param dateBackInTime
      *            The transaction date criterion.
-     * @return The number of deleted instances.
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
+     * @return The number of deleted {@link AccountTrx} instances.
      */
-    int cleanHistory(Date dateBackInTime);
+    int cleanHistory(Date dateBackInTime, DaoBatchCommitter batchCommitter);
+
+    /**
+     * Deletes {@link AccountVoucher} and {@link PosPurchase} instances that
+     * have non-existent {@link AccountTrx} parent.
+     * <ul>
+     * <li>All deletes are committed.</li>
+     * </ul>
+     *
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
+     */
+    void cleanOrphaned(DaoBatchCommitter batchCommitter);
+
+    /**
+     * Creates a {@link TypedQuery} for export.
+     *
+     * @param user
+     *            The user
+     * @return The a {@link TypedQuery}.
+     */
+    TypedQuery<AccountTrx> getExportQuery(User user);
 
 }

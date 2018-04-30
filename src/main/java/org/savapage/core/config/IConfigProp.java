@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,15 +26,20 @@ import java.text.MessageFormat;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.Set;
+import java.util.UUID;
 
 import javax.print.attribute.standard.MediaSizeName;
 
 import org.savapage.core.SpException;
 import org.savapage.core.community.CommunityDictEnum;
 import org.savapage.core.config.validator.BooleanValidator;
+import org.savapage.core.config.validator.CidrRangesValidator;
 import org.savapage.core.config.validator.ConfigPropValidator;
+import org.savapage.core.config.validator.CronExpressionValidator;
 import org.savapage.core.config.validator.CurrencyCodeValidator;
 import org.savapage.core.config.validator.DecimalValidator;
+import org.savapage.core.config.validator.EmailAddressValidator;
+import org.savapage.core.config.validator.EnumSetValidator;
 import org.savapage.core.config.validator.EnumValidator;
 import org.savapage.core.config.validator.InternalFontFamilyValidator;
 import org.savapage.core.config.validator.IpPortValidator;
@@ -43,6 +48,7 @@ import org.savapage.core.config.validator.NotEmptyValidator;
 import org.savapage.core.config.validator.NumberValidator;
 import org.savapage.core.config.validator.UriValidator;
 import org.savapage.core.config.validator.UrlValidator;
+import org.savapage.core.config.validator.UuidValidator;
 import org.savapage.core.config.validator.ValidationResult;
 import org.savapage.core.config.validator.ValidationStatusEnum;
 import org.savapage.core.crypto.OneTimeAuthToken;
@@ -52,6 +58,8 @@ import org.savapage.core.dao.impl.DaoBatchCommitterImpl;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.PrinterGroup;
+import org.savapage.core.json.rpc.JsonRpcMethodName;
+import org.savapage.core.services.helpers.DocLogScopeEnum;
 import org.savapage.core.services.helpers.InboxSelectScopeEnum;
 import org.savapage.core.services.helpers.UserAuth;
 import org.savapage.core.util.Messages;
@@ -107,8 +115,8 @@ public interface IConfigProp {
     String DEFAULT_WEBAPP_WATCHDOG_TIMEOUT_SECS = "10";
 
     /**
-    *
-    */
+     *
+     */
     String DEFAULT_BATCH_COMMIT_CHUNK_SIZE = "100";
 
     /**
@@ -127,6 +135,15 @@ public interface IConfigProp {
     String V_NO = "N";
 
     String V_ZERO = "0";
+
+    /**
+     * Is updatable with {@link JsonRpcMethodName#SET_CONFIG_PROPERTY}.
+     */
+    boolean API_UPDATABLE_ON = true;
+    /**
+     * <b>Not</b> updatable with {@link JsonRpcMethodName#SET_CONFIG_PROPERTY}.
+     */
+    boolean API_UPDATABLE_OFF = !API_UPDATABLE_ON;
 
     /**
      * Null value for numerics.
@@ -265,29 +282,32 @@ public interface IConfigProp {
         FINANCIAL_GLOBAL_CREDIT_LIMIT("financial.global.credit-limit", KeyType.BIG_DECIMAL, "0.00"),
 
         /**
-         * ISO 4217 codes, like EUR, USD, JPY, ...
+         * ISO 4217 codes, like EUR, USD, JPY, etc. A <i>blank</i> Currency Code
+         * is API updatable with {@link JsonRpcMethodName#SET_CONFIG_PROPERTY}
+         * When set, it can only be "changed" by server command
+         * {@link JsonRpcMethodName#CHANGE_BASE_CURRENCY}.
          */
-        FINANCIAL_GLOBAL_CURRENCY_CODE("financial.global.currency-code", CURRENCY_VALIDATOR),
+        FINANCIAL_GLOBAL_CURRENCY_CODE("financial.global.currency-code", CURRENCY_VALIDATOR, API_UPDATABLE_ON),
 
         /**
          * A comma separated list of Point-of-Sale payment methods.
          */
-        FINANCIAL_POS_PAYMENT_METHODS("financial.pos.payment-methods"),
+        FINANCIAL_POS_PAYMENT_METHODS("financial.pos.payment-methods", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        FINANCIAL_POS_RECEIPT_HEADER("financial.pos.receipt-header"),
+        FINANCIAL_POS_RECEIPT_HEADER("financial.pos.receipt-header", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        FINANCIAL_PRINTER_COST_DECIMALS("financial.printer.cost-decimals", ACCOUNTING_DECIMAL_VALIDATOR, DEFAULT_FINANCIAL_PRINTER_COST_DECIMALS),
+        FINANCIAL_PRINTER_COST_DECIMALS("financial.printer.cost-decimals", ACCOUNTING_DECIMAL_VALIDATOR, DEFAULT_FINANCIAL_PRINTER_COST_DECIMALS, API_UPDATABLE_ON),
 
         /**
          *
          */
-        FINANCIAL_USER_BALANCE_DECIMALS("financial.user.balance-decimals", ACCOUNTING_DECIMAL_VALIDATOR, DEFAULT_FINANCIAL_USER_BALANCE_DECIMALS),
+        FINANCIAL_USER_BALANCE_DECIMALS("financial.user.balance-decimals", ACCOUNTING_DECIMAL_VALIDATOR, DEFAULT_FINANCIAL_USER_BALANCE_DECIMALS, API_UPDATABLE_ON),
 
         /**
          * .
@@ -317,7 +337,7 @@ public interface IConfigProp {
         /**
          * .
          */
-        FINANCIAL_USER_TRANSFER_LIMIT_GROUP("financial.user.transfers.limit-group"),
+        FINANCIAL_USER_TRANSFER_LIMIT_GROUP("financial.user.transfers.limit-group", API_UPDATABLE_OFF),
 
         /**
          * .
@@ -332,7 +352,7 @@ public interface IConfigProp {
         /**
          *
          */
-        FINANCIAL_VOUCHER_CARD_FOOTER("financial.voucher.card-footer"),
+        FINANCIAL_VOUCHER_CARD_FOOTER("financial.voucher.card-footer", API_UPDATABLE_OFF),
 
         /**
          *
@@ -399,24 +419,24 @@ public interface IConfigProp {
         AUTH_MODE_CARD_LOCAL("auth-mode.card-local", BOOLEAN_VALIDATOR, V_NO),
 
         /**
-        *
-        */
+         *
+         */
         AUTH_MODE_YUBIKEY("auth-mode.yubikey", BOOLEAN_VALIDATOR, V_NO),
 
         /**
-        *
-        */
+         *
+         */
         AUTH_MODE_YUBIKEY_SHOW("auth-mode.yubikey.show", BOOLEAN_VALIDATOR, V_YES),
 
         /**
          * .
          */
-        AUTH_MODE_YUBIKEY_API_CLIENT_ID("auth-mode.yubikey.api.client-id"),
+        AUTH_MODE_YUBIKEY_API_CLIENT_ID("auth-mode.yubikey.api.client-id", API_UPDATABLE_ON),
 
         /**
          * .
          */
-        AUTH_MODE_YUBIKEY_API_SECRET_KEY("auth-mode.yubikey.api.secret-key"),
+        AUTH_MODE_YUBIKEY_API_SECRET_KEY("auth-mode.yubikey.api.secret-key", API_UPDATABLE_ON),
 
         /**
          *
@@ -445,54 +465,60 @@ public interface IConfigProp {
                 //
                 AUTH_MODE_V_NAME, AUTH_MODE_V_ID, AUTH_MODE_V_CARD_LOCAL,
                 //
-                AUTH_MODE_V_YUBIKEY }),
+                AUTH_MODE_V_YUBIKEY }, API_UPDATABLE_OFF),
 
         /**
          * Authentication method.
          */
         AUTH_METHOD("auth.method", null, AUTH_METHOD_V_NONE, new String[] {
                 //
-                AUTH_METHOD_V_NONE, AUTH_METHOD_V_UNIX, AUTH_METHOD_V_LDAP }),
+                AUTH_METHOD_V_NONE, AUTH_METHOD_V_UNIX, AUTH_METHOD_V_LDAP },
+                API_UPDATABLE_ON),
 
         /**
          *
          */
-        AUTH_LDAP_ADMIN_DN("auth.ldap.admin-dn"),
+        AUTH_LDAP_ADMIN_DN("auth.ldap.admin-dn", API_UPDATABLE_ON),
 
         /**
          *
          */
-        AUTH_LDAP_ADMIN_PASSWORD("auth.ldap.admin-password"),
+        AUTH_LDAP_ADMIN_PASSWORD("auth.ldap.admin-password", API_UPDATABLE_ON),
 
         /**
          *
          */
-        AUTH_LDAP_BASE_DN("auth.ldap.basedn"),
+        AUTH_LDAP_BASE_DN("auth.ldap.basedn", API_UPDATABLE_ON),
 
         /**
          * LDAP Host name or IP address.
          */
-        AUTH_LDAP_HOST("auth.ldap.host", "localhost"),
+        AUTH_LDAP_HOST("auth.ldap.host", "localhost", API_UPDATABLE_ON),
 
         /**
          * LDAP host IP port number.
          */
-        AUTH_LDAP_PORT("auth.ldap.port", IP_PORT_VALIDATOR, "389"),
+        AUTH_LDAP_PORT("auth.ldap.port", IP_PORT_VALIDATOR, "389", API_UPDATABLE_ON),
 
         /**
          * Use SSL for the LDAP connection.
          */
-        AUTH_LDAP_USE_SSL("auth.ldap.use-ssl", BOOLEAN_VALIDATOR, V_NO),
+        AUTH_LDAP_USE_SSL("auth.ldap.use-ssl", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
+
+        /**
+         * Trust self-signed certificate for LDAP SSL?
+         */
+        AUTH_LDAP_USE_SSL_TRUST_SELF_SIGNED("auth.ldap.use-ssl.trust-self-signed", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          *
          */
-        CARD_NUMBER_FORMAT("card.number.format", null, CARD_NUMBER_FORMAT_V_HEX, new String[] { CARD_NUMBER_FORMAT_V_DEC, CARD_NUMBER_FORMAT_V_HEX }),
+        CARD_NUMBER_FORMAT("card.number.format", null, CARD_NUMBER_FORMAT_V_HEX, new String[] { CARD_NUMBER_FORMAT_V_DEC, CARD_NUMBER_FORMAT_V_HEX }, API_UPDATABLE_OFF),
 
         /**
          *
          */
-        CARD_NUMBER_FIRST_BYTE("card.number.first-byte", null, CARD_NUMBER_FIRSTBYTE_V_LSB, new String[] { CARD_NUMBER_FIRSTBYTE_V_LSB, CARD_NUMBER_FIRSTBYTE_V_MSB }),
+        CARD_NUMBER_FIRST_BYTE("card.number.first-byte", null, CARD_NUMBER_FIRSTBYTE_V_LSB, new String[] { CARD_NUMBER_FIRSTBYTE_V_LSB, CARD_NUMBER_FIRSTBYTE_V_MSB }, API_UPDATABLE_OFF),
 
         /**
          * IMPORTANT: the value of this key should be GT one (1) hour, since the
@@ -574,17 +600,17 @@ public interface IConfigProp {
         /**
          *
          */
-        DOC_CONVERT_XPS_TO_PDF_ENABLED("doc.convert.xpstopdf-enabled", BOOLEAN_VALIDATOR, V_NO),
+        DOC_CONVERT_XPS_TO_PDF_ENABLED("doc.convert.xpstopdf-enabled", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          *
          */
-        DOC_CONVERT_LIBRE_OFFICE_ENABLED("doc.convert.libreoffice-enabled", BOOLEAN_VALIDATOR, V_NO),
+        DOC_CONVERT_LIBRE_OFFICE_ENABLED("doc.convert.libreoffice-enabled", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          *
          */
-        ENV_CO2_GRAMS_PER_SHEET("environment.co2-grams-per-sheet", "5.1"),
+        ENV_CO2_GRAMS_PER_SHEET("environment.co2-grams-per-sheet", "5.1", API_UPDATABLE_OFF),
 
         /**
          *
@@ -594,7 +620,7 @@ public interface IConfigProp {
         /**
          *
          */
-        ENV_WATT_HOURS_PER_SHEET("environment.watt-hours-per-sheet", "12.5"),
+        ENV_WATT_HOURS_PER_SHEET("environment.watt-hours-per-sheet", "12.5", API_UPDATABLE_OFF),
 
         /**
          * The base URL, i.e. "protocol://authority" <i>without</i> the path, of
@@ -611,7 +637,7 @@ public interface IConfigProp {
         /**
          * Google Cloud Print enabled (boolean).
          */
-        GCP_ENABLE("gcp.enable", BOOLEAN_VALIDATOR, V_NO),
+        GCP_ENABLE("gcp.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_OFF),
 
         /**
          * Max seconds to wait for a GCP connect.
@@ -656,12 +682,17 @@ public interface IConfigProp {
         /**
          *
          */
-        INTERNAL_USERS_NAME_PREFIX("internal-users.username-prefix", "guest-"),
+        INTERNAL_USERS_NAME_PREFIX("internal-users.username-prefix", "guest-", API_UPDATABLE_OFF),
 
         /**
          *
          */
         INTERNAL_USERS_PW_LENGTH_MIN("internal-users.password-length-min", NUMBER_VALIDATOR, "6"),
+
+        /**
+        *
+        */
+        IPP_EXT_CONSTRAINT_BOOKLET_ENABLE("ipp.ext.constraint.booklet.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          * The base URL, i.e. "protocol://authority" <i>without</i> the path, of
@@ -681,12 +712,12 @@ public interface IConfigProp {
         /**
          * The LDAP field that contains the group members.
          */
-        LDAP_SCHEMA_GROUP_MEMBER_FIELD("ldap.schema.group-member-field"),
+        LDAP_SCHEMA_GROUP_MEMBER_FIELD("ldap.schema.group-member-field", API_UPDATABLE_ON),
 
         /**
          * The LDAP field that contains the group's name.
          */
-        LDAP_SCHEMA_GROUP_NAME_FIELD("ldap.schema.group-name-field"),
+        LDAP_SCHEMA_GROUP_NAME_FIELD("ldap.schema.group-name-field", API_UPDATABLE_ON),
 
         /**
          * The LDAP search to retrieve the group. The <code>{0}</code> in the
@@ -698,7 +729,7 @@ public interface IConfigProp {
          * IMPORTANT: The search must include the <code>{0}</code> value.
          * </p>
          */
-        LDAP_SCHEMA_GROUP_SEARCH("ldap.schema.group-search"),
+        LDAP_SCHEMA_GROUP_SEARCH("ldap.schema.group-search", API_UPDATABLE_ON),
 
         /**
          * The LDAP search to retrieve the users as member of a group. The {0}
@@ -712,7 +743,7 @@ public interface IConfigProp {
          * IMPORTANT: The search must include the <code>{0}</code> value.
          * </p>
          */
-        LDAP_SCHEMA_USER_NAME_GROUP_SEARCH("ldap.schema.user-name-group-search"),
+        LDAP_SCHEMA_USER_NAME_GROUP_SEARCH("ldap.schema.user-name-group-search", API_UPDATABLE_ON),
 
         /**
          * The LDAP search to retrieve the nested groups of a parent group. The
@@ -725,7 +756,7 @@ public interface IConfigProp {
          * IMPORTANT: The search must include the <code>{0}</code> value.
          * </p>
          */
-        LDAP_SCHEMA_NESTED_GROUP_SEARCH("ldap.schema.nested-group-search"),
+        LDAP_SCHEMA_NESTED_GROUP_SEARCH("ldap.schema.nested-group-search", API_UPDATABLE_ON),
 
         /**
          * The LDAP field that contains the Distinguished Name (DN).
@@ -733,42 +764,44 @@ public interface IConfigProp {
          * Note: Active Directory only.
          * </p>
          */
-        LDAP_SCHEMA_DN_FIELD("ldap.schema.dn-field"),
+        LDAP_SCHEMA_DN_FIELD("ldap.schema.dn-field", API_UPDATABLE_ON),
 
         /**
-         * Boolean to allow or deny disabled users.
+         * Boolean to allow or deny disabled users. When blank, LDAP default is
+         * used.
          * <p>
          * Note: Active Directory only.
          * </p>
          */
-        LDAP_ALLOW_DISABLED_USERS("ldap.disabled-users.allow"),
+        LDAP_ALLOW_DISABLED_USERS("ldap.disabled-users.allow", BOOLEAN_VALIDATOR_OPT, API_UPDATABLE_ON),
 
         /**
          * Boolean to indicate if filtering out disabled users is done locally
          * (by checking the userAccountControl attribute), or remotely (by AND
-         * in userAccountControl in the LDAP query).
+         * in userAccountControl in the LDAP query). When blank, LDAP default is
+         * used.
          * <p>
          * Note: Active Directory only.
          * </p>
          */
-        LDAP_FILTER_DISABLED_USERS_LOCALLY("ldap.disabled-users.local-filter"),
+        LDAP_FILTER_DISABLED_USERS_LOCALLY("ldap.disabled-users.local-filter", BOOLEAN_VALIDATOR_OPT, API_UPDATABLE_ON),
 
         /**
          * If {@code Y}, then the group member field contains the user's
          * username. If {@code N}, then the group member field contains the
          * user's DN.
          */
-        LDAP_SCHEMA_POSIX_GROUPS("ldap.schema.posix-groups"),
+        LDAP_SCHEMA_POSIX_GROUPS("ldap.schema.posix-groups", API_UPDATABLE_ON),
 
         /**
          * LdapSchema* properties have "" default value.
          */
-        LDAP_SCHEMA_TYPE("ldap.schema.type", null, LDAP_TYPE_V_OPEN_LDAP, new String[] { LDAP_TYPE_V_ACTIV, LDAP_TYPE_V_E_DIR, LDAP_TYPE_V_APPLE, LDAP_TYPE_V_OPEN_LDAP }),
+        LDAP_SCHEMA_TYPE("ldap.schema.type", null, LDAP_TYPE_V_OPEN_LDAP, new String[] { LDAP_TYPE_V_ACTIV, LDAP_TYPE_V_E_DIR, LDAP_TYPE_V_APPLE, LDAP_TYPE_V_OPEN_LDAP }, API_UPDATABLE_ON),
 
         /**
          * The LDAP field that contains the user's username.
          */
-        LDAP_SCHEMA_USER_NAME_FIELD("ldap.schema.user-name-field"),
+        LDAP_SCHEMA_USER_NAME_FIELD("ldap.schema.user-name-field", API_UPDATABLE_ON),
 
         /**
          * The LDAP search to retrieve the user. The <code>{0}</code> in the
@@ -783,54 +816,54 @@ public interface IConfigProp {
          * with an optional filter to fetch enabled users only.
          * </p>
          */
-        LDAP_SCHEMA_USER_NAME_SEARCH("ldap.schema.user-name-search"),
+        LDAP_SCHEMA_USER_NAME_SEARCH("ldap.schema.user-name-search", API_UPDATABLE_ON),
 
         /**
          * The LDAP field that contains the user's full name.
          */
-        LDAP_SCHEMA_USER_FULL_NAME_FIELD("ldap.schema.user-full-name-field"),
+        LDAP_SCHEMA_USER_FULL_NAME_FIELD("ldap.schema.user-full-name-field", API_UPDATABLE_ON),
 
         /**
          * The LDAP field that contains the user's email address.
          */
-        LDAP_SCHEMA_USER_EMAIL_FIELD("ldap.schema.user-email-field"),
+        LDAP_SCHEMA_USER_EMAIL_FIELD("ldap.schema.user-email-field", API_UPDATABLE_ON),
 
         /**
          * The LDAP field that contains the user's department.
          */
-        LDAP_SCHEMA_USER_DEPARTMENT_FIELD("ldap.schema.user-department-field"),
+        LDAP_SCHEMA_USER_DEPARTMENT_FIELD("ldap.schema.user-department-field", API_UPDATABLE_ON),
 
         /**
          * The LDAP field that contains the user's office location.
          */
-        LDAP_SCHEMA_USER_OFFICE_FIELD("ldap.schema.user-office-field"),
+        LDAP_SCHEMA_USER_OFFICE_FIELD("ldap.schema.user-office-field", API_UPDATABLE_ON),
 
         /**
          * The LDAP field that contains the user's Card Number.
          */
-        LDAP_SCHEMA_USER_CARD_NUMBER_FIELD("ldap.schema.user-card-number-field"),
+        LDAP_SCHEMA_USER_CARD_NUMBER_FIELD("ldap.schema.user-card-number-field", API_UPDATABLE_ON),
 
         /**
          *
          */
-        LDAP_SCHEMA_USER_CARD_NUMBER_FIRST_BYTE("ldap.user-card-number.first-byte", null, CARD_NUMBER_FIRSTBYTE_V_LSB, new String[] { CARD_NUMBER_FIRSTBYTE_V_LSB, CARD_NUMBER_FIRSTBYTE_V_MSB }),
+        LDAP_SCHEMA_USER_CARD_NUMBER_FIRST_BYTE("ldap.user-card-number.first-byte", null, CARD_NUMBER_FIRSTBYTE_V_LSB, new String[] { CARD_NUMBER_FIRSTBYTE_V_LSB, CARD_NUMBER_FIRSTBYTE_V_MSB }, API_UPDATABLE_OFF),
 
         /**
          *
          */
-        LDAP_SCHEMA_USER_CARD_NUMBER_FORMAT("ldap.user-card-number.format", null, CARD_NUMBER_FORMAT_V_HEX, new String[] { CARD_NUMBER_FORMAT_V_DEC, CARD_NUMBER_FORMAT_V_HEX }),
+        LDAP_SCHEMA_USER_CARD_NUMBER_FORMAT("ldap.user-card-number.format", null, CARD_NUMBER_FORMAT_V_HEX, new String[] { CARD_NUMBER_FORMAT_V_DEC, CARD_NUMBER_FORMAT_V_HEX }, API_UPDATABLE_OFF),
 
         /**
          * The LDAP field that contains the user's ID Number.
          */
-        LDAP_SCHEMA_USER_ID_NUMBER_FIELD("ldap.schema.user-id-number-field"),
+        LDAP_SCHEMA_USER_ID_NUMBER_FIELD("ldap.schema.user-id-number-field", API_UPDATABLE_ON),
 
         /**
          * Date on which this SavaPage instance was first installed. The
          * community role at this point is "Visitor", and the date defaults to
          * the start date of the visiting period.
          */
-        COMMUNITY_VISITOR_START_DATE("community.visitor.start-date"),
+        COMMUNITY_VISITOR_START_DATE("community.visitor.start-date", API_UPDATABLE_OFF),
 
         /**
          * Is PaperCut integration enabled?
@@ -840,27 +873,27 @@ public interface IConfigProp {
         /**
          * PaperCut Database JDBC driver, like "org.postgresql.Driver".
          */
-        PAPERCUT_DB_JDBC_DRIVER("papercut.db.jdbc-driver"),
+        PAPERCUT_DB_JDBC_DRIVER("papercut.db.jdbc-driver", API_UPDATABLE_ON),
 
         /**
          * PaperCut Database JDBC url.
          */
-        PAPERCUT_DB_JDBC_URL("papercut.db.jdbc-url"),
+        PAPERCUT_DB_JDBC_URL("papercut.db.jdbc-url", API_UPDATABLE_ON),
 
         /**
          * PaperCut Database user.
          */
-        PAPERCUT_DB_USER("papercut.db.user"),
+        PAPERCUT_DB_USER("papercut.db.user", API_UPDATABLE_ON),
 
         /**
          * PaperCut Database password.
          */
-        PAPERCUT_DB_PASSWORD("papercut.db.password"),
+        PAPERCUT_DB_PASSWORD("papercut.db.password", API_UPDATABLE_ON),
 
         /**
          * PaperCut Server host.
          */
-        PAPERCUT_SERVER_HOST("papercut.server.host", "localhost"),
+        PAPERCUT_SERVER_HOST("papercut.server.host", "localhost", API_UPDATABLE_ON),
 
         /**
          * PaperCut Server port.
@@ -870,22 +903,58 @@ public interface IConfigProp {
         /**
          * PaperCut authentication token for Web Services.
          */
-        PAPERCUT_SERVER_AUTH_TOKEN("papercut.webservices.auth-token"),
+        PAPERCUT_SERVER_AUTH_TOKEN("papercut.webservices.auth-token", API_UPDATABLE_ON),
 
         /**
          * PaperCut XML-RPC path. E.g.{@code /rpc/api/xmlrpc}
          */
-        PAPERCUT_XMLRPC_URL_PATH("papercut.xmlrpc.url-path", "/rpc/api/xmlrpc"),
+        PAPERCUT_XMLRPC_URL_PATH("papercut.xmlrpc.url-path", "/rpc/api/xmlrpc", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        PRINT_IMAP_ENABLE("print.imap.enable", BOOLEAN_VALIDATOR, V_NO),
+        API_JSONRPC_SECRET_KEY("api.jsonrpc.secret-key", API_UPDATABLE_OFF),
+
+        /**
+         * Client IP addresses (CIDR) that are allowed to use the JSON_RPC API
+         * (when void, all client addresses are allowed).
+         */
+        API_JSONRPC_IP_ADDRESSES_ALLOWED("api.jsonrpc.ext.ip-addresses-allowed", CIDR_RANGES_VALIDATOR_OPT, API_UPDATABLE_OFF),
+
+        /**
+         * Admin Atom Feed: enable.
+         */
+        FEED_ATOM_ADMIN_ENABLE("feed.atom.admin.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
+
+        /**
+         * Tuesday-Saturday at 3:00
+         */
+        FEED_ATOM_ADMIN_SCHEDULE("feed.atom.admin.schedule", CRON_EXPR_VALIDATOR, "0 0 3 ? * 3-7", API_UPDATABLE_OFF),
+
+        /**
+         * Admin Atom Feed: UUID as feed id.
+         */
+        FEED_ATOM_ADMIN_UUID("feed.atom.admin.uuid", UUID_VALIDATOR, UUID.randomUUID().toString(), API_UPDATABLE_ON),
+
+        /**
+         * Admin Atom Feed: Basic Authentication Username.
+         */
+        FEED_ATOM_ADMIN_USERNAME("feed.atom.admin.username", "", API_UPDATABLE_ON),
+
+        /**
+         * Admin Atom Feed: Basic Authentication Password.
+         */
+        FEED_ATOM_ADMIN_PASSWORD("feed.atom.admin.password", "", API_UPDATABLE_ON),
 
         /**
          *
          */
-        PRINT_IMAP_HOST("print.imap.host"),
+        PRINT_IMAP_ENABLE("print.imap.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_OFF),
+
+        /**
+         *
+         */
+        PRINT_IMAP_HOST("print.imap.host", API_UPDATABLE_OFF),
 
         /**
          * The port to connect to on the IMAP server.
@@ -907,17 +976,17 @@ public interface IConfigProp {
         /**
          *
          */
-        PRINT_IMAP_SECURITY("print.imap.security", IMAP_SECURITY_V_STARTTLS),
+        PRINT_IMAP_SECURITY("print.imap.security", IMAP_SECURITY_V_STARTTLS, API_UPDATABLE_OFF),
 
         /**
          * Username for IMAP authentication.
          */
-        PRINT_IMAP_USER_NAME("print.imap.user"),
+        PRINT_IMAP_USER_NAME("print.imap.user", API_UPDATABLE_OFF),
 
         /**
          * Password for IMAP authentication.
          */
-        PRINT_IMAP_PASSWORD("print.imap.password"),
+        PRINT_IMAP_PASSWORD("print.imap.password", API_UPDATABLE_OFF),
 
         /**
          * Produces extra IMAP related logging for troubleshooting.
@@ -927,12 +996,12 @@ public interface IConfigProp {
         /**
          *
          */
-        PRINT_IMAP_INBOX_FOLDER("print.imap.folder.inbox", "Inbox"),
+        PRINT_IMAP_INBOX_FOLDER("print.imap.folder.inbox", "Inbox", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        PRINT_IMAP_TRASH_FOLDER("print.imap.folder.trash", "Trash"),
+        PRINT_IMAP_TRASH_FOLDER("print.imap.folder.trash", "Trash", API_UPDATABLE_OFF),
 
         /**
          *
@@ -947,12 +1016,42 @@ public interface IConfigProp {
         /**
          *
          */
-        PRINT_IMAP_MAX_FILE_MB("print.imap.max-file-mb", NUMBER_VALIDATOR, IMAP_MAX_FILE_MB_V_DEFAULT.toString()),
+        PRINT_IMAP_MAX_FILE_MB("print.imap.max-file-mb", NUMBER_VALIDATOR, IMAP_MAX_FILE_MB_V_DEFAULT.toString(), API_UPDATABLE_ON),
 
         /**
          *
          */
-        PRINT_IMAP_MAX_FILES("print.imap.max-files", NUMBER_VALIDATOR, IMAP_MAX_FILES_V_DEFAULT.toString()),
+        PRINT_IMAP_MAX_FILES("print.imap.max-files", NUMBER_VALIDATOR, IMAP_MAX_FILES_V_DEFAULT.toString(), API_UPDATABLE_ON),
+
+        /**
+        *
+        */
+        PRINTER_SNMP_ENABLE("printer.snmp.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
+
+        /**
+         *
+         */
+        PRINTER_SNMP_READ_TRIGGER_MINS("printer.snmp.read.trigger-mins", NUMBER_VALIDATOR, "240", API_UPDATABLE_ON),
+
+        /**
+         *
+         */
+        PRINTER_SNMP_READ_RETRIES("printer.snmp.read.retries", NUMBER_VALIDATOR, "2", API_UPDATABLE_ON),
+
+        /**
+         *
+         */
+        PRINTER_SNMP_READ_TIMEOUT_MSECS("printer.snmp.read.timeout-millis", NUMBER_VALIDATOR, "1500", API_UPDATABLE_ON),
+
+        /**
+         *
+         */
+        PRINTER_SNMP_MARKER_PERC_WARN("printer.snmp.marker.percent.warn", NUMBER_VALIDATOR, "30", API_UPDATABLE_ON),
+
+        /**
+         *
+         */
+        PRINTER_SNMP_MARKER_PERC_ALERT("printer.snmp.marker.percent.alert", NUMBER_VALIDATOR, "10", API_UPDATABLE_ON),
 
         /**
          * Insert requesting users ad-hoc when printing from Smartschool to the
@@ -970,17 +1069,17 @@ public interface IConfigProp {
         /**
          * User used for simulation and testing.
          */
-        SMARTSCHOOL_SIMULATION_USER("smartschool.simulation.user", DEFAULT_SMARTSCHOOL_SIMULATION_USER),
+        SMARTSCHOOL_SIMULATION_USER("smartschool.simulation.user", DEFAULT_SMARTSCHOOL_SIMULATION_USER, API_UPDATABLE_OFF),
 
         /**
          * Student user 1 used for simulation and testing.
          */
-        SMARTSCHOOL_SIMULATION_STUDENT_1("smartschool.simulation.student-1", DEFAULT_SMARTSCHOOL_SIMULATION_STUDENT_1),
+        SMARTSCHOOL_SIMULATION_STUDENT_1("smartschool.simulation.student-1", DEFAULT_SMARTSCHOOL_SIMULATION_STUDENT_1, API_UPDATABLE_OFF),
 
         /**
          * Student user 2 used for simulation and testing.
          */
-        SMARTSCHOOL_SIMULATION_STUDENT_2("smartschool.simulation.student-2", DEFAULT_SMARTSCHOOL_SIMULATION_STUDENT_2),
+        SMARTSCHOOL_SIMULATION_STUDENT_2("smartschool.simulation.student-2", DEFAULT_SMARTSCHOOL_SIMULATION_STUDENT_2, API_UPDATABLE_OFF),
 
         /**
          * The simulation variant of
@@ -999,20 +1098,20 @@ public interface IConfigProp {
          * PaperCut printer assigned to Smartschool will be configured to charge
          * to this account.
          */
-        SMARTSCHOOL_PAPERCUT_ACCOUNT_SHARED_PARENT("smartschool.papercut.account.shared.parent", "Smartschool"),
+        SMARTSCHOOL_PAPERCUT_ACCOUNT_SHARED_PARENT("smartschool.papercut.account.shared.parent", "Smartschool", API_UPDATABLE_OFF),
 
         /**
          * The sub-account of
          * {@link #SMARTSCHOOL_PAPERCUT_ACCOUNT_SHARED_PARENT} holding Print Job
          * transactions.
          */
-        SMARTSCHOOL_PAPERCUT_ACCOUNT_SHARED_CHILD_JOBS("smartschool.papercut.account.shared.child.jobs", "Jobs"),
+        SMARTSCHOOL_PAPERCUT_ACCOUNT_SHARED_CHILD_JOBS("smartschool.papercut.account.shared.child.jobs", "Jobs", API_UPDATABLE_OFF),
 
         /**
          * This is one of the “Multiple Personal Accounts” in PaperCut and is
          * used by SavaPage to charge printing costs to individual persons.
          */
-        SMARTSCHOOL_PAPERCUT_ACCOUNT_PERSONAL("smartschool.papercut.account.personal", "Smartschool"),
+        SMARTSCHOOL_PAPERCUT_ACCOUNT_PERSONAL("smartschool.papercut.account.personal", "Smartschool", API_UPDATABLE_OFF),
 
         /**
          * The PaperCut account_type (like "USER-001", "USER-002") of the
@@ -1021,7 +1120,7 @@ public interface IConfigProp {
          * it is used to filter personal transactions in JDBC queries (CSV
          * downloads) for the Smartschool context.
          */
-        SMARTSCHOOL_PAPERCUT_ACCOUNT_PERSONAL_TYPE("smartschool.papercut.account.personal-type"),
+        SMARTSCHOOL_PAPERCUT_ACCOUNT_PERSONAL_TYPE("smartschool.papercut.account.personal-type", API_UPDATABLE_OFF),
         /**
          * Timeout in milliseconds until a Smartschool SOAP connection is
          * established.
@@ -1042,23 +1141,23 @@ public interface IConfigProp {
         /**
          * Printer name for Smartschool direct proxy printing (1).
          */
-        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER("smartschool.1.soap.print.proxy-printer"),
+        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER("smartschool.1.soap.print.proxy-printer", API_UPDATABLE_OFF),
 
         /**
          * Printer name for Smartschool direct duplex proxy printing (1).
          */
-        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_DUPLEX("smartschool.1.soap.print.proxy-printer-duplex"),
+        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_DUPLEX("smartschool.1.soap.print.proxy-printer-duplex", API_UPDATABLE_OFF),
 
         /**
          * Printer name for Smartschool direct proxy grayscale printing (1).
          */
-        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE("smartschool.1.soap.print.proxy-printer-grayscale"),
+        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE("smartschool.1.soap.print.proxy-printer-grayscale", API_UPDATABLE_OFF),
 
         /**
          * Printer name for Smartschool direct proxy grayscale duplex printing
          * (1).
          */
-        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE_DUPLEX("smartschool.1.soap.print.proxy-printer-grayscale-duplex"),
+        SMARTSCHOOL_1_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE_DUPLEX("smartschool.1.soap.print.proxy-printer-grayscale-duplex", API_UPDATABLE_OFF),
 
         /**
          * {@code true} if costs are charged to individual students,
@@ -1069,12 +1168,12 @@ public interface IConfigProp {
         /**
          * SOAP endpoint URL of Smartschool Print Center (1).
          */
-        SMARTSCHOOL_1_SOAP_PRINT_ENDPOINT_URL("smartschool.1.soap.print.endpoint.url"),
+        SMARTSCHOOL_1_SOAP_PRINT_ENDPOINT_URL("smartschool.1.soap.print.endpoint.url", API_UPDATABLE_OFF),
 
         /**
          * Password of SOAP endpoint URL of Smartschool Print Center (1).
          */
-        SMARTSCHOOL_1_SOAP_PRINT_ENDPOINT_PASSWORD("smartschool.1.soap.print.endpoint.password"),
+        SMARTSCHOOL_1_SOAP_PRINT_ENDPOINT_PASSWORD("smartschool.1.soap.print.endpoint.password", API_UPDATABLE_OFF),
 
         /**
          * {@code true} if this module is a node Smartschool Print Cluster (1).
@@ -1084,7 +1183,7 @@ public interface IConfigProp {
         /**
          * The unique node ID of this module in the Smartschool cluster (1).
          */
-        SMARTSCHOOL_1_SOAP_PRINT_NODE_ID("smartschool.1.soap.print.node.id"),
+        SMARTSCHOOL_1_SOAP_PRINT_NODE_ID("smartschool.1.soap.print.node.id", API_UPDATABLE_OFF),
 
         /**
          * {@code true} if this node acts as Smartschool Print Center Proxy (1).
@@ -1094,7 +1193,7 @@ public interface IConfigProp {
         /**
          * SOAP endpoint URL of Smartschool Print Center Proxy (1).
          */
-        SMARTSCHOOL_1_SOAP_PRINT_NODE_PROXY_ENDPOINT_URL("smartschool.1.soap.print.node.proxy.endpoint.url"),
+        SMARTSCHOOL_1_SOAP_PRINT_NODE_PROXY_ENDPOINT_URL("smartschool.1.soap.print.node.proxy.endpoint.url", API_UPDATABLE_OFF),
 
         /**
          * Is Smartschool (2) enabled?
@@ -1104,23 +1203,23 @@ public interface IConfigProp {
         /**
          * Printer name for Smartschool direct proxy printing (2).
          */
-        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER("smartschool.2.soap.print.proxy-printer"),
+        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER("smartschool.2.soap.print.proxy-printer", API_UPDATABLE_OFF),
 
         /**
          * Printer name for Smartschool direct duplex proxy printing (1).
          */
-        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_DUPLEX("smartschool.2.soap.print.proxy-printer-duplex"),
+        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_DUPLEX("smartschool.2.soap.print.proxy-printer-duplex", API_UPDATABLE_OFF),
 
         /**
          * Printer name for Smartschool direct proxy grayscale printing (2).
          */
-        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE("smartschool.2.soap.print.proxy-printer-grayscale"),
+        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE("smartschool.2.soap.print.proxy-printer-grayscale", API_UPDATABLE_OFF),
 
         /**
          * Printer name for Smartschool direct proxy grayscale duplex printing
          * (2).
          */
-        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE_DUPLEX("smartschool.2.soap.print.proxy-printer-grayscale-duplex"),
+        SMARTSCHOOL_2_SOAP_PRINT_PROXY_PRINTER_GRAYSCALE_DUPLEX("smartschool.2.soap.print.proxy-printer-grayscale-duplex", API_UPDATABLE_OFF),
 
         /**
          * {@code true} if costs are charged to individual students,
@@ -1131,12 +1230,12 @@ public interface IConfigProp {
         /**
          * SOAP endpoint URL of Smartschool Print Center (2).
          */
-        SMARTSCHOOL_2_SOAP_PRINT_ENDPOINT_URL("smartschool.2.soap.print.endpoint.url"),
+        SMARTSCHOOL_2_SOAP_PRINT_ENDPOINT_URL("smartschool.2.soap.print.endpoint.url", API_UPDATABLE_OFF),
 
         /**
          * Password of SOAP endpoint URL of Smartschool Print Center (2).
          */
-        SMARTSCHOOL_2_SOAP_PRINT_ENDPOINT_PASSWORD("smartschool.2.soap.print.endpoint.password"),
+        SMARTSCHOOL_2_SOAP_PRINT_ENDPOINT_PASSWORD("smartschool.2.soap.print.endpoint.password", API_UPDATABLE_OFF),
 
         /**
          * {@code true} if this module is a node Smartschool Print Cluster (2).
@@ -1146,7 +1245,7 @@ public interface IConfigProp {
         /**
          * The unique node ID of this module in the Smartschool cluster (2).
          */
-        SMARTSCHOOL_2_SOAP_PRINT_NODE_ID("smartschool.2.soap.print.node.id"),
+        SMARTSCHOOL_2_SOAP_PRINT_NODE_ID("smartschool.2.soap.print.node.id", API_UPDATABLE_OFF),
 
         /**
          * {@code true} if this node acts as Smartschool Print Center Proxy (2).
@@ -1156,7 +1255,7 @@ public interface IConfigProp {
         /**
          * SOAP endpoint URL of Smartschool Print Center Proxy (2).
          */
-        SMARTSCHOOL_2_SOAP_PRINT_NODE_PROXY_ENDPOINT_URL("smartschool.2.soap.print.node.proxy.endpoint.url"),
+        SMARTSCHOOL_2_SOAP_PRINT_NODE_PROXY_ENDPOINT_URL("smartschool.2.soap.print.node.proxy.endpoint.url", API_UPDATABLE_OFF),
 
         /**
          * The heartbeat (seconds) within a Smartschool print polling session.
@@ -1182,13 +1281,13 @@ public interface IConfigProp {
         /**
          * .
          */
-        SOFFICE_ENABLE("soffice.enable", BOOLEAN_VALIDATOR, V_NO),
+        SOFFICE_ENABLE("soffice.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          * The LibreOffice home location. When empty, a probe to likely
          * candidates is performed to retrieve the location.
          */
-        SOFFICE_HOME("soffice.home"),
+        SOFFICE_HOME("soffice.home", API_UPDATABLE_OFF),
 
         /**
          * A temporary profile directory is created for each UNO connection
@@ -1196,13 +1295,13 @@ public interface IConfigProp {
          * provide a profile directory containing customized settings instead.
          * This template directory will be copied to the temporary profile.
          */
-        SOFFICE_PROFILE_TEMPLATE_DIR("soffice.profile.template-dir"),
+        SOFFICE_PROFILE_TEMPLATE_DIR("soffice.profile.template-dir", API_UPDATABLE_OFF),
 
         /**
          * A comma/space separated list of TCP/IP ports to localhost LibreOffice
          * (UNO) connection instances to be launched by SavaPage.
          */
-        SOFFICE_CONNECTION_PORTS("soffice.connection.ports", "2002,2003"),
+        SOFFICE_CONNECTION_PORTS("soffice.connection.ports", "2002,2003", API_UPDATABLE_OFF),
 
         /**
          * The number of executed tasks after which the UNO connection is
@@ -1268,7 +1367,7 @@ public interface IConfigProp {
         /**
          *
          */
-        MAIL_SMTP_HOST("mail.smtp.host", "localhost"),
+        MAIL_SMTP_HOST("mail.smtp.host", "localhost", API_UPDATABLE_ON),
 
         /**
          * The port to connect to on the SMTP server. Common ports include 25 or
@@ -1281,17 +1380,17 @@ public interface IConfigProp {
          * (non-encrypted) connection, then elevating to an encrypted connection
          * on the same port.
          */
-        MAIL_SMTP_SECURITY("mail.smtp.security", SMTP_SECURITY_V_NONE),
+        MAIL_SMTP_SECURITY("mail.smtp.security", SMTP_SECURITY_V_NONE, API_UPDATABLE_OFF),
 
         /**
          * Username for SMTP authentication. Commonly an email address.
          */
-        MAIL_SMTP_USER_NAME("mail.smtp.username"),
+        MAIL_SMTP_USER_NAME("mail.smtp.username", API_UPDATABLE_ON),
 
         /**
          * Password for SMTP authentication.
          */
-        MAIL_SMTP_PASSWORD("mail.smtp.password"),
+        MAIL_SMTP_PASSWORD("mail.smtp.password", API_UPDATABLE_ON),
 
         /**
          * Produces extra SMTP related logging for troubleshooting.
@@ -1328,34 +1427,45 @@ public interface IConfigProp {
         /**
          *
          */
-        MAIL_FROM_ADDRESS("mail.from.address", NOT_EMPTY_VALIDATOR),
+        MAIL_FROM_ADDRESS("mail.from.address", NOT_EMPTY_VALIDATOR, API_UPDATABLE_ON),
 
         /**
          *
          */
-        MAIL_FROM_NAME("mail.from.name", CommunityDictEnum.SAVAPAGE.getWord()),
+        MAIL_FROM_NAME("mail.from.name", CommunityDictEnum.SAVAPAGE.getWord(), API_UPDATABLE_ON),
 
         /**
          *
          */
-        MAIL_REPLY_TO_ADDRESS("mail.reply.to.address"),
+        MAIL_REPLY_TO_ADDRESS("mail.reply.to.address", API_UPDATABLE_ON),
 
         /**
          *
          */
-        MAIL_REPLY_TO_NAME("mail.reply.to.name", "DO NOT REPLY"),
+        MAIL_REPLY_TO_NAME("mail.reply.to.name", "DO NOT REPLY", API_UPDATABLE_ON),
+
+        /**
+         * If "Y", mail is PGP/MIME signed (if PGP Secret Key is present).
+         */
+        MAIL_PGP_MIME_SIGN("mail.pgp.mime.sign", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         * If "Y" <i>and</i> mail is PGP signed, it is also PGP encrypted, for
+         * each recipients.
+         */
+        MAIL_PGP_MIME_ENCRYPT("mail.pgp.mime.encrypt", BOOLEAN_VALIDATOR, V_YES),
 
         /**
          * The path of the custom template files, relative to
          * {@link ConfigManager#SERVER_REL_PATH_CUSTOM_TEMPLATE}.
          */
-        CUSTOM_TEMPLATE_HOME("custom.template.home"),
+        CUSTOM_TEMPLATE_HOME("custom.template.home", API_UPDATABLE_ON),
 
         /**
          * The path of the custom Email template files, relative to
          * {@link ConfigManager#SERVER_REL_PATH_CUSTOM_TEMPLATE}.
          */
-        CUSTOM_TEMPLATE_HOME_MAIL("custom.template.home.mail"),
+        CUSTOM_TEMPLATE_HOME_MAIL("custom.template.home.mail", API_UPDATABLE_ON),
 
         /**
          *
@@ -1373,52 +1483,85 @@ public interface IConfigProp {
          * Enable Copy Job option for Job Ticket (boolean). When {@code true} a
          * job ticket for a copy job can be created.
          */
-        JOBTICKET_COPIER_ENABLE("jobticket.copier.enable", BOOLEAN_VALIDATOR, V_NO),
+        JOBTICKET_COPIER_ENABLE("jobticket.copier.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          * Enable "delivery time" option for Job Ticket (boolean).
          */
-        JOBTICKET_DELIVERY_DATETIME_ENABLE("jobticket.delivery-datetime.enable", BOOLEAN_VALIDATOR, V_YES),
+        JOBTICKET_DELIVERY_DATETIME_ENABLE("jobticket.delivery-datetime.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * Enable notification by email to owner of job ticket when ticket is
          * completed (Boolean).
          */
-        JOBTICKET_NOTIFY_EMAIL_COMPLETED_ENABLE("jobticket.notify-email.completed.enable", BOOLEAN_VALIDATOR, V_YES),
+        JOBTICKET_NOTIFY_EMAIL_COMPLETED_ENABLE("jobticket.notify-email.completed.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * Enable notification by email to owner of job ticket when ticket is
          * canceled (Boolean).
          */
-        JOBTICKET_NOTIFY_EMAIL_CANCELED_ENABLE("jobticket.notify-email.canceled.enable", BOOLEAN_VALIDATOR, V_YES),
+        JOBTICKET_NOTIFY_EMAIL_CANCELED_ENABLE("jobticket.notify-email.canceled.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+
+        /**
+         * Send job ticket email notification with content-type as "text/html".
+         */
+        JOBTICKET_NOTIFY_EMAIL_CONTENT_TYPE_HTML("jobticket.notify-email.content-type.html", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
+
+        /**
+         * A comma separated list of Job Ticket tags to be applied as job ticker
+         * number prefix. Each tag on the list is formatted as "TAG/word", where
+         * "TAG" is a unique N-letter upper-case mnemonic, "/" is a fixed
+         * separator, and "word" is a case-sensitive single word used in UI
+         * context.
+         *
+         * E.g. "MATH/Maths,PHYS/Physics,CHEM/Chemistry". When "MATH" tag is
+         * applied, a generated ticket number looks like "MATH/EE1-FA3E-6596".
+         */
+        JOBTICKET_TAGS("jobticket.tags", KeyType.MULTI_LINE),
+
+        /**
+         * Enable {@link IConfigProp.Key#JOBTICKET_TAGS} (boolean).
+         */
+        JOBTICKET_TAGS_ENABLE("jobticket.tags.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
+
+        /**
+         * Is tag required, when {@link IConfigProp.Key#JOBTICKET_TAGS_ENABLE} ?
+         * (boolean).
+         */
+        JOBTICKET_TAGS_REQUIRED("jobticket.tags.required", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * Enable Delegated Print (boolean).
          */
-        PROXY_PRINT_DELEGATE_ENABLE("proxy-print.delegate.enable", BOOLEAN_VALIDATOR, V_NO),
+        PROXY_PRINT_DELEGATE_ENABLE("proxy-print.delegate.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          * Enable delegated print account type {@link AccountTypeEnum#GROUP}
          * (boolean).
          */
-        PROXY_PRINT_DELEGATE_ACCOUNT_GROUP_ENABLE("proxy-print.delegate.account.group.enable", BOOLEAN_VALIDATOR, V_YES),
-
-        /**
-         * Enable delegated print account type {@link AccountTypeEnum#USER}
-         * (boolean).
-         */
-        PROXY_PRINT_DELEGATE_ACCOUNT_USER_ENABLE("proxy-print.delegate.account.user.enable", BOOLEAN_VALIDATOR, V_YES),
+        PROXY_PRINT_DELEGATE_ACCOUNT_GROUP_ENABLE("proxy-print.delegate.account.group.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * Enable delegated print account type {@link AccountTypeEnum#SHARED}
          * (boolean).
          */
-        PROXY_PRINT_DELEGATE_ACCOUNT_SHARED_ENABLE("proxy-print.delegate.account.shared.enable", BOOLEAN_VALIDATOR, V_YES),
+        PROXY_PRINT_DELEGATE_ACCOUNT_SHARED_ENABLE("proxy-print.delegate.account.shared.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+
+        /**
+         * Enable delegated User Group selection for print account type
+         * {@link AccountTypeEnum#SHARED} (boolean).
+         */
+        PROXY_PRINT_DELEGATE_ACCOUNT_SHARED_GROUP_ENABLE("proxy-print.delegate.account.shared.group.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+
+        /**
+         * Enable multiple delegated print copies (boolean).
+         */
+        PROXY_PRINT_DELEGATE_MULTIPLE_MEMBER_COPIES_ENABLE("proxy-print.delegate.multiple-member-copies.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * Enable Delegated Print integration with PaperCut (boolean).
          */
-        PROXY_PRINT_DELEGATE_PAPERCUT_ENABLE("proxy-print.delegate.papercut.enable", BOOLEAN_VALIDATOR, V_NO),
+        PROXY_PRINT_DELEGATE_PAPERCUT_ENABLE("proxy-print.delegate.papercut.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          * The shared top-level account that must be present in PaperCut.
@@ -1426,21 +1569,21 @@ public interface IConfigProp {
          * PaperCut printer assigned to Delegated Print will be configured to
          * charge to this account.
          */
-        PROXY_PRINT_DELEGATE_PAPERCUT_ACCOUNT_SHARED_PARENT("proxy-print.delegate.papercut.account.shared.parent", "SavaPage"),
+        PROXY_PRINT_DELEGATE_PAPERCUT_ACCOUNT_SHARED_PARENT("proxy-print.delegate.papercut.account.shared.parent", "SavaPage", API_UPDATABLE_OFF),
 
         /**
          * The sub-account of
          * {@link #PROXY_PRINT_DELEGATE_PAPERCUT_ACCOUNT_SHARED_PARENT} holding
          * Print Job transactions.
          */
-        PROXY_PRINT_DELEGATE_PAPERCUT_ACCOUNT_SHARED_CHILD_JOBS("proxy-print.delegate.papercut.account.shared.child.jobs", "Jobs"),
+        PROXY_PRINT_DELEGATE_PAPERCUT_ACCOUNT_SHARED_CHILD_JOBS("proxy-print.delegate.papercut.account.shared.child.jobs", "Jobs", API_UPDATABLE_OFF),
 
         /**
          * This is one of the “Multiple Personal Accounts” in PaperCut and is
          * used by SavaPage to charge Delegated Print costs to individual
          * persons.
          */
-        PROXY_PRINT_DELEGATE_PAPERCUT_ACCOUNT_PERSONAL("proxy-print.delegate.papercut.account.personal", "SavaPage"),
+        PROXY_PRINT_DELEGATE_PAPERCUT_ACCOUNT_PERSONAL("proxy-print.delegate.papercut.account.personal", "SavaPage", API_UPDATABLE_OFF),
 
         /**
          * The PaperCut account_type (like "USER-001", "USER-002") of the
@@ -1449,7 +1592,7 @@ public interface IConfigProp {
          * this key it is used to filter personal transactions in JDBC queries
          * (CSV downloads) for the Delegated Print context.
          */
-        PROXY_PRINT_DELEGATE_PAPERCUT_ACCOUNT_PERSONAL_TYPE("proxy-print.delegate.papercut.account.personal-type"),
+        PROXY_PRINT_DELEGATE_PAPERCUT_ACCOUNT_PERSONAL_TYPE("proxy-print.delegate.papercut.account.personal-type", API_UPDATABLE_OFF),
 
         /**
          * Enable non-secure proxy printing (Boolean).
@@ -1462,13 +1605,13 @@ public interface IConfigProp {
         PROXY_PRINT_FAST_EXPIRY_MINS("proxy-print.fast-expiry-mins", NUMBER_VALIDATOR, "10"),
 
         /**
-          *
-          */
+         *
+         */
         PROXY_PRINT_HOLD_EXPIRY_MINS("proxy-print.hold-expiry-mins", NUMBER_VALIDATOR, "60"),
 
         /**
-          *
-          */
+         *
+         */
         PROXY_PRINT_DIRECT_EXPIRY_SECS("proxy-print.direct-expiry-secs", NUMBER_VALIDATOR, "20"),
 
         /**
@@ -1480,38 +1623,38 @@ public interface IConfigProp {
          * Restrict non-secure proxy printing to this Printer Group. See:
          * {@link PrinterGroup#getGroupName()}
          */
-        PROXY_PRINT_NON_SECURE_PRINTER_GROUP("proxy-print.non-secure-printer-group"),
+        PROXY_PRINT_NON_SECURE_PRINTER_GROUP("proxy-print.non-secure-printer-group", API_UPDATABLE_OFF),
 
         /**
          * Enable "remove graphics" option for Proxy Print (boolean).
          */
-        PROXY_PRINT_REMOVE_GRAPHICS_ENABLE("proxy-print.remove-graphics.enable", BOOLEAN_VALIDATOR, V_YES),
+        PROXY_PRINT_REMOVE_GRAPHICS_ENABLE("proxy-print.remove-graphics.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * CRON expression: 10 minutes past midnight.
          */
-        SCHEDULE_DAILY("schedule.daily", "0 10 0 * * ?"),
+        SCHEDULE_DAILY("schedule.daily", CRON_EXPR_VALIDATOR, "0 10 0 * * ?", API_UPDATABLE_OFF),
 
         /**
          * CRON expression: 12:55am each day (before 1am to miss DST
          * switch-overs).
          */
-        SCHEDULE_DAILY_MAINT("schedule.daily-maintenance", "0 55 0 * * ?"),
+        SCHEDULE_DAILY_MAINT("schedule.daily-maintenance", CRON_EXPR_VALIDATOR, "0 55 0 * * ?", API_UPDATABLE_OFF),
 
         /**
          * CRON expression.
          */
-        SCHEDULE_HOURLY("schedule.hourly", "0 0 * * * ?"),
+        SCHEDULE_HOURLY("schedule.hourly", CRON_EXPR_VALIDATOR, "0 0 * * * ?", API_UPDATABLE_OFF),
 
         /**
          * CRON expression.
          */
-        SCHEDULE_MONTHLY("schedule.monthly", "0 30 0 1 * ?"),
+        SCHEDULE_MONTHLY("schedule.monthly", CRON_EXPR_VALIDATOR, "0 30 0 1 * ?", API_UPDATABLE_OFF),
 
         /**
          * CRON expression: 20 minutes past midnight on Sunday morning.
          */
-        SCHEDULE_WEEKLY("schedule.weekly", "0 20 0 ? * 1"),
+        SCHEDULE_WEEKLY("schedule.weekly", CRON_EXPR_VALIDATOR, "0 20 0 ? * 1", API_UPDATABLE_OFF),
 
         /**
          *
@@ -1521,142 +1664,142 @@ public interface IConfigProp {
         /**
          *
          */
-        STATS_PRINT_IN_ROLLING_DAY_PAGES("stats.print-in.rolling-day.pages"),
+        STATS_PRINT_IN_ROLLING_DAY_PAGES("stats.print-in.rolling-day.pages", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_IN_ROLLING_WEEK_PAGES("stats.print-in.rolling-week.pages"),
+        STATS_PRINT_IN_ROLLING_WEEK_PAGES("stats.print-in.rolling-week.pages", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_IN_ROLLING_WEEK_BYTES("stats.print-in.rolling-week.bytes"),
+        STATS_PRINT_IN_ROLLING_WEEK_BYTES("stats.print-in.rolling-week.bytes", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_IN_ROLLING_MONTH_PAGES("stats.print-in.rolling-month.pages"),
+        STATS_PRINT_IN_ROLLING_MONTH_PAGES("stats.print-in.rolling-month.pages", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_IN_ROLLING_MONTH_BYTES("stats.print-in.rolling-month.bytes"),
+        STATS_PRINT_IN_ROLLING_MONTH_BYTES("stats.print-in.rolling-month.bytes", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PDF_OUT_ROLLING_DAY_PAGES("stats.pdf-out.rolling-day.pages"),
+        STATS_PDF_OUT_ROLLING_DAY_PAGES("stats.pdf-out.rolling-day.pages", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PDF_OUT_ROLLING_WEEK_PAGES("stats.pdf-out.rolling-week.pages"),
+        STATS_PDF_OUT_ROLLING_WEEK_PAGES("stats.pdf-out.rolling-week.pages", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PDF_OUT_ROLLING_WEEK_BYTES("stats.pdf-out.rolling-week.bytes"),
+        STATS_PDF_OUT_ROLLING_WEEK_BYTES("stats.pdf-out.rolling-week.bytes", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PDF_OUT_ROLLING_MONTH_PAGES("stats.pdf-out.rolling-month.pages"),
+        STATS_PDF_OUT_ROLLING_MONTH_PAGES("stats.pdf-out.rolling-month.pages", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PDF_OUT_ROLLING_MONTH_BYTES("stats.pdf-out.rolling-month.bytes"),
+        STATS_PDF_OUT_ROLLING_MONTH_BYTES("stats.pdf-out.rolling-month.bytes", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_OUT_ROLLING_DAY_PAGES("stats.print-out.rolling-day.pages"),
+        STATS_PRINT_OUT_ROLLING_DAY_PAGES("stats.print-out.rolling-day.pages", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_OUT_ROLLING_WEEK_PAGES("stats.print-out.rolling-week.pages"),
+        STATS_PRINT_OUT_ROLLING_WEEK_PAGES("stats.print-out.rolling-week.pages", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_OUT_ROLLING_WEEK_SHEETS("stats.print-out.rolling-week.sheets"),
+        STATS_PRINT_OUT_ROLLING_WEEK_SHEETS("stats.print-out.rolling-week.sheets", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_OUT_ROLLING_WEEK_ESU("stats.print-out.rolling-week.esu"),
+        STATS_PRINT_OUT_ROLLING_WEEK_ESU("stats.print-out.rolling-week.esu", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_OUT_ROLLING_WEEK_BYTES("stats.print-out.rolling-week.bytes"),
+        STATS_PRINT_OUT_ROLLING_WEEK_BYTES("stats.print-out.rolling-week.bytes", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_OUT_ROLLING_MONTH_PAGES("stats.print-out.rolling-month.pages"),
+        STATS_PRINT_OUT_ROLLING_MONTH_PAGES("stats.print-out.rolling-month.pages", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_OUT_ROLLING_MONTH_SHEETS("stats.print-out.rolling-month.sheets"),
+        STATS_PRINT_OUT_ROLLING_MONTH_SHEETS("stats.print-out.rolling-month.sheets", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_OUT_ROLLING_MONTH_ESU("stats.print-out.rolling-month.esu"),
+        STATS_PRINT_OUT_ROLLING_MONTH_ESU("stats.print-out.rolling-month.esu", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_PRINT_OUT_ROLLING_MONTH_BYTES("stats.print-out.rolling-month.bytes"),
+        STATS_PRINT_OUT_ROLLING_MONTH_BYTES("stats.print-out.rolling-month.bytes", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_TOTAL_RESET_DATE("stats.total.reset-date", String.valueOf(System.currentTimeMillis())),
+        STATS_TOTAL_RESET_DATE("stats.total.reset-date", String.valueOf(System.currentTimeMillis()), API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_TOTAL_PDF_OUT_PAGES("stats.total.pdf-out.pages", "0"),
+        STATS_TOTAL_PDF_OUT_PAGES("stats.total.pdf-out.pages", "0", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_TOTAL_PDF_OUT_BYTES("stats.total.pdf-out.bytes", "0"),
+        STATS_TOTAL_PDF_OUT_BYTES("stats.total.pdf-out.bytes", "0", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_TOTAL_PRINT_IN_PAGES("stats.total.print-in.pages", "0"),
+        STATS_TOTAL_PRINT_IN_PAGES("stats.total.print-in.pages", "0", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_TOTAL_PRINT_IN_BYTES("stats.total.print-in.bytes", "0"),
+        STATS_TOTAL_PRINT_IN_BYTES("stats.total.print-in.bytes", "0", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_TOTAL_PRINT_OUT_PAGES("stats.total.print-out.pages", "0"),
+        STATS_TOTAL_PRINT_OUT_PAGES("stats.total.print-out.pages", "0", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_TOTAL_PRINT_OUT_SHEETS("stats.total.print-out.sheets", "0"),
+        STATS_TOTAL_PRINT_OUT_SHEETS("stats.total.print-out.sheets", "0", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_TOTAL_PRINT_OUT_ESU("stats.total.print-out.esu", "0"),
+        STATS_TOTAL_PRINT_OUT_ESU("stats.total.print-out.esu", "0", API_UPDATABLE_OFF),
 
         /**
          *
          */
-        STATS_TOTAL_PRINT_OUT_BYTES("stats.total.print-out.bytes", "0"),
+        STATS_TOTAL_PRINT_OUT_BYTES("stats.total.print-out.bytes", "0", API_UPDATABLE_OFF),
 
         /**
          * Make a backup before a database schema upgrade.
@@ -1681,18 +1824,18 @@ public interface IConfigProp {
         /**
          *
          */
-        SYS_DEFAULT_LOCALE("system.default-locale", LOCALE_VALIDATOR),
+        SYS_DEFAULT_LOCALE("system.default-locale", LOCALE_VALIDATOR, API_UPDATABLE_ON),
 
         /**
          *
          */
-        SYS_DEFAULT_PAPER_SIZE("system.default-papersize", PAPERSIZE_V_SYSTEM),
+        SYS_DEFAULT_PAPER_SIZE("system.default-papersize", PAPERSIZE_V_SYSTEM, API_UPDATABLE_OFF),
 
         /**
          * The DNS name of the server. Used to give user feedback for URL's,
          * e.g. URL's to use for IPP printing.
          */
-        SYS_SERVER_DNS_NAME("system.server.dns-name"),
+        SYS_SERVER_DNS_NAME("system.server.dns-name", API_UPDATABLE_ON),
 
         /**
          * The major database schema version.
@@ -1700,7 +1843,7 @@ public interface IConfigProp {
          * Do NOT set a value since it is present in installation database.
          * </p>
          */
-        SYS_SCHEMA_VERSION("system.schema-version"),
+        SYS_SCHEMA_VERSION("system.schema-version", API_UPDATABLE_OFF),
 
         /**
          * The minor database schema version.
@@ -1709,17 +1852,23 @@ public interface IConfigProp {
          * defaults to "0" for pre v0.9.3 databases.
          * </p>
          */
-        SYS_SCHEMA_VERSION_MINOR("system.schema-version-minor", "0"),
+        SYS_SCHEMA_VERSION_MINOR("system.schema-version-minor", "0", API_UPDATABLE_OFF),
 
         /**
          * Do NOT set a value since it is present in installation database.
          */
-        SYS_SETUP_COMPLETED("system.setup-completed"),
+        SYS_SETUP_COMPLETED("system.setup-completed", API_UPDATABLE_OFF),
+
+        /**
+         * When system is in maintenance mode, only admins can login to Web Apps
+         * (regular users cannot).
+         */
+        SYS_MAINTENANCE("system.maintenance", BOOLEAN_VALIDATOR, V_NO),
 
         /**
          *
          */
-        USER_CAN_CHANGE_PIN("user.can-change-pin", BOOLEAN_VALIDATOR, V_YES),
+        USER_CAN_CHANGE_PIN("user.can-change-pin", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * .
@@ -1757,7 +1906,7 @@ public interface IConfigProp {
         /**
          *
          */
-        USER_SOURCE_GROUP("user-source.group"),
+        USER_SOURCE_GROUP("user-source.group", API_UPDATABLE_ON),
 
         /**
          *
@@ -1768,7 +1917,7 @@ public interface IConfigProp {
          * Client IP addresses (CIDR) that are allowed to use the User Client
          * App (when void, all client addresses are allowed).
          */
-        CLIAPP_IP_ADDRESSES_ALLOWED("cliapp.ip-addresses-allowed"),
+        CLIAPP_IP_ADDRESSES_ALLOWED("cliapp.ip-addresses-allowed", CIDR_RANGES_VALIDATOR_OPT, API_UPDATABLE_ON),
 
         /**
          * Enable Client App authentication for clients that are denied for
@@ -1785,7 +1934,7 @@ public interface IConfigProp {
         /**
          * Secret administrator passkey of User Client App.
          */
-        CLIAPP_AUTH_ADMIN_PASSKEY("cliapp.auth.admin-passkey"),
+        CLIAPP_AUTH_ADMIN_PASSKEY("cliapp.auth.admin-passkey", API_UPDATABLE_OFF),
 
         /**
          * Trust authenticated user in User Web App on same IP address as Client
@@ -1798,13 +1947,13 @@ public interface IConfigProp {
          * Web App in response to a print-in event. Do <i>not</i> prefix the
          * value with a {@code '?'} or {@code '&'} character.
          */
-        CLIAPP_PRINT_IN_URL_QUERY("cliapp.print-in.url-query"),
+        CLIAPP_PRINT_IN_URL_QUERY("cliapp.print-in.url-query", API_UPDATABLE_OFF),
 
         /**
          * Action button text on print-in action dialog for opening User Web
          * App.
          */
-        CLIAPP_PRINT_IN_DIALOG_BUTTON_OPEN("cliapp.print-in.dialog.button-open"),
+        CLIAPP_PRINT_IN_DIALOG_BUTTON_OPEN("cliapp.print-in.dialog.button-open", API_UPDATABLE_OFF),
 
         /**
          * .
@@ -1836,6 +1985,10 @@ public interface IConfigProp {
         /**
          *
          */
+        WEBAPP_NUMBER_UP_PREVIEW_ENABLE("webapp.number-up-preview.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+        /**
+         *
+         */
         WEBAPP_WATCHDOG_HEARTBEAT_SECS("webapp.watchdog.heartbeat-secs", NUMBER_VALIDATOR, DEFAULT_WEBAPP_WATCHDOG_HEARTBEAT_SECS),
 
         /**
@@ -1846,7 +1999,7 @@ public interface IConfigProp {
         /**
          * Admin WebApp: show technical info on dashboard?
          */
-        WEBAPP_ADMIN_DASHBOARD_SHOW_TECH_INFO("webapp.admin.dashboard.show-tech-info", BOOLEAN_VALIDATOR, V_NO),
+        WEBAPP_ADMIN_DASHBOARD_SHOW_TECH_INFO("webapp.admin.dashboard.show-tech-info", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          * Number of seconds after which cached Bitcoin wallet information
@@ -1855,10 +2008,47 @@ public interface IConfigProp {
         WEBAPP_ADMIN_BITCOIN_WALLET_CACHE_EXPIRY_SECS("webapp.admin.bitcoin.wallet.cache-expiry-secs", NUMBER_VALIDATOR, "3600"),
 
         /**
+         *
+         */
+        WEBAPP_JOBTICKETS_PRINT_ALL_ENABLE("webapp.jobtickets.print-all.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+
+        /**
+         * Number of job tickets to show in the list. A value of zero means all
+         * available tickets are shown.
+         */
+        WEBAPP_JOBTICKETS_LIST_SIZE("webapp.jobtickets.list-size", NUMBER_VALIDATOR, "10"),
+
+        /**
+         * The minimum number of job tickets that can be shown in the list. A
+         * value of zero means all available tickets are shown.
+         */
+        WEBAPP_JOBTICKETS_LIST_SIZE_MIN("webapp.jobtickets.list-size-min", NUMBER_VALIDATOR, "5"),
+
+        /**
+         * The maximum number of job tickets that can be shown in the list.
+         */
+        WEBAPP_JOBTICKETS_LIST_SIZE_MAX("webapp.jobtickets.list-size-max", NUMBER_VALIDATOR, "50"),
+
+        /**
          * Trust authenticated user in Client App on same IP address as User Web
          * App (Boolean, default TRUE).
          */
         WEBAPP_USER_AUTH_TRUST_CLIAPP_AUTH("webapp.user.auth.trust-cliapp-auth", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         *
+         */
+        WEBAPP_USER_DOCLOG_SELECT_TYPE_DEFAULT_ORDER("webapp.user.doclog.select.type.default-order", new EnumSetValidator<>(DocLogScopeEnum.class), API_UPDATABLE_ON),
+
+        /**
+         * Is GDPR enabled in User Web App.
+         */
+        WEBAPP_USER_GDPR_ENABLE("webapp.user.gdpr.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+
+        /**
+         * Contact email address for GDPR (erase) requests.
+         */
+        WEBAPP_USER_GDPR_CONTACT_EMAIL("webapp.user.gdpr.contact.email", EMAIL_VALIDATOR_OPT, API_UPDATABLE_ON),
 
         /**
          * Max idle seconds after which automatic logout occurs.
@@ -1880,35 +2070,51 @@ public interface IConfigProp {
         /**
          * User WebApp: Max. copies for proxy printing.
          */
-        WEBAPP_USER_PROXY_PRINT_MAX_COPIES("webapp.user.proxy-print.max-copies", NUMBER_VALIDATOR, "30"),
+        WEBAPP_USER_PROXY_PRINT_MAX_COPIES("webapp.user.proxy-print.max-copies", NUMBER_VALIDATOR, "30", API_UPDATABLE_ON),
 
         /**
          * User WebApp: enable a fixed inbox clearing scope after a proxy print
          * job is issued.
          */
-        WEBAPP_USER_PROXY_PRINT_CLEAR_INBOX_ENABLE("webapp.user.proxy-print.clear-inbox.enable", BOOLEAN_VALIDATOR, V_NO),
+        WEBAPP_USER_PROXY_PRINT_CLEAR_INBOX_ENABLE("webapp.user.proxy-print.clear-inbox.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          * User WebApp: the fixed inbox clearing scope after proxy printing.
          */
-        WEBAPP_USER_PROXY_PRINT_CLEAR_INBOX_SCOPE("webapp.user.proxy-print.clear-inbox.scope", new EnumValidator<>(InboxSelectScopeEnum.class), InboxSelectScopeEnum.ALL.toString()),
+        WEBAPP_USER_PROXY_PRINT_CLEAR_INBOX_SCOPE("webapp.user.proxy-print.clear-inbox.scope", new EnumValidator<>(InboxSelectScopeEnum.class), InboxSelectScopeEnum.ALL.toString(), API_UPDATABLE_ON),
+
+        /**
+         * User WebApp: show clearing scope (Boolean).
+         */
+        WEBAPP_USER_PROXY_PRINT_CLEAR_INBOX_PROMPT("webapp.user.proxy-print.clear-inbox.prompt", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * User WebApp: clear selected printer (including options) after proxy
          * printing.
          */
-        WEBAPP_USER_PROXY_PRINT_CLEAR_PRINTER("webapp.user.proxy-print.clear-printer", BOOLEAN_VALIDATOR, V_NO),
+        WEBAPP_USER_PROXY_PRINT_CLEAR_PRINTER("webapp.user.proxy-print.clear-printer", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          * User WebApp: clear print delegate data after proxy printing.
          */
-        WEBAPP_USER_PROXY_PRINT_CLEAR_DELEGATE("webapp.user.proxy-print.clear-delegate", BOOLEAN_VALIDATOR, V_NO),
+        WEBAPP_USER_PROXY_PRINT_CLEAR_DELEGATE("webapp.user.proxy-print.clear-delegate", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
+
+        /**
+         * User WebApp: Add user ID to delegator name?
+         */
+        WEBAPP_USER_PROXY_PRINT_DELEGATOR_NAME_ID("webapp.user.proxy-print.delegator.name-id", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+
+        /**
+         * User WebApp: Can application of selected copies for delegates be
+         * switched off in Print Dialog?
+         */
+        WEBAPP_USER_PROXY_PRINT_DELEGATE_COPIES_APPLY_SWITCH("webapp.user.proxy-print.delegate-copies-apply-switch", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * User WebApp: enable the "Print documents separately" option for proxy
          * printing (Boolean). If {@code true} the option is enabled (shown).
          */
-        WEBAPP_USER_PROXY_PRINT_SEPARATE_ENABLE("webapp.user.proxy-print.separate.enable", BOOLEAN_VALIDATOR, V_NO),
+        WEBAPP_USER_PROXY_PRINT_SEPARATE_ENABLE("webapp.user.proxy-print.separate.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
 
         /**
          * User WebApp: the (default) "Print documents separately" option value
@@ -1917,12 +2123,22 @@ public interface IConfigProp {
          * inbox document. If {@code false}, one (1) proxy print job is printed
          * for a vanilla inbox.
          */
-        WEBAPP_USER_PROXY_PRINT_SEPARATE("webapp.user.proxy-print.separate", BOOLEAN_VALIDATOR, V_NO),
+        WEBAPP_USER_PROXY_PRINT_SEPARATE("webapp.user.proxy-print.separate", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
+
+        /**
+         * URL with User WebApp help information.
+         */
+        WEBAPP_USER_HELP_URL("webapp.user.help.url", URL_VALIDATOR_OPT, API_UPDATABLE_ON),
+
+        /**
+         * User WebApp: show help URL in web app
+         */
+        WEBAPP_USER_HELP_URL_ENABLE("webapp.user.help.url.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * User WebApp: must text of navigation buttons on main window be shown?
          */
-        WEBAPP_USER_MAIN_NAV_BUTTON_TEXT("webapp.user.main.nav-button-text", new EnumValidator<>(OnOffEnum.class), OnOffEnum.AUTO.toString()),
+        WEBAPP_USER_MAIN_NAV_BUTTON_TEXT("webapp.user.main.nav-button-text", new EnumValidator<>(OnOffEnum.class), OnOffEnum.AUTO.toString(), API_UPDATABLE_ON),
 
         /**
          * WebApp: enable (show) driver download in About Dialog?
@@ -1951,94 +2167,95 @@ public interface IConfigProp {
          * The custom jQuery Mobile Theme CSS file for the Admin Web App as
          * present in the {@code server/custom/web/themes/} folder.
          */
-        WEBAPP_THEME_ADMIN(Key.WEBAPP_THEME_PFX + "admin"),
+        WEBAPP_THEME_ADMIN(Key.WEBAPP_THEME_PFX + "admin", API_UPDATABLE_ON),
 
         /**
          * The custom jQuery Mobile Theme CSS file for the Job Tickets Web App
          * as present in the {@code server/custom/web/themes/} folder.
          */
-        WEBAPP_THEME_JOBTICKETS(Key.WEBAPP_THEME_PFX + "jobtickets"),
+        WEBAPP_THEME_JOBTICKETS(Key.WEBAPP_THEME_PFX + "jobtickets", API_UPDATABLE_ON),
 
         /**
          * The custom jQuery Mobile Theme CSS file for the POS Web App as
          * present in the {@code server/custom/web/themes/} folder.
          */
-        WEBAPP_THEME_POS(Key.WEBAPP_THEME_PFX + "pos"),
+        WEBAPP_THEME_POS(Key.WEBAPP_THEME_PFX + "pos", API_UPDATABLE_ON),
 
         /**
          * The custom jQuery Mobile Theme CSS file for the User Web App as
          * present in the {@code server/custom/web/themes/} folder.
          */
-        WEBAPP_THEME_USER(Key.WEBAPP_THEME_PFX + "user"),
+        WEBAPP_THEME_USER(Key.WEBAPP_THEME_PFX + "user", API_UPDATABLE_ON),
 
         /**
          * The custom CSS file for the Admin Web App as present in the
          * {@code server/custom/web/} folder.
          */
-        WEBAPP_CUSTOM_ADMIN(Key.WEBAPP_CUSTOM_PFX + "admin"),
+        WEBAPP_CUSTOM_ADMIN(Key.WEBAPP_CUSTOM_PFX + "admin", API_UPDATABLE_ON),
 
         /**
          * The custom CSS file for the Job Tickets Web App as present in the
          * {@code server/custom/web/} folder.
          */
-        WEBAPP_CUSTOM_JOBTICKETS(Key.WEBAPP_CUSTOM_PFX + "jobtickets"),
+        WEBAPP_CUSTOM_JOBTICKETS(Key.WEBAPP_CUSTOM_PFX + "jobtickets", API_UPDATABLE_ON),
 
         /**
          * The custom CSS file for the POS Web App as present in the
          * {@code server/custom/web/} folder.
          */
-        WEBAPP_CUSTOM_POS(Key.WEBAPP_CUSTOM_PFX + "pos"),
+        WEBAPP_CUSTOM_POS(Key.WEBAPP_CUSTOM_PFX + "pos", API_UPDATABLE_ON),
 
         /**
          * The custom CSS file for the User Web App as present in the
          * {@code server/custom/web/} folder.
          */
-        WEBAPP_CUSTOM_USER(Key.WEBAPP_CUSTOM_PFX + "user"),
+        WEBAPP_CUSTOM_USER(Key.WEBAPP_CUSTOM_PFX + "user", API_UPDATABLE_ON),
 
         /**
          *
          */
-        WEBAPP_HTML_ADMIN_ABOUT(Key.WEBAPP_HTML_PFX + "admin.about"),
+        WEBAPP_HTML_ADMIN_ABOUT(Key.WEBAPP_HTML_PFX + "admin.about", API_UPDATABLE_ON),
 
         /**
-        *
-        */
-        WEBAPP_HTML_JOBTICKETS_ABOUT(Key.WEBAPP_HTML_PFX + "jobtickets.about"),
+         *
+         */
+        WEBAPP_HTML_JOBTICKETS_ABOUT(Key.WEBAPP_HTML_PFX + "jobtickets.about", API_UPDATABLE_ON),
 
         /**
-        *
-        */
-        WEBAPP_HTML_POS_ABOUT(Key.WEBAPP_HTML_PFX + "pos.about"),
+         *
+         */
+        WEBAPP_HTML_POS_ABOUT(Key.WEBAPP_HTML_PFX + "pos.about", API_UPDATABLE_ON),
         /**
-        *
-        */
-        WEBAPP_HTML_USER_ABOUT(Key.WEBAPP_HTML_PFX + "user.about"),
+         *
+         */
+        WEBAPP_HTML_USER_ABOUT(Key.WEBAPP_HTML_PFX + "user.about", API_UPDATABLE_ON),
 
         /**
-        *
-        */
-        WEBAPP_HTML_ADMIN_LOGIN(Key.WEBAPP_HTML_PFX + "admin.login"),
+         *
+         */
+        WEBAPP_HTML_ADMIN_LOGIN(Key.WEBAPP_HTML_PFX + "admin.login", API_UPDATABLE_ON),
 
         /**
-        *
-        */
-        WEBAPP_HTML_JOBTICKETS_LOGIN(Key.WEBAPP_HTML_PFX + "jobtickets.login"),
+         *
+         */
+        WEBAPP_HTML_JOBTICKETS_LOGIN(Key.WEBAPP_HTML_PFX + "jobtickets.login", API_UPDATABLE_ON),
 
         /**
-        *
-        */
-        WEBAPP_HTML_POS_LOGIN(Key.WEBAPP_HTML_PFX + "pos.login"),
+         *
+         */
+        WEBAPP_HTML_POS_LOGIN(Key.WEBAPP_HTML_PFX + "pos.login", API_UPDATABLE_ON),
 
         /**
-        *
-        */
-        WEBAPP_HTML_USER_LOGIN(Key.WEBAPP_HTML_PFX + "user.login"),
+         *
+         */
+        WEBAPP_HTML_USER_LOGIN(Key.WEBAPP_HTML_PFX + "user.login", API_UPDATABLE_ON),
 
         /**
          * A comma/space separated list with {@link Locale#getLanguage()} codes
-         * that are available for users to choose for their Web App locale.
+         * that are available for users to choose for their Web App locale. When
+         * blank, all languages choices are offered to the user.
          */
-        WEBAPP_LANGUAGE_AVAILABLE("webapp.language.available"),
+        WEBAPP_LANGUAGE_AVAILABLE("webapp.language.available", API_UPDATABLE_ON),
 
         /**
          * .
@@ -2053,7 +2270,7 @@ public interface IConfigProp {
         /**
          * Trusted Third Party API Key for Web Login.
          */
-        WEB_LOGIN_TTP_API_KEY("web-login.ttp.apikey"),
+        WEB_LOGIN_TTP_API_KEY("web-login.ttp.apikey", API_UPDATABLE_OFF),
 
         /**
          * Number of msecs after after which an {@link OneTimeAuthToken}
@@ -2074,7 +2291,7 @@ public interface IConfigProp {
         /**
          * Enable Web Print.
          */
-        WEB_PRINT_ENABLE("web-print.enable", BOOLEAN_VALIDATOR, V_NO),
+        WEB_PRINT_ENABLE("web-print.enable", BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_OFF),
 
         /**
          * Enable drag & drop zone for Web Print.
@@ -2087,9 +2304,21 @@ public interface IConfigProp {
         WEB_PRINT_MAX_FILE_MB("web-print.max-file-mb", NUMBER_VALIDATOR, WEBPRINT_MAX_FILE_MB_V_DEFAULT.toString()),
 
         /**
+         * Enable graphics files for Web Print.
+         */
+        WEB_PRINT_GRAPHICS_ENABLE("web-print.graphics.enable", BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+
+        /**
+         * A comma/space separated list of file extensions (without leading
+         * point), that are excluded for Web Print. For example:
+         * "rtf,html,ps,txt".
+         */
+        WEB_PRINT_FILE_EXT_EXCLUDE("web-print.file-ext.exclude", API_UPDATABLE_ON),
+
+        /**
          *
          */
-        WEB_PRINT_LIMIT_IP_ADDRESSES("web-print.limit-ip-addresses");
+        WEB_PRINT_LIMIT_IP_ADDRESSES("web-print.limit-ip-addresses", CIDR_RANGES_VALIDATOR_OPT, API_UPDATABLE_ON);
 
         /**
          * Prefix for Web App theme keys.
@@ -2114,37 +2343,51 @@ public interface IConfigProp {
         /**
          *
          * @param name
+         *            The property name.
+         * @param isApiUpdatable
+         *            {@code true} if value can be updated with
+         *            {@link JsonRpcMethodName#SET_CONFIG_PROPERTY}.
          */
-        private Key(final String name) {
+        Key(final String name, final boolean isApiUpdatable) {
             this.property = this.createProperty(KeyType.SINGLE_LINE, name, null,
-                    "", null);
+                    "", null, isApiUpdatable);
         }
 
         /**
          *
          * @param name
+         *            The property name.
          * @param keyType
+         *            Type of key.
          */
-        private Key(final String name, final KeyType keyType) {
+        Key(final String name, final KeyType keyType) {
             this.property = this.createProperty(keyType, name, null, "", null);
         }
 
         /**
          *
          * @param name
+         *            The property name.
          * @param defaultValue
+         *            The initial value.
+         * @param isApiUpdatable
+         *            {@code true} if value can be updated with
+         *            {@link JsonRpcMethodName#SET_CONFIG_PROPERTY}.
          */
-        private Key(final String name, final String defaultValue) {
+        Key(final String name, final String defaultValue,
+                final boolean isApiUpdatable) {
             this.property = this.createProperty(KeyType.SINGLE_LINE, name, null,
-                    defaultValue, null);
+                    defaultValue, null, isApiUpdatable);
         }
 
         /**
          *
          * @param name
+         *            The property name.
          * @param validator
+         *            The validator.
          */
-        private Key(final String name, final ConfigPropValidator validator) {
+        Key(final String name, final ConfigPropValidator validator) {
             this.property = this.createProperty(KeyType.SINGLE_LINE, name,
                     validator, "", null);
         }
@@ -2152,10 +2395,29 @@ public interface IConfigProp {
         /**
          *
          * @param name
-         * @param keyType
-         * @param defaultValue
+         *            The property name.
+         * @param validator
+         *            The validator.
+         * @param isApiUpdatable
+         *            {@code true} if value can be updated with
+         *            {@link JsonRpcMethodName#SET_CONFIG_PROPERTY}.
          */
-        private Key(final String name, final KeyType keyType,
+        Key(final String name, final ConfigPropValidator validator,
+                final boolean isApiUpdatable) {
+            this.property = this.createProperty(KeyType.SINGLE_LINE, name,
+                    validator, "", null, isApiUpdatable);
+        }
+
+        /**
+         *
+         * @param name
+         *            The property name.
+         * @param keyType
+         *            Type of key.
+         * @param defaultValue
+         *            The initial value.
+         */
+        Key(final String name, final KeyType keyType,
                 final String defaultValue) {
             this.property = this.createProperty(keyType, name, null,
                     defaultValue, null);
@@ -2164,11 +2426,15 @@ public interface IConfigProp {
         /**
          *
          * @param name
+         *            The property name.
          * @param keyType
+         *            Type of key.
          * @param validator
+         *            The validator.
          * @param defaultValue
+         *            The initial value.
          */
-        private Key(final String name, final KeyType keyType,
+        Key(final String name, final KeyType keyType,
                 final ConfigPropValidator validator,
                 final String defaultValue) {
             this.property = this.createProperty(keyType, name, validator,
@@ -2178,10 +2444,13 @@ public interface IConfigProp {
         /**
          *
          * @param name
+         *            The property name.
          * @param validator
+         *            The validator.
          * @param defaultValue
+         *            The initial value.
          */
-        private Key(final String name, final ConfigPropValidator validator,
+        Key(final String name, final ConfigPropValidator validator,
                 final String defaultValue) {
             this.property = this.createProperty(KeyType.SINGLE_LINE, name,
                     validator, defaultValue, null);
@@ -2190,28 +2459,60 @@ public interface IConfigProp {
         /**
          *
          * @param name
+         *            The property name.
          * @param validator
+         *            The validator.
          * @param defaultValue
-         * @param values
+         *            The initial value.
+         * @param isApiUpdatable
+         *            {@code true} if value can be updated with
+         *            {@link JsonRpcMethodName#SET_CONFIG_PROPERTY}.
          */
-        private Key(final String name, final ConfigPropValidator validator,
-                final String defaultValue, String[] values) {
+        Key(final String name, final ConfigPropValidator validator,
+                final String defaultValue, final boolean isApiUpdatable) {
             this.property = this.createProperty(KeyType.SINGLE_LINE, name,
-                    validator, defaultValue, values);
+                    validator, defaultValue, null, isApiUpdatable);
         }
 
         /**
          *
-         * @param keyType
          * @param name
+         *            The property name.
          * @param validator
+         *            The validator.
          * @param defaultValue
+         *            The initial value.
          * @param values
-         * @return
+         *            List of possible values.
+         * @param isApiUpdatable
+         *            {@code true} if value can be updated with
+         *            {@link JsonRpcMethodName#SET_CONFIG_PROPERTY}.
+         */
+        Key(final String name, final ConfigPropValidator validator,
+                final String defaultValue, final String[] values,
+                final boolean isApiUpdatable) {
+            this.property = this.createProperty(KeyType.SINGLE_LINE, name,
+                    validator, defaultValue, values, isApiUpdatable);
+        }
+
+        /**
+         * Creates property.
+         *
+         * @param keyType
+         *            Type of key.
+         * @param name
+         *            The property name.
+         * @param validator
+         *            The validator.
+         * @param defaultValue
+         *            The initial value.
+         * @param values
+         *            List of possible values.
+         * @return The property.
          */
         private Prop createProperty(final KeyType keyType, final String name,
                 final ConfigPropValidator validator, final String defaultValue,
-                String[] values) {
+                final String[] values) {
 
             switch (keyType) {
 
@@ -2237,7 +2538,33 @@ public interface IConfigProp {
 
         /**
          *
-         * @return
+         * @param keyType
+         *            Type of key.
+         * @param name
+         *            The property name.
+         * @param validator
+         *            The validator.
+         * @param defaultValue
+         *            The initial value.
+         * @param values
+         *            List of possible values.
+         * @param isApiUpdatable
+         *            {@code true} if value can be updated with
+         *            {@link JsonRpcMethodName#SET_CONFIG_PROPERTY}.
+         * @return The property.
+         */
+        private Prop createProperty(final KeyType keyType, final String name,
+                final ConfigPropValidator validator, final String defaultValue,
+                final String[] values, final boolean isApiUpdatable) {
+            final Prop prop = this.createProperty(keyType, name, validator,
+                    defaultValue, values);
+            prop.setApiUpdatable(isApiUpdatable);
+            return prop;
+        }
+
+        /**
+         *
+         * @return The property.
          */
         public Prop getProperty() {
             return property;
@@ -2245,44 +2572,40 @@ public interface IConfigProp {
 
     };
 
-    /**
-     * .
-     */
-    BooleanValidator BOOLEAN_VALIDATOR = new BooleanValidator();
+    /** */
+    BooleanValidator BOOLEAN_VALIDATOR = new BooleanValidator(false);
+
+    /** */
+    BooleanValidator BOOLEAN_VALIDATOR_OPT = new BooleanValidator(true);
+
+    /** */
+    CidrRangesValidator CIDR_RANGES_VALIDATOR_OPT =
+            new CidrRangesValidator(true);
 
     /**
-     * .
+     * URI is not required (may be empty).
      */
+    EmailAddressValidator EMAIL_VALIDATOR_OPT = new EmailAddressValidator(true);
+
+    /** */
     IpPortValidator IP_PORT_VALIDATOR = new IpPortValidator();
 
-    /**
-     * .
-     */
+    /** */
     NumberValidator NUMBER_VALIDATOR = new NumberValidator(false);
 
-    /**
-     * .
-     */
+    /** */
     NumberValidator NUMBER_VALIDATOR_OPT = new NumberValidator(true);
 
-    /**
-     * .
-     */
+    /** */
     LocaleValidator LOCALE_VALIDATOR = new LocaleValidator();
 
-    /**
-     * .
-     */
+    /** */
     CurrencyCodeValidator CURRENCY_VALIDATOR = new CurrencyCodeValidator(false);
 
-    /**
-     * .
-     */
+    /** */
     NotEmptyValidator NOT_EMPTY_VALIDATOR = new NotEmptyValidator();
 
-    /**
-     * .
-     */
+    /** */
     UrlValidator URL_VALIDATOR = new UrlValidator(false);
 
     /**
@@ -2295,17 +2618,19 @@ public interface IConfigProp {
      */
     UriValidator URI_VALIDATOR_OPT = new UriValidator(true);
 
-    /**
-     * .
-     */
+    /** */
+    UuidValidator UUID_VALIDATOR = new UuidValidator(false);
+
+    /** */
     NumberValidator ACCOUNTING_DECIMAL_VALIDATOR = new NumberValidator(0L,
             Integer.valueOf(MAX_FINANCIAL_DECIMALS_IN_DB).longValue(), false);
 
-    /**
-     * .
-     */
+    /** */
     InternalFontFamilyValidator INTERNAL_FONT_FAMILY_VALIDATOR =
             new InternalFontFamilyValidator();
+
+    /** */
+    CronExpressionValidator CRON_EXPR_VALIDATOR = new CronExpressionValidator();
 
     /**
      * .
@@ -2338,6 +2663,11 @@ public interface IConfigProp {
         private ConfigPropValidator validator = null;
         private ValidationResult validationResult = null;
 
+        /**
+         * {@code true} if value can be updated by public API.
+         */
+        private boolean apiUpdatable;
+
         private Prop(final Key key, final String name) {
             this.key = key;
             this.name = name;
@@ -2361,6 +2691,23 @@ public interface IConfigProp {
                 String[] values) {
             this(key, name, validator, defaultValue);
             this.values = values;
+        }
+
+        /**
+         *
+         * @return {@code true} if value can be updated by public API.
+         */
+        public boolean isApiUpdatable() {
+            return apiUpdatable;
+        }
+
+        /**
+         *
+         * @param updatable
+         *            {@code true} if value can be updated by public API.
+         */
+        public void setApiUpdatable(final boolean updatable) {
+            this.apiUpdatable = updatable;
         }
 
         /**
@@ -2607,16 +2954,13 @@ public interface IConfigProp {
      * @param defaultProps
      *            The default properties.
      */
-    void init(final Properties defaultProps);
+    void init(Properties defaultProps);
 
     /**
      * Initializes the component to be fully runnable.
      * <p>
      * Note: Database access CAN BE used for this action.
      * </p>
-     *
-     * @param defaultProps
-     *            The default properties.
      */
     void initRunnable();
 
@@ -2629,7 +2973,7 @@ public interface IConfigProp {
      *            The value.
      * @return The {@link ValidationResult}.
      */
-    ValidationResult validate(final Key key, final String value);
+    ValidationResult validate(Key key, String value);
 
     /**
      * Gets the runnable status of the configuration, i.e. is application ready
@@ -2657,7 +3001,7 @@ public interface IConfigProp {
      *            The actor, one of {@link Entity#ACTOR_ADMIN},
      *            {@link Entity#ACTOR_INSTALL} or {@link Entity#ACTOR_SYSTEM}.
      */
-    void updateValue(final Key key, final String value, final String actor);
+    void updateValue(Key key, String value, String actor);
 
     /**
      * Saves the string value of a configuration key. The key is lazy created.
@@ -2667,21 +3011,30 @@ public interface IConfigProp {
      * @param value
      *            The string value.
      */
-    void saveValue(final Key key, final String value);
+    void saveValue(Key key, String value);
 
     /**
      * Does this property represent a multi-line value?
      *
      * @return
      */
-    boolean isMultiLine(final Key key);
+    boolean isMultiLine(Key key);
 
     /**
      * Does this property represent a {@link BigDecimal} value?
      *
      * @return
      */
-    boolean isBigDecimal(final Key key);
+    boolean isBigDecimal(Key key);
+
+    /**
+     *
+     * @param key
+     *            The key.
+     * @return {@code true} if value of key can be updated with Public API, like
+     *         JSON-RPC.
+     */
+    boolean isApiUpdatable(Key key);
 
     /**
      * Gets the value of a configuration key as string.
@@ -2690,7 +3043,7 @@ public interface IConfigProp {
      *            The key.
      * @return The string value.
      */
-    String getString(final Key key);
+    String getString(Key key);
 
     /**
      * Gets the value of an LDAP configuration key as string.
@@ -2701,7 +3054,7 @@ public interface IConfigProp {
      *            The key.
      * @return The string value or {@code null} when not found.
      */
-    String getString(final LdapType ldapType, final Key key);
+    String getString(LdapType ldapType, Key key);
 
     /**
      * Gets the value of an LDAP configuration key as Boolean.
@@ -2712,7 +3065,7 @@ public interface IConfigProp {
      *            The key.
      * @return The boolean value or {@code null} when not found.
      */
-    Boolean getBoolean(final LdapType ldapType, final Key key);
+    Boolean getBoolean(LdapType ldapType, Key key);
 
     /**
      * Gets the value of a configuration key as double.
@@ -2721,7 +3074,7 @@ public interface IConfigProp {
      *            The key.
      * @return The double value.
      */
-    double getDouble(final Key key);
+    double getDouble(Key key);
 
     /**
      * Gets the value of a configuration key as {@link BigDecimal}.
@@ -2730,7 +3083,7 @@ public interface IConfigProp {
      *            The key.
      * @return The {@link BigDecimal} value.
      */
-    BigDecimal getBigDecimal(final Key key);
+    BigDecimal getBigDecimal(Key key);
 
     /**
      * Gets the value of a configuration key as long.
@@ -2739,7 +3092,7 @@ public interface IConfigProp {
      *            The key.
      * @return The long value.
      */
-    long getLong(final Key key);
+    long getLong(Key key);
 
     /**
      * Gets the value of a configuration key as int.
@@ -2748,7 +3101,7 @@ public interface IConfigProp {
      *            The key.
      * @return The int value.
      */
-    int getInt(final Key key);
+    int getInt(Key key);
 
     /**
      * Gets the value of a configuration key as {@link Integer}.
@@ -2757,7 +3110,7 @@ public interface IConfigProp {
      *            The key.
      * @return The int value or {@code null} when not specified.
      */
-    Integer getInteger(final Key key);
+    Integer getInteger(Key key);
 
     /**
      * Gets the value of a configuration key as boolean.
@@ -2766,7 +3119,7 @@ public interface IConfigProp {
      *            The key.
      * @return The boolean value.
      */
-    boolean getBoolean(final Key key);
+    boolean getBoolean(Key key);
 
     /**
      * Gets the value (comma separated list) of a configuration key as
@@ -2776,7 +3129,7 @@ public interface IConfigProp {
      *            The key.
      * @return The {@link Set} of values.
      */
-    Set<String> getSet(final Key key);
+    Set<String> getSet(Key key);
 
     /**
      * Gets the string representation of the configuration key.
@@ -2785,7 +3138,7 @@ public interface IConfigProp {
      *            The enum representation of the key.
      * @return The string representation of the key.
      */
-    String getKey(final Key key);
+    String getKey(Key key);
 
     /**
      * Gets the enum of the configuration key.
@@ -2795,18 +3148,20 @@ public interface IConfigProp {
      * @return The enum representation of the key, or {@code null} when the key
      *         is not found.
      */
-    Key getKey(final String key);
+    Key getKey(String key);
 
     /**
      *
      * @param key
-     * @return
+     *            The key.
+     * @return {@code null} when not found.
      */
     Prop getProp(Key key);
 
     /**
      *
      * @param name
+     *            The name.
      * @return {@code null} when not found.
      */
     Prop getProp(String name);

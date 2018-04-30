@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -24,10 +24,14 @@ package org.savapage.core.dao;
 import java.util.Date;
 import java.util.List;
 
+import org.savapage.core.dao.enums.ACLRoleEnum;
 import org.savapage.core.dao.enums.ReservedUserGroupEnum;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.User;
+import org.savapage.core.jpa.UserAttr;
+import org.savapage.core.jpa.UserGroupAttr;
 
 /**
  *
@@ -49,9 +53,39 @@ public interface UserDao extends GenericDao<User> {
         USERID, EMAIL
     }
 
-    /**
-     *
-     */
+    /** */
+    class ACLFilter {
+
+        private ACLRoleEnum aclRole;
+        private boolean aclUserInternal;
+        private boolean aclUserExternal;
+
+        public ACLRoleEnum getAclRole() {
+            return aclRole;
+        }
+
+        public void setAclRole(ACLRoleEnum aclRole) {
+            this.aclRole = aclRole;
+        }
+
+        public boolean isAclUserInternal() {
+            return aclUserInternal;
+        }
+
+        public void setAclUserInternal(boolean aclUserInternal) {
+            this.aclUserInternal = aclUserInternal;
+        }
+
+        public boolean isAclUserExternal() {
+            return aclUserExternal;
+        }
+
+        public void setAclUserExternal(boolean aclUserExternal) {
+            this.aclUserExternal = aclUserExternal;
+        }
+    }
+
+    /** */
     class ListFilter {
 
         private Long userGroupId;
@@ -63,6 +97,12 @@ public interface UserDao extends GenericDao<User> {
         private Boolean person;
         private Boolean disabled;
         private Boolean deleted;
+
+        /**
+         * The {@link ACLRoleEnum} as present in ({@link UserAttr} or in any
+         * {@link UserGroupAttr} where user is member of.
+         */
+        private ACLFilter aclFilter;
 
         public Long getUserGroupId() {
             return userGroupId;
@@ -136,6 +176,13 @@ public interface UserDao extends GenericDao<User> {
             this.deleted = deleted;
         }
 
+        public ACLFilter getAclFilter() {
+            return aclFilter;
+        }
+
+        public void setAclFilter(ACLFilter aclFilter) {
+            this.aclFilter = aclFilter;
+        }
     }
 
     /**
@@ -262,6 +309,15 @@ public interface UserDao extends GenericDao<User> {
     User findByAccount(Long accountId);
 
     /**
+     * Finds the logically deleted {@link User} objects by user id.
+     *
+     * @param userId
+     *            The unique user id of the user.
+     * @return The list of users.
+     */
+    List<User> findDeletedUsersByUserId(String userId);
+
+    /**
      * Resets the jobs, bytes and sheets totals to zero for all {@link User}
      * instances.
      *
@@ -276,9 +332,12 @@ public interface UserDao extends GenericDao<User> {
      * Removes (cascade delete) logically deleted {@link User} objects, who do
      * not have any related {@link DocLog}.
      *
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
+     *
      * @return The number of removed users.
      */
-    int pruneUsers();
+    int pruneUsers(DaoBatchCommitter batchCommitter);
 
     /**
      * Counts the number of active users.
@@ -301,4 +360,5 @@ public interface UserDao extends GenericDao<User> {
      * @return the number of active users.
      */
     long countActiveUsers(ReservedUserGroupEnum userGroupEnum);
+
 }

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -25,6 +25,8 @@ import java.util.Date;
 import java.util.List;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.mutable.MutableBoolean;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dto.IppMediaCostDto;
 import org.savapage.core.ipp.IppMediaSizeEnum;
 import org.savapage.core.jpa.PrintOut;
@@ -57,6 +59,8 @@ public interface PrinterDao extends GenericDao<Printer> {
         private String containingText;
         private Boolean disabled;
         private Boolean deleted;
+        private Boolean internal;
+        private Boolean jobTicket;
 
         public String getContainingText() {
             return containingText;
@@ -80,6 +84,22 @@ public interface PrinterDao extends GenericDao<Printer> {
 
         public void setDeleted(Boolean deleted) {
             this.deleted = deleted;
+        }
+
+        public Boolean getInternal() {
+            return internal;
+        }
+
+        public void setInternal(Boolean internal) {
+            this.internal = internal;
+        }
+
+        public Boolean getJobTicket() {
+            return jobTicket;
+        }
+
+        public void setJobTicket(Boolean jobTicket) {
+            this.jobTicket = jobTicket;
         }
 
     }
@@ -397,9 +417,11 @@ public interface PrinterDao extends GenericDao<Printer> {
      * Removes printers (cascade delete) who are logically deleted, and who do
      * not have any related DocLog.
      *
+     * @param batchCommitter
+     *            The {@link DaoBatchCommitter}.
      * @return The number of removed printers.
      */
-    int prunePrinters();
+    int prunePrinters(DaoBatchCommitter batchCommitter);
 
     /**
      * Counts the number of {@link PrintOut} documents of a {@link Printer}.
@@ -408,7 +430,7 @@ public interface PrinterDao extends GenericDao<Printer> {
      *            The primary key of the {@link Printer}.
      * @return The count.
      */
-    long countPrintOuts(final Long id);
+    long countPrintOuts(Long id);
 
     /**
      * Finds the {@link Printer} by name, when not found {@code null} is
@@ -426,9 +448,11 @@ public interface PrinterDao extends GenericDao<Printer> {
      *
      * @param printerName
      *            The unique name of the printer.
+     * @param lazyCreated
+     *            Telling if instance was lazy created or not.
      * @return The printer row instance.
      */
-    Printer findByNameInsert(String printerName);
+    Printer findByNameInsert(String printerName, MutableBoolean lazyCreated);
 
     /**
      * Counts the number of printers according to filter.

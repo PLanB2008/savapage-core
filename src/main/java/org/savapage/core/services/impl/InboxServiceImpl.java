@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -50,6 +50,7 @@ import javax.print.attribute.standard.MediaSizeName;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableLong;
 import org.savapage.core.LetterheadNotFoundException;
@@ -86,6 +87,8 @@ import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.InboxPageImageChunker;
 import org.savapage.core.services.helpers.InboxPageImageInfo;
 import org.savapage.core.services.helpers.InboxPageMover;
+import org.savapage.core.services.helpers.PageRangeException;
+import org.savapage.core.util.FileSystemHelper;
 import org.savapage.core.util.JsonHelper;
 import org.savapage.core.util.MediaUtils;
 import org.slf4j.Logger;
@@ -147,12 +150,22 @@ public final class InboxServiceImpl implements InboxService {
         return new File(ConfigManager.getUserHomeDir(userId)).exists();
     }
 
+    /**
+     * @param user
+     *            The unique user id.
+     * @return The full File path of the user's
+     *         {@link #INBOX_DESCRIPT_FILE_NAME}.
+     */
+    private File getInboxInfoFile(final String user) {
+        return new File(
+                String.format("%s%c%s", ConfigManager.getUserHomeDir(user),
+                        File.separatorChar, INBOX_DESCRIPT_FILE_NAME));
+    }
+
     @Override
     public InboxInfoDto readInboxInfo(final String user) {
 
-        final String userdir = ConfigManager.getUserHomeDir(user);
-        final String filename = userdir + "/" + INBOX_DESCRIPT_FILE_NAME;
-
+        final File file = getInboxInfoFile(user);
         final ObjectMapper mapper = new ObjectMapper();
 
         InboxInfoDto jobinfo = null;
@@ -162,8 +175,6 @@ public final class InboxServiceImpl implements InboxService {
              * First check if file exists, if not (first time use, or reset)
              * return an empty job info object.
              */
-            File file = new File(filename);
-
             if (file.exists()) {
 
                 try {
@@ -173,8 +184,8 @@ public final class InboxServiceImpl implements InboxService {
                 } catch (JsonMappingException e) {
 
                     if (LOGGER.isDebugEnabled()) {
-                        LOGGER.debug("Error mapping from file [" + filename
-                                + "]: create new.");
+                        LOGGER.debug("Error mapping from file ["
+                                + file.getAbsolutePath() + "]: create new.");
                     }
                     /*
                      * There has been a change in layout of the JSON file, so
@@ -188,10 +199,11 @@ public final class InboxServiceImpl implements InboxService {
                 jobinfo = new InboxInfoDto();
             }
         } catch (JsonParseException e) {
-            throw new SpException("Error parsing from file [" + filename + "]",
-                    e);
+            throw new SpException("Error parsing file ["
+                    + file.getAbsolutePath() + "] : " + e.getMessage());
         } catch (IOException e) {
-            throw new SpException("Error reading file [" + filename + "]", e);
+            throw new SpException("Error reading file ["
+                    + file.getAbsolutePath() + "]" + e.getMessage());
         }
         return jobinfo;
     }
@@ -199,14 +211,40 @@ public final class InboxServiceImpl implements InboxService {
     @Override
     public void storeInboxInfo(final String user, final InboxInfoDto jobinfo) {
 
-        final String filename =
-                String.format("%s%c%s", ConfigManager.getUserHomeDir(user),
-                        File.separatorChar, INBOX_DESCRIPT_FILE_NAME);
+        final boolean atomicMove = true; // Mantis #863
+
+        final File fileTarget = getInboxInfoFile(user);
+        final File fileSource;
+
+        if (atomicMove) {
+            fileSource = new File(String.format("%s%c%s_%s.%s",
+                    ConfigManager.getAppTmpDir(), File.separatorChar, user,
+                    INBOX_DESCRIPT_FILE_NAME, UUID.randomUUID().toString()));
+        } else {
+            fileSource = fileTarget;
+        }
 
         try {
-            JsonHelper.write(jobinfo, new FileWriter(new File(filename)));
+
+            JsonHelper.write(jobinfo, new FileWriter(fileSource));
+
         } catch (IOException e) {
-            throw new SpException("Error writing file [" + filename + "]", e);
+            throw new SpException("Error writing file ["
+                    + fileSource.getAbsolutePath() + "] : " + e.getMessage());
+        }
+
+        if (atomicMove) {
+            try {
+                FileSystemHelper.doAtomicFileMove(fileSource.toPath(),
+                        fileTarget.toPath());
+            } catch (IOException e) {
+                throw new SpException(
+                        "Error moving file [" + fileSource.getAbsolutePath()
+                                + "] to [" + fileTarget.getAbsolutePath()
+                                + "] : " + e.getMessage());
+            } finally {
+                fileSource.delete(); // just to be sure
+            }
         }
     }
 
@@ -313,20 +351,26 @@ public final class InboxServiceImpl implements InboxService {
                 job.setDrm(docLog.getDrmRestricted());
 
                 /*
-                 * Landscape, rotation, rotate, media.
+                 * Landscape, page rotation, content rotation, user rotate,
+                 * media.
                  */
                 final SpPdfPageProps pageProps = getPdfPageProps(filePath);
 
                 final boolean isLandscape = pageProps.isLandscape();
                 final int rotation = pageProps.getRotationFirstPage();
+                final int contentRotation =
+                        pageProps.getContentRotationFirstPage();
 
                 final Integer rotate = PdfPageRotateHelper.PDF_ROTATION_0;
 
                 job.setLandscape(Boolean.valueOf(isLandscape));
                 job.setRotation(Integer.valueOf(rotation));
+                job.setContentRotation(Integer.valueOf(contentRotation));
                 job.setRotate(rotate.toString());
                 job.setMedia(pageProps.getSize());
-
+                job.setLandscapeView(Boolean.valueOf(
+                        PdfPageRotateHelper.isSeenAsLandscape(contentRotation,
+                                rotation, isLandscape, rotate.intValue())));
                 /*
                  * Append
                  */
@@ -453,27 +497,81 @@ public final class InboxServiceImpl implements InboxService {
         return calcNumberOfPages(jobinfo.getJobs(), jobinfo.getPages());
     }
 
-    /**
-     * Calculates the number of selected pages in the document.
-     *
-     * @param selectedRanges
-     *            The selected document ranges.
-     * @param nTotPages
-     *            The total number of pages in the document.
-     * @return The number of pages.
-     */
-    public static int calcSelectedDocPages(final List<RangeAtom> selectedRanges,
-            final int nTotPages) {
+    @Override
+    public int calcPagesInRanges(final InboxInfoDto jobs, final int iJob,
+            final String rangesIn, final StringBuilder sortedRangesOut)
+            throws PageRangeException {
 
-        int nPages = 0;
+        final boolean isAllDocuments = iJob < 0;
+        final int nPagesInScope;
 
-        for (RangeAtom atom : selectedRanges) {
-            int nPageFrom = atom.pageBegin == null ? 1 : atom.pageBegin;
-            int nPageTo = atom.pageEnd == null ? nTotPages : atom.pageEnd;
-            nPages += nPageTo - nPageFrom + 1;
+        if (isAllDocuments) {
+            nPagesInScope = this.calcNumberOfPagesInJobs(jobs);
+        } else {
+            nPagesInScope = jobs.getJobs().get(iJob).getPages().intValue();
         }
 
-        return nPages;
+        if (StringUtils.isBlank(rangesIn)) {
+            return nPagesInScope;
+        }
+
+        /*
+         * Remove inner spaces.
+         */
+        final String ranges = rangesIn.trim().replace(" ", "");
+
+        final List<RangeAtom> rangeAtoms;
+
+        try {
+            rangeAtoms = this.createSortedRangeArray(ranges);
+        } catch (Exception e) {
+            throw new PageRangeException(PageRangeException.Reason.SYNTAX,
+                    nPagesInScope, ranges);
+        }
+
+        int nPagesSelected = 0;
+
+        int nPageToWlk = 0;
+
+        for (final RangeAtom atom : rangeAtoms) {
+
+            final int nPageFrom;
+            if (atom.pageBegin == null) {
+                nPageFrom = 1;
+            } else {
+                nPageFrom = atom.pageBegin.intValue();
+            }
+
+            final int nPageTo;
+            if (atom.pageEnd == null) {
+                nPageTo = nPagesInScope;
+            } else {
+                nPageTo = atom.pageEnd.intValue();
+            }
+
+            if (nPageFrom <= nPageToWlk) {
+                throw new PageRangeException(PageRangeException.Reason.SYNTAX,
+                        nPagesInScope, ranges);
+            }
+
+            if (nPageFrom > nPageTo || nPageFrom > nPagesInScope
+                    || nPageTo > nPagesInScope) {
+
+                throw new PageRangeException(PageRangeException.Reason.RANGE,
+                        nPagesInScope, ranges);
+            }
+
+            nPagesSelected += nPageTo - nPageFrom + 1;
+
+            nPageToWlk = nPageTo;
+        }
+
+        if (sortedRangesOut != null) {
+            sortedRangesOut.setLength(0);
+            sortedRangesOut.append(RangeAtom.asText(rangeAtoms));
+        }
+
+        return nPagesSelected;
     }
 
     @Override
@@ -617,9 +715,10 @@ public final class InboxServiceImpl implements InboxService {
             if (ranges.isEmpty()) {
                 ranges = this.createSortedRangeArray("1-");
             }
-            for (RangeAtom atom : ranges) {
-                int nPageFrom = atom.pageBegin == null ? 1 : atom.pageBegin;
-                int nPageTo = atom.pageEnd == null
+            for (final RangeAtom atom : ranges) {
+                final int nPageFrom =
+                        atom.pageBegin == null ? 1 : atom.pageBegin;
+                final int nPageTo = atom.pageEnd == null
                         ? jobs.get(page.getJob()).getPages() : atom.pageEnd;
                 nPages += nPageTo - nPageFrom + 1;
             }
@@ -679,7 +778,6 @@ public final class InboxServiceImpl implements InboxService {
                 if (end != null) {
                     atom.pageEnd = Integer.parseInt(end);
                     if (atom.pageEnd < atom.pageBegin) {
-                        // TODO: localize text
                         throw new SpException("range \"" + rangesIn
                                 + "\" has invalid syntax");
                     }
@@ -1455,12 +1553,37 @@ public final class InboxServiceImpl implements InboxService {
 
         final InboxInfoDto jobs = readInboxInfo(user);
 
-        String rotation = PdfPageRotateHelper.PDF_ROTATION_0.toString();
-        if (rotate) {
-            rotation = PdfPageRotateHelper.PDF_ROTATION_90.toString();
-        }
-        jobs.getJobs().get(iJob).setRotate(rotation);
+        //
+        final Integer userRotate;
 
+        if (rotate) {
+            userRotate = PdfPageRotateHelper.PDF_ROTATION_90;
+        } else {
+            userRotate = PdfPageRotateHelper.PDF_ROTATION_0;
+        }
+
+        final InboxJob job = jobs.getJobs().get(iJob);
+        job.setRotate(userRotate.toString());
+
+        final int rotation;
+        if (job.getRotation() == null) {
+            rotation = 0;
+        } else {
+            rotation = job.getRotation().intValue();
+        }
+
+        final int contentRotation;
+        if (job.getContentRotation() == null) {
+            contentRotation = 0;
+        } else {
+            contentRotation = job.getContentRotation().intValue();
+        }
+
+        job.setLandscapeView(Boolean
+                .valueOf(PdfPageRotateHelper.isSeenAsLandscape(contentRotation,
+                        rotation, BooleanUtils.isTrue(job.getLandscape()),
+                        userRotate.intValue())));
+        //
         if (undelete) {
 
             final ArrayList<InboxInfoDto.InboxJobRange> jobPagesNew =
@@ -2415,8 +2538,6 @@ public final class InboxServiceImpl implements InboxService {
 
         info.setResolution(Integer.valueOf(ConfigManager.instance()
                 .getConfigInt(Key.ECO_PRINT_RESOLUTION_DPI)));
-
-        info.setRotation(PdfPageRotateHelper.PDF_ROTATION_0.toString());
 
         ECOPRINT_SERVICE.submitTask(info);
     }

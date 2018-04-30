@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,8 +27,12 @@ import java.util.List;
 import javax.persistence.NoResultException;
 import javax.persistence.Query;
 
+import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.savapage.core.SpException;
+import org.savapage.core.dao.PrinterAttrDao;
 import org.savapage.core.dao.PrinterDao;
+import org.savapage.core.dao.enums.PrinterAttrEnum;
+import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dao.helpers.ProxyPrinterName;
 import org.savapage.core.dto.IppMediaCostDto;
 import org.savapage.core.dto.MediaCostDto;
@@ -45,6 +49,11 @@ import org.savapage.core.json.JsonAbstractBase;
  */
 public final class PrinterDaoImpl extends GenericDaoImpl<Printer>
         implements PrinterDao {
+
+    @Override
+    protected String getCountQuery() {
+        return "SELECT COUNT(T.id) FROM Printer T";
+    }
 
     @Override
     public CostMediaAttr getCostMediaAttr() {
@@ -126,27 +135,28 @@ public final class PrinterDaoImpl extends GenericDaoImpl<Printer>
     }
 
     @Override
-    public int prunePrinters() {
+    public int prunePrinters(final DaoBatchCommitter batchCommitter) {
         /*
          * NOTE: We do NOT use bulk delete with JPQL since we want the option to
          * roll back the deletions as part of a transaction, and we want to use
          * cascade deletion. Therefore we use the remove() method in
          * EntityManager to delete individual records instead (so cascaded
-         * deleted are triggered).
+         * deletes are triggered).
          */
         int nCount = 0;
 
-        final String jpql = "SELECT P FROM Printer P WHERE P.deleted = true "
+        final String jpql = "SELECT P.id FROM Printer P WHERE P.deleted = true "
                 + "AND P.printsOut IS EMPTY";
 
         final Query query = getEntityManager().createQuery(jpql);
 
         @SuppressWarnings("unchecked")
-        final List<Printer> list = query.getResultList();
+        final List<Long> list = query.getResultList();
 
-        for (final Printer printer : list) {
-            this.delete(printer);
+        for (final Long id : list) {
+            this.delete(this.findById(id));
             nCount++;
+            batchCommitter.increment();
         }
 
         return nCount;
@@ -277,6 +287,29 @@ public final class PrinterDaoImpl extends GenericDaoImpl<Printer>
     }
 
     /**
+     * Applies PrinterAttr constraint to the JPQL string.
+     *
+     * @param where
+     *            The {@link StringBuilder} to append to.
+     * @param attrName
+     *            The attribute name.
+     * @param attrValue
+     *            The attribute value.
+     */
+    private void applyPrinterAttrConstraint(final StringBuilder where,
+            final PrinterAttrEnum attrName, final boolean attrValue) {
+
+        where.append("(A.name = \'").append(attrName.getDbName())
+                .append("\' AND A.value = \'");
+        if (attrValue) {
+            where.append(PrinterAttrDao.V_YES);
+        } else {
+            where.append(PrinterAttrDao.V_NO);
+        }
+        where.append("\')");
+    }
+
+    /**
      * Applies the list filter to the JPQL string.
      *
      * @param jpql
@@ -314,19 +347,49 @@ public final class PrinterDaoImpl extends GenericDaoImpl<Printer>
             nWhere++;
             where.append(" P.deleted = :selDeleted");
         }
+
+        if (filter.getInternal() != null || filter.getJobTicket() != null) {
+
+            if (nWhere > 0) {
+                where.append(" AND");
+            }
+            nWhere++;
+
+            where.append(
+                    " P NOT IN (SELECT A.printer FROM PrinterAttr A WHERE ");
+
+            if (filter.getInternal() != null) {
+                applyPrinterAttrConstraint(where,
+                        PrinterAttrEnum.ACCESS_INTERNAL,
+                        !filter.getInternal().booleanValue());
+            }
+            if (filter.getJobTicket() != null) {
+                if (filter.getInternal() != null) {
+                    where.append(" OR ");
+                }
+                applyPrinterAttrConstraint(where,
+                        PrinterAttrEnum.JOBTICKET_ENABLE,
+                        !filter.getJobTicket().booleanValue());
+            }
+
+            where.append(")");
+        }
+
         //
         if (nWhere > 0) {
             jpql.append(" WHERE ").append(where.toString());
         }
-
     }
 
     @Override
-    public Printer findByNameInsert(final String printerName) {
+    public Printer findByNameInsert(final String printerName,
+            final MutableBoolean lazyCreated) {
 
         Printer printer = findByName(printerName);
 
-        if (printer == null) {
+        lazyCreated.setValue(printer == null);
+
+        if (lazyCreated.isTrue()) {
 
             printer = new Printer();
 

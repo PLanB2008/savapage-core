@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,11 +27,15 @@ import org.savapage.core.dao.AccountDao;
 import org.savapage.core.dao.AccountTrxDao;
 import org.savapage.core.dao.AccountVoucherDao;
 import org.savapage.core.dao.AppLogDao;
+import org.savapage.core.dao.CostChangeDao;
 import org.savapage.core.dao.DeviceAttrDao;
 import org.savapage.core.dao.DeviceDao;
+import org.savapage.core.dao.DocInDao;
 import org.savapage.core.dao.DocLogDao;
+import org.savapage.core.dao.DocOutDao;
 import org.savapage.core.dao.IppQueueAttrDao;
 import org.savapage.core.dao.IppQueueDao;
+import org.savapage.core.dao.PdfOutDao;
 import org.savapage.core.dao.PosPurchaseDao;
 import org.savapage.core.dao.PrintInDao;
 import org.savapage.core.dao.PrintOutDao;
@@ -66,6 +70,7 @@ import org.savapage.core.services.PrinterService;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.QueueService;
 import org.savapage.core.services.ServiceContext;
+import org.savapage.core.services.SnmpRetrieveService;
 import org.savapage.core.services.UserGroupService;
 import org.savapage.core.services.UserService;
 import org.savapage.core.util.Messages;
@@ -130,6 +135,10 @@ public abstract class AbstractService {
         return ServiceContext.getServiceFactory().getPrinterService();
     }
 
+    protected static SnmpRetrieveService snmpRetrieveService() {
+        return ServiceContext.getServiceFactory().getSnmpRetrieveService();
+    }
+
     protected static QueueService queueService() {
         return ServiceContext.getServiceFactory().getQueueService();
     }
@@ -160,8 +169,20 @@ public abstract class AbstractService {
         return ServiceContext.getDaoContext().getAppLogDao();
     }
 
+    protected static CostChangeDao costChangeDAO() {
+        return ServiceContext.getDaoContext().getCostChangeDao();
+    }
+
+    protected static DocInDao docInDAO() {
+        return ServiceContext.getDaoContext().getDocInDao();
+    }
+
     protected static DocLogDao docLogDAO() {
         return ServiceContext.getDaoContext().getDocLogDao();
+    }
+
+    protected static DocOutDao docOutDAO() {
+        return ServiceContext.getDaoContext().getDocOutDao();
     }
 
     protected static DeviceDao deviceDAO() {
@@ -178,6 +199,10 @@ public abstract class AbstractService {
 
     protected static IppQueueDao ippQueueDAO() {
         return ServiceContext.getDaoContext().getIppQueueDao();
+    }
+
+    protected static PdfOutDao pdfOutDAO() {
+        return ServiceContext.getDaoContext().getPdfOutDao();
     }
 
     protected static PosPurchaseDao purchaseDAO() {

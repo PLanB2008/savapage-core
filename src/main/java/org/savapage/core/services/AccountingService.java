@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,6 +24,7 @@ package org.savapage.core.services;
 import java.math.BigDecimal;
 import java.text.ParseException;
 import java.util.Currency;
+import java.util.List;
 import java.util.Locale;
 
 import org.savapage.core.concurrent.ReadWriteLockEnum;
@@ -53,10 +54,12 @@ import org.savapage.core.json.rpc.AbstractJsonRpcMethodResponse;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
 import org.savapage.core.json.rpc.JsonRpcResult;
 import org.savapage.core.json.rpc.impl.ResultPosDeposit;
+import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
 import org.savapage.core.print.proxy.ProxyPrintException;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.print.proxy.ProxyPrintJobChunkInfo;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
+import org.savapage.core.services.helpers.AccountingException;
 import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ProxyPrintCostParms;
 
@@ -437,6 +440,16 @@ public interface AccountingService {
      */
     void createAccountTrxs(AccountTrxInfoSet accountTrxInfoSet, DocLog docLog,
             AccountTrxTypeEnum trxType);
+
+    /**
+     * Creates a list of {@link AccountTrx} objects to be used for UI display
+     * purposes only.
+     *
+     * @param outboxJob
+     *            {@link OutboxJobDto}.
+     * @return List of UI account transactions.
+     */
+    List<AccountTrx> createAccountTrxsUI(OutboxJobDto outboxJob);
 
     /**
      * Updates the {@link AccountTrx} and the {@link Account} balance, and

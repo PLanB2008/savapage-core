@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,14 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.dao.impl;
+
+import java.util.Date;
 
 import javax.persistence.NoResultException;
 import javax.persistence.Query;
@@ -32,14 +34,11 @@ import org.savapage.core.services.helpers.PrinterAttrLookup;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class PrinterAttrDaoImpl extends GenericDaoImpl<PrinterAttr>
         implements PrinterAttrDao {
-
-    private static final String V_YES = "Y";
-    private static final String V_NO = "N";
 
     /**
      * This SQL LIKE value is used to select all rolling statistics.
@@ -49,16 +48,20 @@ public final class PrinterAttrDaoImpl extends GenericDaoImpl<PrinterAttr>
      * </p>
      *
      */
-    private static final String SQL_LIKE_STATS_ROLLING = STATS_ROLLING_PREFIX
-            + "%";
+    private static final String SQL_LIKE_STATS_ROLLING =
+            STATS_ROLLING_PREFIX + "%";
+
+    @Override
+    protected String getCountQuery() {
+        return "SELECT COUNT(T.id) FROM PrinterAttr T";
+    }
 
     @Override
     public PrinterAttr findByName(final Long printerId,
             final PrinterAttrEnum name) {
 
-        final String jpql =
-                "SELECT A FROM PrinterAttr A JOIN A.printer P "
-                        + "WHERE P.id = :printerId AND A.name = :name";
+        final String jpql = "SELECT A FROM PrinterAttr A JOIN A.printer P "
+                + "WHERE P.id = :printerId AND A.name = :name";
 
         final Query query = getEntityManager().createQuery(jpql);
 
@@ -91,10 +94,41 @@ public final class PrinterAttrDaoImpl extends GenericDaoImpl<PrinterAttr>
     }
 
     @Override
+    public Date getSnmpDate(final PrinterAttrLookup lookup) {
+        return dateOrNull(lookup.get(PrinterAttrEnum.SNMP_DATE));
+    }
+
+    @Override
+    public Date getSnmpDate(final Long printerId) {
+        final PrinterAttr attr =
+                this.findByName(printerId, PrinterAttrEnum.SNMP_DATE);
+        if (attr == null) {
+            return null;
+        }
+        return dateOrNull(attr.getValue());
+    }
+
+    /**
+     *
+     * @param date
+     * @return
+     */
+    private static Date dateOrNull(final String date) {
+        if (date == null) {
+            return null;
+        }
+        return new Date(Long.valueOf(date));
+    }
+
+    @Override
+    public String getSnmpJson(final PrinterAttrLookup lookup) {
+        return lookup.get(PrinterAttrEnum.SNMP_INFO);
+    }
+
+    @Override
     public boolean getBooleanValue(final PrinterAttr attr) {
-        return attr != null
-                && StringUtils.defaultString(attr.getValue(), V_NO)
-                        .equalsIgnoreCase(V_YES);
+        return attr != null && StringUtils.defaultString(attr.getValue(), V_NO)
+                .equalsIgnoreCase(V_YES);
     }
 
     @Override

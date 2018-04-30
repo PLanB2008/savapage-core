@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -30,6 +30,8 @@ import org.savapage.core.dao.enums.AccessControlScopeEnum;
 import org.savapage.core.dao.enums.DeviceTypeEnum;
 import org.savapage.core.dao.enums.PrinterAttrEnum;
 import org.savapage.core.dao.helpers.JsonUserGroupAccess;
+import org.savapage.core.dao.helpers.ProxyPrinterSnmpInfoDto;
+import org.savapage.core.dto.PrinterSnmpDto;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.jpa.Device;
 import org.savapage.core.jpa.Printer;
@@ -392,4 +394,38 @@ public interface PrinterService {
     JsonProxyPrinterOptChoice findMediaSourceForMedia(
             PrinterAttrLookup printerAttrLookup,
             JsonProxyPrinterOpt mediaSource, String requestedMedia);
+
+    /**
+     * Sets SNMP printer info.
+     *
+     * @param printer
+     *            The printer.
+     * @param info
+     *            The "raw" SNMP info. If {@code null}, no SNMP information is
+     *            available.
+     * @throws IOException
+     *             When JSON serialization errors.
+     */
+    void setSnmpInfo(Printer printer, PrinterSnmpDto info) throws IOException;
+
+    /**
+     * De-serializes JSON string to object.
+     *
+     * @param json
+     *            JSON string.
+     * @return The object, or {@code null} when IO, parse or mapping error.
+     */
+    ProxyPrinterSnmpInfoDto getSnmpInfo(String json);
+
+    /**
+     * Removes all SNMP attributes from printer.
+     * <p>
+     * NOTE: Caller must execute database commit.
+     * </p>
+     *
+     * @param printer
+     *            The printer.
+     */
+    void removeSnmpAttr(Printer printer);
+
 }

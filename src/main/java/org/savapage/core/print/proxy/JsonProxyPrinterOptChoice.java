@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -38,6 +38,11 @@ public final class JsonProxyPrinterOptChoice {
     private String choice;
 
     /**
+     * {@code true} when this is an extended option.
+     */
+    private boolean extended;
+
+    /**
      * The PPD choice (can be {@code null} when neither present nor relevant).
      */
     @JsonIgnore
@@ -48,6 +53,12 @@ public final class JsonProxyPrinterOptChoice {
      */
     @JsonProperty("uiText")
     private String uiText;
+
+    /**
+     * The UI CSS class of the icon (can be {@code null}).
+     */
+    @JsonProperty("uiIconClass")
+    private String uiIconClass;
 
     /**
      *
@@ -66,9 +77,23 @@ public final class JsonProxyPrinterOptChoice {
     }
 
     /**
+     * @return {@code true} when this is an extended option.
+     */
+    public boolean isExtended() {
+        return extended;
+    }
+
+    /**
+     * @param extended
+     *            {@code true} when this is an extended option
+     */
+    public void setExtended(boolean extended) {
+        this.extended = extended;
+    }
+
+    /**
      * @return The PPD choice (can be {@code null} when neither present nor
      *         relevant).
-     *
      */
     public String getChoicePpd() {
         return choicePpd;
@@ -99,6 +124,21 @@ public final class JsonProxyPrinterOptChoice {
     }
 
     /**
+     * @return The UI CSS class of the icon (can be {@code null}).
+     */
+    public String getUiIconClass() {
+        return uiIconClass;
+    }
+
+    /**
+     * @param uiIconClass
+     *            The UI CSS class of the icon (can be {@code null}).
+     */
+    public void setUiIconClass(String uiIconClass) {
+        this.uiIconClass = uiIconClass;
+    }
+
+    /**
      *
      * @return A copy of this instance.
      */
@@ -107,8 +147,10 @@ public final class JsonProxyPrinterOptChoice {
         final JsonProxyPrinterOptChoice copy = new JsonProxyPrinterOptChoice();
 
         copy.choice = this.choice;
+        copy.extended = this.extended;
         copy.choicePpd = this.choicePpd;
         copy.uiText = this.uiText;
+        copy.uiIconClass = this.uiIconClass;
 
         return copy;
     }

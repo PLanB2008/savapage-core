@@ -21,17 +21,19 @@
  */
 package org.savapage.core.services;
 
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
 import org.savapage.core.dao.enums.ACLRoleEnum;
+import org.savapage.core.dto.JobTicketTagDto;
 import org.savapage.core.dto.RedirectPrinterDto;
 import org.savapage.core.imaging.EcoPrintPdfTask;
 import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
-import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.client.IppConnectException;
 import org.savapage.core.ipp.helpers.IppOptionMap;
 import org.savapage.core.jpa.PrintOut;
@@ -42,7 +44,11 @@ import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
 import org.savapage.core.pdf.PdfCreateInfo;
 import org.savapage.core.print.proxy.ProxyPrintDocReq;
 import org.savapage.core.print.proxy.ProxyPrintInboxReq;
+import org.savapage.core.print.proxy.TicketJobSheetDto;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
+import org.savapage.core.services.helpers.JobTicketExecParms;
+import org.savapage.core.services.helpers.JobTicketQueueInfo;
+import org.savapage.core.services.helpers.JobTicketWrapperDto;
 
 /**
  *
@@ -50,6 +56,37 @@ import org.savapage.core.services.helpers.DocContentPrintInInfo;
  *
  */
 public interface JobTicketService extends StatefulService {
+
+    /** */
+    class JobTicketFilter {
+
+        /**
+         * The {@link User} database key.
+         */
+        private Long userId;
+
+        /**
+         * Part of a ticket id as case-insensitive search argument.
+         */
+        private String searchTicketId;
+
+        public Long getUserId() {
+            return userId;
+        }
+
+        public void setUserId(Long userId) {
+            this.userId = userId;
+        }
+
+        public String getSearchTicketId() {
+            return searchTicketId;
+        }
+
+        public void setSearchTicketId(String searchTicketId) {
+            this.searchTicketId = searchTicketId;
+        }
+
+    }
 
     /**
      * Sends Copy Job to the OutBox.
@@ -63,10 +100,13 @@ public interface JobTicketService extends StatefulService {
      *            The {@link ProxyPrintInboxReq}.
      * @param deliveryDate
      *            The requested date of delivery.
+     * @param tag
+     *            The tag (to be pre-pended to the generated ticket number). Can
+     *            be {@code null} or empty.
      * @return The job ticket created.
      */
     OutboxJobDto createCopyJob(User user, ProxyPrintInboxReq request,
-            Date deliveryDate);
+            Date deliveryDate, String tag);
 
     /**
      * Sends Job Ticket(s) to the OutBox.
@@ -80,6 +120,9 @@ public interface JobTicketService extends StatefulService {
      *            The {@link ProxyPrintInboxReq}.
      * @param deliveryDate
      *            The requested date of delivery.
+     * @param tag
+     *            The tag (to be pre-pended to the generated ticket number). Can
+     *            be {@code null} or empty.
      * @return The job tickets created.
      *
      * @throws EcoPrintPdfTaskPendingException
@@ -87,7 +130,7 @@ public interface JobTicketService extends StatefulService {
      *             pending.
      */
     List<OutboxJobDto> proxyPrintInbox(User lockedUser,
-            ProxyPrintInboxReq request, Date deliveryDate)
+            ProxyPrintInboxReq request, Date deliveryDate, String tag)
             throws EcoPrintPdfTaskPendingException;
 
     /**
@@ -108,12 +151,15 @@ public interface JobTicketService extends StatefulService {
      *            The {@link DocContentPrintInInfo}.
      * @param deliveryDate
      *            The requested date of delivery.
+     * @param tag
+     *            The tag (to be pre-pended to the generated ticket number). Can
+     *            be {@code null} or empty.
      * @throws IOException
      *             When file IO error occurs.
      */
     void proxyPrintPdf(User lockedUser, ProxyPrintDocReq request,
-            final PdfCreateInfo createInfo, DocContentPrintInInfo printInfo,
-            Date deliveryDate) throws IOException;
+            PdfCreateInfo createInfo, DocContentPrintInInfo printInfo,
+            Date deliveryDate, String tag) throws IOException;
 
     /**
      * Creates and formats a unique ticket number.
@@ -123,11 +169,30 @@ public interface JobTicketService extends StatefulService {
     String createTicketNumber();
 
     /**
+     *
+     * @return Ticket Queue information.
+     */
+    JobTicketQueueInfo getTicketQueueInfo();
+
+    /**
      * Gets the pending Job Tickets.
      *
+     * @param filter
+     *            The filter.
      * @return The Job Tickets.
      */
-    List<OutboxJobDto> getTickets();
+    List<OutboxJobDto> getTickets(JobTicketFilter filter);
+
+    /**
+     * Gets the pending Job Tickets numbers.
+     *
+     * @param filter
+     *            The filter.
+     * @param maxItems
+     *            Max items to return.
+     * @return The Job Tickets numbers.
+     */
+    List<String> getTicketNumbers(JobTicketFilter filter, int maxItems);
 
     /**
      * Gets the pending Job Ticket.
@@ -137,15 +202,6 @@ public interface JobTicketService extends StatefulService {
      * @return The Job Ticket or {@code null} when not found.
      */
     OutboxJobDto getTicket(String fileName);
-
-    /**
-     * Gets the pending Job Tickets of a {@link User}.
-     *
-     * @param userId
-     *            The {@link User} database key.
-     * @return The Job Tickets.
-     */
-    List<OutboxJobDto> getTickets(Long userId);
 
     /**
      * Gets the pending Job Ticket belonging to a {@link User} job file.
@@ -233,6 +289,18 @@ public interface JobTicketService extends StatefulService {
     boolean updateTicket(OutboxJobDto dto) throws IOException;
 
     /**
+     * Updates a Job Ticket.
+     *
+     * @param wrapper
+     *            The ticket wrapper.
+     * @return {@code true} when found and updated, {@code false} when not
+     *         found.
+     * @throws IOException
+     *             When file IO error occurs.
+     */
+    boolean updateTicket(JobTicketWrapperDto wrapper) throws IOException;
+
+    /**
      * Notifies Job Ticket owner (by email) that ticket is completed.
      *
      * @param dto
@@ -257,74 +325,47 @@ public interface JobTicketService extends StatefulService {
      *            The user id of the Job Ticket Operator.
      * @param user
      *            The Job Ticket owner.
+     * @param reason
+     *            Reason for cancellation.
      * @param locale
      *            The locale for the email text.
+     *
      * @return The email address, or {@code null} when not send.
      */
     String notifyTicketCanceledByEmail(OutboxJobBaseDto dto, String operator,
-            User user, Locale locale);
+            User user, String reason, Locale locale);
 
     /**
      * Prints and settles a Job Ticket.
      *
-     * @param operator
-     *            The {@link User#getUserId()} with
-     *            {@link ACLRoleEnum#JOB_TICKET_OPERATOR}.
-     * @param printer
-     *            The redirect printer.
-     * @param ippMediaSource
-     *            The {@link IppDictJobTemplateAttr#ATTR_MEDIA_SOURCE} value for
-     *            the print job.
-     * @param ippOutputBin
-     *            The {@link IppDictJobTemplateAttr#ATTR_OUTPUT_BIN} value for
-     *            the print job.
-     * @param ippjogOffset
-     *            The
-     *            {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET}
-     *            value for the print job.
-     * @param fileName
-     *            The unique PDF file name of the job to print.
+     * @param parms
+     *            The parameters.
+     *
      * @return The printed ticket or {@code null} when ticket was not found.
      * @throws IOException
      *             When IO error.
      * @throws IppConnectException
      *             When connection to CUPS fails.
      */
-    OutboxJobDto printTicket(String operator, Printer printer,
-            String ippMediaSource, String ippOutputBin, String ippjogOffset,
-            String fileName) throws IOException, IppConnectException;
+    OutboxJobDto printTicket(JobTicketExecParms parms)
+            throws IOException, IppConnectException;
 
     /**
      * Retries a Job Ticket Print (typically after a job is cancelled, due to
      * printer failure). Note: this method does <i>not</i> settle the ticket,
      * since it is assumed this is already done at the first print trial.
      *
-     * @param operator
-     *            The {@link User#getUserId()} with
-     *            {@link ACLRoleEnum#JOB_TICKET_OPERATOR}.
-     * @param printer
-     *            The (new) redirect printer.
-     * @param ippMediaSource
-     *            The {@link IppDictJobTemplateAttr#ATTR_MEDIA_SOURCE} value for
-     *            the print job.
-     * @param ippOutputBin
-     *            The {@link IppDictJobTemplateAttr#ATTR_OUTPUT_BIN} value for
-     *            the print job.
-     * @param ippjogOffset
-     *            The
-     *            {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET}
-     *            value for the print job.
-     * @param fileName
-     *            The unique PDF file name of the job to print.
+     * @param parms
+     *            The parameters.
+     *
      * @return The printed ticket or {@code null} when ticket was not found.
      * @throws IOException
      *             When IO error.
      * @throws IppConnectException
      *             When connection to CUPS fails.
      */
-    OutboxJobDto retryTicketPrint(String operator, Printer printer,
-            String ippMediaSource, String ippOutputBin, String ippjogOffset,
-            String fileName) throws IOException, IppConnectException;
+    OutboxJobDto retryTicketPrint(JobTicketExecParms parms)
+            throws IOException, IppConnectException;
 
     /**
      * Settles a Job Ticket without printing it.
@@ -347,8 +388,8 @@ public interface JobTicketService extends StatefulService {
      * Gets the list of {@link RedirectPrinterDto} compatible printers for a Job
      * Ticket.
      *
-     * @param fileName
-     *            The unique PDF file name of the job ticket.
+     * @param job
+     *            The Job Ticket.
      * @param optionFilter
      *            An additional filter, apart from the Job Ticket specification,
      *            of IPP option values that must be present in the redirect
@@ -358,7 +399,7 @@ public interface JobTicketService extends StatefulService {
      * @return The list of redirect printers (can be empty) or {@code null} when
      *         job ticket is not found.
      */
-    List<RedirectPrinterDto> getRedirectPrinters(String fileName,
+    List<RedirectPrinterDto> getRedirectPrinters(OutboxJobDto job,
             IppOptionMap optionFilter, Locale locale);
 
     /**
@@ -377,4 +418,53 @@ public interface JobTicketService extends StatefulService {
      */
     RedirectPrinterDto getRedirectPrinter(String fileName,
             IppOptionMap optionFilter, Locale locale);
+
+    /**
+     * Creates a single page PDF Job Sheet file.
+     *
+     * @param user
+     *            The unique user id.
+     * @param jobDto
+     *            The {@link OutboxJobDto} job ticket.
+     * @param jobSheetDto
+     *            Job Sheet information.
+     * @return The PDF file.
+     */
+    File createTicketJobSheet(String user, OutboxJobDto jobDto,
+            TicketJobSheetDto jobSheetDto);
+
+    /**
+     *
+     * @return The number of tickets in queue.
+     */
+    int getJobTicketQueueSize();
+
+    /**
+     *
+     * @param options
+     *            The Ticket options.
+     * @return Job Sheet info for Job Ticket.
+     */
+    TicketJobSheetDto getTicketJobSheet(IppOptionMap options);
+
+    /**
+     * Get the ticket tags from cache, sorted by tag word.
+     *
+     * @return The sorted tags, or empty when no tags are defined or tags are
+     *         disabled.
+     *
+     * @throws IllegalArgumentException
+     *             When error parsing formatted tags string.
+     */
+    Collection<JobTicketTagDto> getTicketTagsByWord();
+
+    /**
+     * Gets the {@link JobTicketTagDto} from a ticket number.
+     *
+     * @param ticketNumber
+     *            The ticket number.
+     * @return {@code null| when not present.
+     */
+    JobTicketTagDto getTicketNumberTag(String ticketNumber);
+
 }

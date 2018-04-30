@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -37,24 +37,27 @@ import javax.persistence.TableGenerator;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 @Entity
 @Table(name = User.TABLE_NAME)
 public class User extends org.savapage.core.jpa.Entity {
 
-    /**
-     *
-     */
+    /** */
     public static final String TABLE_NAME = "tbl_user";
+
+    /** */
+    public static final String ERASED_USER_ID = "";
+    /** */
+    public static final String ERASED_EXTERNAL_USER_NAME = "";
 
     @Id
     @Column(name = "user_id")
     @TableGenerator(name = "userPropGen", table = Sequence.TABLE_NAME,
             pkColumnName = "SEQUENCE_NAME",
-            valueColumnName = "SEQUENCE_NEXT_VALUE",
-            pkColumnValue = TABLE_NAME, allocationSize = 1)
+            valueColumnName = "SEQUENCE_NEXT_VALUE", pkColumnValue = TABLE_NAME,
+            allocationSize = 1)
     @GeneratedValue(strategy = GenerationType.TABLE, generator = "userPropGen")
     private Long id;
 
@@ -211,6 +214,13 @@ public class User extends org.savapage.core.jpa.Entity {
     @OneToMany(targetEntity = UserGroupMember.class, mappedBy = "user",
             cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<UserGroupMember> groupMembership;
+
+    /**
+     * The LAZY CostChange list.
+     */
+    @OneToMany(targetEntity = CostChange.class, mappedBy = "reqUser",
+            cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private List<CostChange> costChanges;
 
     /**
      *
@@ -550,6 +560,14 @@ public class User extends org.savapage.core.jpa.Entity {
 
     public void setGroupMembership(List<UserGroupMember> groupMembership) {
         this.groupMembership = groupMembership;
+    }
+
+    public List<CostChange> getCostChanges() {
+        return costChanges;
+    }
+
+    public void setCostChanges(List<CostChange> costChanges) {
+        this.costChanges = costChanges;
     }
 
 }

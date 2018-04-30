@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.MissingResourceException;
 import java.util.ResourceBundle;
 
 import org.apache.commons.io.FilenameUtils;
@@ -48,11 +49,13 @@ public final class LocaleHelper {
     private static final String LOCALE_LANG_DUTCH = "nl";
     private static final String LOCALE_LANG_FRENCH = "fr";
     private static final String LOCALE_LANG_GERMAN = "de";
+    private static final String LOCALE_LANG_POLISH = "pl";
     private static final String LOCALE_LANG_RUSSIAN = "ru";
     private static final String LOCALE_LANG_SPANISH = "es";
 
     private static final String LOCALE_CTRY_NL = "NL";
     private static final String LOCALE_CTRY_ES = "ES";
+    private static final String LOCALE_CTRY_PL = "PL";
     private static final String LOCALE_CTRY_RU = "RU";
 
     /**
@@ -95,7 +98,7 @@ public final class LocaleHelper {
     }
 
     /**
-     * Gets as localized (short) date string of a Date.
+     * Gets as localized (long) date string of a Date.
      *
      * @param date
      *            The date.
@@ -169,6 +172,55 @@ public final class LocaleHelper {
     }
 
     /**
+     * Gets the (customized) localized user interface text of an {@link Enum}
+     * value.
+     *
+     * @param <E>
+     *            The Enum class.
+     * @param value
+     *            The Enum value.
+     * @param locale
+     *            The {@link Locale}.
+     * @return The localized text.
+     */
+    public static <E extends Enum<E>> String uiTextCustom(final Enum<E> value,
+            final Locale locale) {
+        return uiTextCustom(value, locale, null);
+    }
+
+    /**
+     * Gets the (customized) localized user interface text of an {@link Enum}
+     * value.
+     *
+     * @param <E>
+     *            The Enum class.
+     * @param value
+     *            The Enum value.
+     * @param locale
+     *            The {@link Locale}.
+     * @param suffix
+     *            The value suffix to be appended to the Enum string value.
+     * @return The localized text.
+     */
+    public static <E extends Enum<E>> String uiTextCustom(final Enum<E> value,
+            final Locale locale, final String suffix) {
+
+        final String key;
+        if (StringUtils.isBlank(suffix)) {
+            key = value.toString();
+        } else {
+            key = String.format("%s%s", value.toString(), suffix);
+        }
+
+        ResourceBundle bundle = getResourceBundleCustom(value, locale);
+
+        if (bundle == null || !bundle.containsKey(key)) {
+            bundle = getResourceBundle(value, locale);
+        }
+        return bundle.getString(key);
+    }
+
+    /**
      * Gets the localized user interface text of an {@link Enum} value.
      *
      * @param <E>
@@ -223,15 +275,79 @@ public final class LocaleHelper {
     }
 
     /**
+     * Gets the resource bundle of an enum.
      *
+     * @param <E>
+     *            The Enum class.
      * @param value
+     *            The Enum value.
      * @param locale
-     * @return
+     *            The {@link Locale}.
+     * @return The {@link ResourceBundle}.
      */
     private static <E extends Enum<E>> ResourceBundle
             getResourceBundle(final Enum<E> value, final Locale locale) {
         return Messages.loadXmlResource(value.getClass(),
                 value.getClass().getSimpleName(), locale);
+    }
+
+    /**
+     * Gets the XML resource bundle of an Exception class.
+     *
+     * @param <E>
+     *            The Exception class.
+     * @param clazz
+     *            The class.
+     * @param locale
+     *            The {@link Locale}.
+     * @return The {@link ResourceBundle}.
+     */
+    private static <E extends Exception> ResourceBundle
+            getResourceBundle(final Class<E> clazz, final Locale locale) {
+        return Messages.loadXmlResource(clazz, clazz.getSimpleName(), locale);
+    }
+
+    /**
+     *
+     * @param value
+     * @param locale
+     * @return {@code null} when resource is not found.
+     */
+    private static <E extends Enum<E>> ResourceBundle
+            getResourceBundleCustom(final Enum<E> value, final Locale locale) {
+        try {
+            return Messages.loadXmlResource(
+                    ConfigManager.getServerCustomI18nHome(value.getClass()),
+                    value.getClass().getSimpleName(), locale);
+
+        } catch (MissingResourceException e) {
+            // no code intended;
+        }
+        return null;
+    }
+
+    /**
+     * Gets the localized user interface text from XML resource bundle of class
+     * with arguments.
+     *
+     * @param <E>
+     *            The Exception class.
+     * @param clazz
+     *            The class.
+     * @param clazz
+     *            The class.
+     * @param locale
+     *            The {@link Locale}.
+     * @param key
+     *            The message key.
+     * @param args
+     *            The arguments.
+     * @return The localized text.
+     */
+    public static <E extends Exception> String uiText(final Class<E> clazz,
+            final Locale locale, final String key, final String... args) {
+        return Messages.formatMessage(
+                getResourceBundle(clazz, locale).getString(key), args);
     }
 
     /**
@@ -292,6 +408,7 @@ public final class LocaleHelper {
         list.append(Locale.US.getLanguage()).append(',');
         list.append(Locale.FRANCE.getLanguage()).append(',');
         list.append(LOCALE_LANG_SPANISH).append(',');
+        list.append(LOCALE_LANG_POLISH).append(',');
         list.append(LOCALE_LANG_RUSSIAN).append(',');
         list.append(LOCALE_LANG_DUTCH);
 
@@ -329,6 +446,9 @@ public final class LocaleHelper {
                 break;
             case LOCALE_LANG_SPANISH:
                 list.add(new Locale(LOCALE_LANG_SPANISH, LOCALE_CTRY_ES));
+                break;
+            case LOCALE_LANG_POLISH:
+                list.add(new Locale(LOCALE_LANG_POLISH, LOCALE_CTRY_PL));
                 break;
             case LOCALE_LANG_RUSSIAN:
                 list.add(new Locale(LOCALE_LANG_RUSSIAN, LOCALE_CTRY_RU));

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -41,6 +41,7 @@ import java.util.List;
 
 import javax.print.attribute.Size2DSyntax;
 import javax.print.attribute.standard.MediaSize;
+import javax.print.attribute.standard.MediaSizeName;
 
 import org.savapage.core.SpException;
 import org.savapage.core.community.CommunityDictEnum;
@@ -56,6 +57,7 @@ import org.savapage.core.util.MediaUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.itextpdf.awt.geom.AffineTransform;
 import com.itextpdf.text.BadElementException;
 import com.itextpdf.text.Document;
 import com.itextpdf.text.DocumentException;
@@ -100,14 +102,21 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
     private String targetPdfCopyFilePath;
     private Document targetDocument;
+
     private PdfCopy targetPdfCopy;
+    private int nPagesAdded2Target;
+
     private PdfStamper targetStamper;
 
     private PdfReader readerWlk;
     private PdfReader letterheadReader;
 
     private StringBuilder jobRangesWlk;
-    private Integer jobRotationWlk;
+
+    /**
+     * The user rotate of the current job.
+     */
+    private Integer jobUserRotateWlk;
 
     private File jobPdfFileWlk;
 
@@ -130,6 +139,11 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     private boolean onExitConvertToGrayscale = false;
 
     /**
+     * .
+     */
+    private Boolean firstPageSeenAsLandscape;
+
+    /**
      * Create a {@link BaseFont} for an {@link InternalFontFamilyEnum}.
      *
      * @param internalFont
@@ -147,6 +161,30 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     }
 
     /**
+     * Gets the {@link Rectangle} of {@link MediaSizeName}.
+     *
+     * @param mediaSizeName
+     *            The {@link MediaSizeName}.
+     *
+     * @return {@code null} when default page size not found.
+     */
+    public static Rectangle getPageSize(final MediaSizeName mediaSizeName) {
+
+        final Rectangle pageSize;
+
+        final float[] size = MediaSize.getMediaSizeForName(mediaSizeName)
+                .getSize(Size2DSyntax.INCH);
+
+        if (size == null) {
+            pageSize = null;
+        } else {
+            pageSize = new Rectangle(size[0] * ITEXT_POINTS_PER_INCH,
+                    size[1] * ITEXT_POINTS_PER_INCH);
+        }
+        return pageSize;
+    }
+
+    /**
      * Gets the {@link Rectangle} of default page size.
      *
      * @return {@code null} when default page size not found.
@@ -159,14 +197,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
                 .getConfigValue(Key.SYS_DEFAULT_PAPER_SIZE);
 
         if (papersize.equals(IConfigProp.PAPERSIZE_V_SYSTEM)) {
-
-            float[] size = MediaSize
-                    .getMediaSizeForName(MediaUtils.getHostDefaultMediaSize())
-                    .getSize(Size2DSyntax.INCH);
-
-            pageSize = new Rectangle(size[0] * ITEXT_POINTS_PER_INCH,
-                    size[1] * ITEXT_POINTS_PER_INCH);
-
+            pageSize = getPageSize(MediaUtils.getHostDefaultMediaSize());
         } else if (papersize.equals(IConfigProp.PAPERSIZE_V_LETTER)) {
             pageSize = PageSize.LETTER;
         } else if (papersize.equals(IConfigProp.PAPERSIZE_V_A4)) {
@@ -414,6 +445,8 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         SpPdfPageProps pageProps = null;
         PdfReader reader = null;
 
+        final int firstPage = 1;
+
         try {
             /*
              * Instantiating/opening can throw a BadPasswordException or
@@ -426,15 +459,22 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
                 throw new PdfSecurityException("Encrypted PDF not supported.");
             }
 
-            pageProps = this.createPageProps(reader.getPageSize(1));
+            pageProps = this.createPageProps(reader.getPageSize(firstPage));
             pageProps.setNumberOfPages(reader.getNumberOfPages());
-            pageProps.setRotationFirstPage(reader.getPageRotation(1));
+            pageProps.setRotationFirstPage(reader.getPageRotation(firstPage));
+
+            final AffineTransform ctm =
+                    PdfPageRotateHelper.getPdfPageCTM(reader, firstPage);
+
+            pageProps.setContentRotationFirstPage(
+                    PdfPageRotateHelper.getPageContentRotation(ctm).intValue());
 
         } catch (com.itextpdf.text.exceptions.BadPasswordException e) {
             throw new PdfSecurityException(
                     "Password protected PDF not supported.");
         } catch (InvalidPdfException e) {
-            throw new PdfValidityException(e.getMessage());
+            throw new PdfValidityException(
+                    String.format("Invalid PDF: %s", e.getMessage()));
         } catch (IOException e) {
             throw new SpException(e);
 
@@ -453,6 +493,8 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         this.onExitConvertToGrayscale = this.isGrayscalePdf();
 
         this.targetPdfCopyFilePath = String.format("%s.tmp", this.pdfFile);
+        this.nPagesAdded2Target = 0;
+        this.firstPageSeenAsLandscape = null;
 
         try {
 
@@ -462,6 +504,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
             this.targetDocument = new Document();
 
             this.targetPdfCopy = new PdfCopy(this.targetDocument, ostr);
+
             this.targetDocument.open();
 
         } catch (Exception e) {
@@ -496,13 +539,13 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     }
 
     @Override
-    protected void onInitJob(final String jobPfdName, final Integer rotation)
+    protected void onInitJob(final String jobPfdName, final Integer userRotate)
             throws Exception {
 
         this.jobPdfFileWlk = new File(jobPfdName);
         this.readerWlk = new PdfReader(jobPfdName);
 
-        this.jobRotationWlk = rotation;
+        this.jobUserRotateWlk = userRotate;
         this.jobRangesWlk = new StringBuilder();
     }
 
@@ -547,61 +590,75 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         return this.singleBlankPagePdfReader;
     }
 
-    /**
-     * Gets the page rotation for a copy of a source PDF page.
-     *
-     * @param srcPageSize
-     *            The size of the source PDF page.
-     * @param srcPageRotation
-     *            The rotation of the source PDF page.
-     * @param userRotation
-     *            The rotation applied by the user on the visible SafePages.
-     *
-     * @return The page rotation to apply to the PDF page copy.
-     */
-    public static Integer getPdfCopyPageRotation(final Rectangle srcPageSize,
-            final int srcPageRotation, final Integer userRotation) {
-
-        final boolean isLandscapePage =
-                srcPageSize.getHeight() < srcPageSize.getWidth();
-
-        return PdfPageRotateHelper.instance().getPageRotationForExport(
-                isLandscapePage, srcPageRotation, userRotation);
-    }
-
     @Override
     protected void onExitJob(final int blankPagesToAppend) throws Exception {
 
         this.readerWlk.selectPages(this.jobRangesWlk.toString());
-        int pages = this.readerWlk.getNumberOfPages();
 
-        // Create a new instance for the user rotation.
-        final Integer jobUserRotation =
-                new Integer(this.jobRotationWlk.intValue());
+        /*
+         * Lazy initialize on first page of first job.
+         */
+        if (this.isForPrinting() && this.firstPageSeenAsLandscape == null) {
 
-        for (int i = 0; i < pages;) {
+            final int firstPage = 1;
 
-            ++i;
+            final AffineTransform ctm = PdfPageRotateHelper
+                    .getPdfPageCTM(this.readerWlk, firstPage);
 
-            /*
-             * Rotate for export AND printing. Unconditional rotation is needed
-             * at this stage, because we need the intended orientation when a
-             * letterhead is to be applied.
-             */
-            this.jobRotationWlk =
-                    getPdfCopyPageRotation(this.readerWlk.getPageSize(i),
-                            this.readerWlk.getPageRotation(i), jobUserRotation);
+            final int page1Rotation = this.readerWlk.getPageRotation(firstPage);
+            final boolean page1Landscape = PdfPageRotateHelper
+                    .isLandscapePage(this.readerWlk.getPageSize(firstPage));
 
-            final int rotate = this.jobRotationWlk.intValue();
-            final PdfDictionary pageDict = this.readerWlk.getPageN(i);
-            pageDict.put(PdfName.ROTATE, new PdfNumber(rotate));
+            this.firstPageSeenAsLandscape =
+                    PdfPageRotateHelper.isSeenAsLandscape(ctm, page1Rotation,
+                            page1Landscape, this.jobUserRotateWlk);
+
+            this.firstPageOrientationInfo =
+                    PdfPageRotateHelper.getOrientationInfo(ctm, page1Rotation,
+                            page1Landscape, this.jobUserRotateWlk);
+        }
+
+        final int pages = this.readerWlk.getNumberOfPages();
+
+        /*
+         * Traverse pages.
+         */
+        for (int nPage =
+                1; nPage <= pages; nPage++, this.nPagesAdded2Target++) {
+
+            final int pageRotationCur = this.readerWlk.getPageRotation(nPage);
+            final int pageRotationNew;
+
+            if (this.isForPrinting() && this.nPagesAdded2Target > 0) {
+
+                pageRotationNew = PdfPageRotateHelper.getAlignedRotation(
+                        this.readerWlk, this.firstPageSeenAsLandscape, nPage);
+            } else {
+
+                pageRotationNew = PdfPageRotateHelper.applyUserRotate(
+                        pageRotationCur, this.jobUserRotateWlk);
+            }
+
+            final PdfDictionary pageDict = this.readerWlk.getPageN(nPage);
+
+            if (pageRotationCur != pageRotationNew) {
+                pageDict.put(PdfName.ROTATE, new PdfNumber(pageRotationNew));
+            }
+
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("Page {}: rotate {}->{} | landscape [{}]", nPage,
+                        pageRotationCur, pageRotationNew,
+                        PdfPageRotateHelper.isLandscapePage(
+                                this.readerWlk.getPageSize(nPage)));
+            }
 
             final PdfImportedPage importedPage;
 
-            if (isPageContentsPresent(this.readerWlk, i)) {
+            if (isPageContentsPresent(this.readerWlk, nPage)) {
 
-                importedPage =
-                        this.targetPdfCopy.getImportedPage(this.readerWlk, i);
+                importedPage = this.targetPdfCopy
+                        .getImportedPage(this.readerWlk, nPage);
+
             } else {
                 /*
                  * Replace page without /Contents with our own blank content.
@@ -615,7 +672,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
                     LOGGER.info(String.format(
                             "File [%s] page [%d] has NO /Contents: "
                                     + "replaced by blank content.",
-                            this.jobPdfFileWlk.getName(), i));
+                            this.jobPdfFileWlk.getName(), nPage));
                 }
             }
             this.targetPdfCopy.addPage(importedPage);

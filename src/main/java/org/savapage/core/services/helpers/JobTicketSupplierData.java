@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -53,6 +53,11 @@ public final class JobTicketSupplierData extends JsonAbstractBase
     private BigDecimal costCopy;
 
     /**
+     * Cost total for set of copies.
+     */
+    private BigDecimal costSet;
+
+    /**
      * The {@link User#getUserId()} of the
      * {@link ACLRoleEnum#JOB_TICKET_OPERATOR}.
      */
@@ -88,7 +93,12 @@ public final class JobTicketSupplierData extends JsonAbstractBase
      */
     @JsonIgnore
     public BigDecimal getCostTotal() {
+
         BigDecimal total = BigDecimal.ZERO;
+
+        if (costSet != null) {
+            total = total.add(costSet);
+        }
         if (costCopy != null) {
             total = total.add(costCopy);
         }
@@ -105,6 +115,21 @@ public final class JobTicketSupplierData extends JsonAbstractBase
      */
     public void setCostCopy(final BigDecimal cost) {
         this.costCopy = cost;
+    }
+
+    /**
+     * @return Cost total for set of copies.
+     */
+    public BigDecimal getCostSet() {
+        return costSet;
+    }
+
+    /**
+     * @param cost
+     *            Cost total for set of copies.
+     */
+    public void setCostSet(final BigDecimal cost) {
+        this.costSet = cost;
     }
 
     @Override
@@ -141,6 +166,6 @@ public final class JobTicketSupplierData extends JsonAbstractBase
      * @return The {@link JobTicketSupplierData} object.
      */
     public static JobTicketSupplierData createFromData(final String data) {
-        return JobTicketSupplierData
-                .create(JobTicketSupplierData.class, data);
-    }}
+        return JobTicketSupplierData.create(JobTicketSupplierData.class, data);
+    }
+}

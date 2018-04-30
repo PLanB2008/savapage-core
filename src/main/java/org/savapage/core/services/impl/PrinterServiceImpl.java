@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,9 +24,12 @@ package org.savapage.core.services.impl;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
@@ -38,8 +41,11 @@ import org.savapage.core.dao.enums.AccessControlScopeEnum;
 import org.savapage.core.dao.enums.DeviceTypeEnum;
 import org.savapage.core.dao.enums.PrinterAttrEnum;
 import org.savapage.core.dao.enums.ProxyPrintAuthModeEnum;
+import org.savapage.core.dao.enums.ProxyPrinterSuppliesEnum;
 import org.savapage.core.dao.helpers.JsonUserGroupAccess;
+import org.savapage.core.dao.helpers.ProxyPrinterSnmpInfoDto;
 import org.savapage.core.dto.IppMediaSourceCostDto;
+import org.savapage.core.dto.PrinterSnmpDto;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.jpa.Device;
 import org.savapage.core.jpa.Printer;
@@ -61,7 +67,13 @@ import org.savapage.core.print.proxy.JsonProxyPrinterOptChoice;
 import org.savapage.core.services.PrinterService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.PrinterAttrLookup;
+import org.savapage.core.snmp.SnmpPrtMarkerColorantEntry;
+import org.savapage.core.snmp.SnmpPrtMarkerColorantValueEnum;
+import org.savapage.core.snmp.SnmpPrtMarkerSuppliesClassEnum;
+import org.savapage.core.snmp.SnmpPrtMarkerSuppliesEntry;
+import org.savapage.core.snmp.SnmpPrtMarkerSuppliesTypeEnum;
 import org.savapage.core.util.JsonHelper;
+import org.savapage.core.util.NumberUtil;
 
 /**
  *
@@ -71,14 +83,10 @@ import org.savapage.core.util.JsonHelper;
 public final class PrinterServiceImpl extends AbstractService
         implements PrinterService {
 
-    /**
-     *
-     */
+    /** */
     private static final boolean ACCESS_ALLOWED = true;
 
-    /**
-     *
-     */
+    /** */
     private static final boolean ACCESS_DENIED = !ACCESS_ALLOWED;
 
     @Override
@@ -492,6 +500,8 @@ public final class PrinterServiceImpl extends AbstractService
                 jobSheets);
         addTimeSeriesDataPoint(printer,
                 PrinterAttrEnum.PRINT_OUT_ROLLING_DAY_ESU, jobTime, jobSheets);
+
+        snmpRetrieveService().probeSnmpRetrieveTrigger(printer);
     }
 
     @Override
@@ -906,6 +916,154 @@ public final class PrinterServiceImpl extends AbstractService
             }
         }
         return null;
+    }
+
+    @Override
+    public void setSnmpInfo(final Printer printer, final PrinterSnmpDto info)
+            throws IOException {
+
+        final Map<PrinterAttrEnum, String> valueMap = new HashMap<>();
+
+        final Date date = ServiceContext.getTransactionDate();
+
+        valueMap.put(PrinterAttrEnum.SNMP_DATE, String.valueOf(date.getTime()));
+
+        if (info != null) {
+            valueMap.put(PrinterAttrEnum.SNMP_INFO,
+                    createSmtpInfo(date, info).stringify());
+        }
+
+        for (final Entry<PrinterAttrEnum, String> entry : valueMap.entrySet()) {
+
+            final PrinterAttr attr = printerAttrDAO()
+                    .findByName(printer.getId(), entry.getKey());
+
+            this.setPrinterAttrValue(attr, printer, entry.getKey(),
+                    entry.getValue());
+        }
+    }
+
+    @Override
+    public ProxyPrinterSnmpInfoDto getSnmpInfo(final String json) {
+
+        final ProxyPrinterSnmpInfoDto dto =
+                JsonHelper.createOrNull(ProxyPrinterSnmpInfoDto.class, json);
+
+        if (dto != null && dto.getDate() == null) {
+            return null;
+        }
+
+        return dto;
+    }
+
+    @Override
+    public void removeSnmpAttr(final Printer printer) {
+
+        for (final PrinterAttrEnum attrEnum : EnumSet
+                .of(PrinterAttrEnum.SNMP_DATE, PrinterAttrEnum.SNMP_INFO)) {
+
+            final PrinterAttr attrWlk =
+                    printerAttrDAO().findByName(printer.getId(), attrEnum);
+
+            if (attrWlk != null) {
+                removeAttribute(printer, attrEnum);
+                printerAttrDAO().delete(attrWlk);
+            }
+        }
+    }
+
+    /**
+     * Creates SNMP printer info.
+     *
+     * @param info
+     *            The "raw" {@link PrinterSnmpDto}.
+     * @return The {@link ProxyPrinterSnmpInfoDto}.
+     */
+    private static ProxyPrinterSnmpInfoDto createSmtpInfo(final Date date,
+            final PrinterSnmpDto info) {
+
+        if (info.getSuppliesEntries() == null) {
+            return null;
+        }
+
+        final ProxyPrinterSnmpInfoDto obj = new ProxyPrinterSnmpInfoDto();
+
+        obj.setDate(date);
+        obj.setVendor(info.getEnterprise());
+        obj.setModel(info.getSystemDescription());
+        obj.setSerial(info.getSerialNumber());
+        obj.setErrorStates(info.getErrorStates());
+
+        for (final Entry<SnmpPrtMarkerSuppliesTypeEnum, List<SnmpPrtMarkerSuppliesEntry>> entry : info
+                .getSuppliesEntries().entrySet()) {
+
+            switch (entry.getKey()) {
+            case TONER:
+                obj.setSupplies(ProxyPrinterSuppliesEnum.TONER);
+                break;
+            case INK:
+                obj.setSupplies(ProxyPrinterSuppliesEnum.INK);
+                break;
+            default:
+                continue;
+            }
+
+            final Map<SnmpPrtMarkerColorantValueEnum, Integer> colorants =
+                    new HashMap<>();
+
+            for (final SnmpPrtMarkerSuppliesEntry supplies : entry.getValue()) {
+
+                if (supplies
+                        .getSuppliesClass() != SnmpPrtMarkerSuppliesClassEnum.CONSUMED) {
+                    continue;
+                }
+
+                final SnmpPrtMarkerColorantEntry colorantEntry =
+                        supplies.getColorantEntry();
+
+                if (colorantEntry == null) {
+                    continue;
+                }
+
+                final int perc;
+                if (supplies.getLevel() == 0
+                        || supplies.getMaxCapacity() == 0) {
+                    perc = 0;
+                } else {
+                    perc = (NumberUtil.INT_HUNDRED * supplies.getLevel())
+                            / supplies.getMaxCapacity();
+                }
+
+                final SnmpPrtMarkerColorantValueEnum color;
+
+                switch (colorantEntry.getValue()) {
+                case UNKNOWN:
+                case OTHER:
+                    if (StringUtils.containsIgnoreCase(
+                            supplies.getDescription(), "black")) {
+                        color = SnmpPrtMarkerColorantValueEnum.BLACK;
+                        break;
+                    } else if (StringUtils.containsIgnoreCase(
+                            supplies.getDescription(), "tri-color")) {
+                        color = SnmpPrtMarkerColorantValueEnum.OTHER;
+                        break;
+                    }
+
+                default:
+                    color = colorantEntry.getValue();
+                    break;
+                }
+
+                colorants.put(color, Integer.valueOf(perc));
+            }
+
+            obj.setMarkers(colorants);
+
+            // Just get the first one, ignore the rest.
+            break;
+        }
+
+        return obj;
     }
 
 }

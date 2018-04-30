@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,11 +22,13 @@
 package org.savapage.core.snmp;
 
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.StringTokenizer;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
+import org.savapage.core.util.LocaleHelper;
 import org.snmp4j.smi.OID;
 
 /**
@@ -46,7 +48,7 @@ import org.snmp4j.smi.OID;
  * >this</a> Q&A.
  * </p>
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public enum SnmpPrinterErrorStateEnum {
@@ -143,8 +145,8 @@ public enum SnmpPrinterErrorStateEnum {
      *            character).
      * @return The set.
      */
-    public static Set<SnmpPrinterErrorStateEnum> fromOctetString(
-            final String octetString) {
+    public static Set<SnmpPrinterErrorStateEnum>
+            fromOctetString(final String octetString) {
 
         final StringTokenizer lineTokenizer =
                 new StringTokenizer(octetString, ":");
@@ -187,4 +189,14 @@ public enum SnmpPrinterErrorStateEnum {
     public static OID getOID() {
         return SnmpMibDict.OID_PRINTER_DETECTED_ERROR_STATE;
     }
+
+    /**
+     * @param locale
+     *            The {@link Locale}.
+     * @return The localized text.
+     */
+    public String uiText(final Locale locale) {
+        return LocaleHelper.uiText(this, locale);
+    }
+
 }

@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2017 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -55,6 +55,7 @@ import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.config.IConfigProp.LdapType;
 import org.savapage.core.jpa.User;
+import org.savapage.core.net.TrustSelfSignedCertSocketFactory;
 import org.savapage.core.rfid.RfidNumberFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -211,6 +212,12 @@ public abstract class LdapUserSourceMixin extends AbstractUserSource
         }
 
     }
+
+    /**
+     *
+     * @return {@true} when disabled users from LDAP are allowed.
+     */
+    protected abstract boolean allowDisabledUsers();
 
     /**
      *
@@ -526,6 +533,18 @@ public abstract class LdapUserSourceMixin extends AbstractUserSource
                     env.put(Context.SECURITY_PRINCIPAL, dn);
                     env.put(Context.SECURITY_CREDENTIALS, password);
 
+                    final ConfigManager cm = ConfigManager.instance();
+
+                    if (cm.isConfigValue(Key.AUTH_LDAP_USE_SSL)) {
+                        env.put(Context.SECURITY_PROTOCOL, "ssl");
+                        if (cm.isConfigValue(
+                                Key.AUTH_LDAP_USE_SSL_TRUST_SELF_SIGNED)) {
+                            env.put("java.naming.ldap.factory.socket",
+                                    TrustSelfSignedCertSocketFactory.class
+                                            .getName());
+                        }
+                    }
+
                     ctx = new InitialDirContext(env);
                     /*
                      *
@@ -629,12 +648,24 @@ public abstract class LdapUserSourceMixin extends AbstractUserSource
                     cm.getConfigValue(Key.AUTH_LDAP_ADMIN_PASSWORD));
         }
 
+        if (cm.isConfigValue(Key.AUTH_LDAP_USE_SSL)) {
+            env.put(Context.SECURITY_PROTOCOL, "ssl");
+            if (cm.isConfigValue(Key.AUTH_LDAP_USE_SSL_TRUST_SELF_SIGNED)) {
+                env.put("java.naming.ldap.factory.socket",
+                        TrustSelfSignedCertSocketFactory.class.getName());
+            }
+        }
+
         final InitialLdapContext ctx;
 
         try {
             ctx = new InitialLdapContext(env, null);
         } catch (NamingException e) {
-            throw new SpException(e.getMessage(), e);
+            if (e.getCause() == null) {
+                throw new SpException(e.getMessage(), e);
+            }
+            throw new SpException(String.format("%s [%s]", e.getMessage(),
+                    e.getCause().getMessage()), e);
         }
 
         return ctx;
@@ -870,7 +901,8 @@ public abstract class LdapUserSourceMixin extends AbstractUserSource
 
                         final CommonUser cuser = createCommonUser(attributes);
 
-                        if (cuser != null) {
+                        if (cuser != null && (cuser.isEnabled()
+                                || this.allowDisabledUsers())) {
                             sset.add(cuser);
                         }
                     }
@@ -882,7 +914,9 @@ public abstract class LdapUserSourceMixin extends AbstractUserSource
                 hasNextPage = ldapPager.hasNextPage();
             }
 
-        } catch (NameNotFoundException e) {
+        } catch (
+
+        NameNotFoundException e) {
             throw new SpException(
                     "LDAP base context [" + this.baseDN + "] not found", e);
         } catch (NamingException e) {
@@ -946,21 +980,12 @@ public abstract class LdapUserSourceMixin extends AbstractUserSource
                             ldapUserFullNameField, groupMember);
 
                     if (cuser == null) {
-
-                        if (LOGGER.isTraceEnabled()) {
-
-                            final StringBuilder builder = new StringBuilder();
-
-                            builder.append("Group member [").append(groupMember)
-                                    .append("] is not a user.");
-
-                            LOGGER.trace(builder.toString());
-                        }
-
-                    } else {
-
+                        LOGGER.trace("Group member [{}] is not a user.",
+                                groupMember);
+                    } else if (cuser.isEnabled() || this.allowDisabledUsers()) {
                         sset.add(cuser);
-
+                    } else {
+                        LOGGER.trace("User [{}] is disabled.", groupMember);
                     }
                 }
             }
@@ -1053,7 +1078,7 @@ public abstract class LdapUserSourceMixin extends AbstractUserSource
      */
     protected final CommonUser commonUserFromGroupMember(final DirContext ctx,
             final String ldapUserFullNameField, final String member)
-                    throws NamingException {
+            throws NamingException {
 
         CommonUser cuser = null;
 

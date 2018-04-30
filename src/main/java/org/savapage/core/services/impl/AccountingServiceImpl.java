@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -85,18 +85,22 @@ import org.savapage.core.json.rpc.JsonRpcMethodError;
 import org.savapage.core.json.rpc.JsonRpcMethodResult;
 import org.savapage.core.json.rpc.impl.ResultPosDeposit;
 import org.savapage.core.msg.UserMsgIndicator;
+import org.savapage.core.outbox.OutboxInfoDto.OutboxAccountTrxInfo;
+import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
+import org.savapage.core.pdf.PdfPrintCollector;
 import org.savapage.core.print.proxy.ProxyPrintException;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.print.proxy.ProxyPrintJobChunkInfo;
-import org.savapage.core.services.AccountingException;
 import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.AccountTrxInfo;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
+import org.savapage.core.services.helpers.AccountingException;
 import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ProxyPrintCostParms;
 import org.savapage.core.util.BigDecimalUtil;
 import org.savapage.core.util.Messages;
+import org.savapage.ext.papercut.PaperCutHelper;
 
 /**
  *
@@ -645,7 +649,9 @@ public final class AccountingServiceImpl extends AbstractService
 
         trx.setTrxType(trxType.toString());
 
-        trx.setTransactionWeight(Integer.valueOf(1));
+        final Integer weight = Integer.valueOf(1);
+        trx.setTransactionWeight(weight);
+        trx.setTransactionWeightUnit(weight);
 
         trx.setTransactedBy(ServiceContext.getActor());
         trx.setTransactionDate(ServiceContext.getTransactionDate());
@@ -704,6 +710,70 @@ public final class AccountingServiceImpl extends AbstractService
             createAccountTrx(trxInfo.getAccount(), docLog, trxType,
                     nTotalWeight, trxInfo.getWeight(), trxInfo.getExtDetails());
         }
+    }
+
+    @Override
+    public List<AccountTrx> createAccountTrxsUI(final OutboxJobDto outboxJob) {
+
+        final List<AccountTrx> list = new ArrayList<>();
+
+        final AccountDao dao = ServiceContext.getDaoContext().getAccountDao();
+
+        final int scale = ConfigManager.getFinancialDecimalsInDatabase();
+
+        if (outboxJob.getAccountTransactions() == null) {
+
+            final AccountTrx trx = new AccountTrx();
+
+            final Account account = new Account();
+            account.setAccountType(AccountTypeEnum.USER.toString());
+            trx.setAccount(account);
+
+            final User user = ServiceContext.getDaoContext().getUserDao()
+                    .findById(outboxJob.getUserId());
+
+            if (user == null || user.getUserId() == null) {
+                account.setName("");
+            } else {
+                account.setName(user.getUserId());
+            }
+
+            final Integer weight = Integer.valueOf(outboxJob.getCopies());
+            trx.setTransactionWeight(weight);
+            trx.setTransactionWeightUnit(weight);
+
+            trx.setCurrencyCode(ConfigManager.getAppCurrencyCode());
+            trx.setAmount(outboxJob.getCostTotal().negate());
+
+            list.add(trx);
+
+            return list;
+        }
+
+        final int weightTotal =
+                outboxJob.getAccountTransactions().getWeightTotal();
+
+        final BigDecimal costTotal = outboxJob.getCostTotal();
+
+        for (final OutboxAccountTrxInfo trxInfo : outboxJob
+                .getAccountTransactions().getTransactions()) {
+
+            final AccountTrx trx = new AccountTrx();
+
+            trx.setAccount(dao.findById(trxInfo.getAccountId()));
+            trx.setExtDetails(trxInfo.getExtDetails());
+
+            final Integer weight = Integer.valueOf(trxInfo.getWeight());
+            trx.setTransactionWeight(weight);
+            trx.setTransactionWeightUnit(weight);
+
+            trx.setCurrencyCode(ConfigManager.getAppCurrencyCode());
+            trx.setAmount(this.calcWeightedAmount(costTotal, weightTotal,
+                    trxInfo.getWeight(), scale).negate());
+
+            list.add(trx);
+        }
+        return list;
     }
 
     /**
@@ -809,6 +879,7 @@ public final class AccountingServiceImpl extends AbstractService
         trx.setTrxType(trxType.toString());
 
         trx.setTransactionWeight(weight);
+        trx.setTransactionWeightUnit(weight);
 
         trx.setTransactedBy(ServiceContext.getActor());
         trx.setTransactionDate(ServiceContext.getTransactionDate());
@@ -1054,11 +1125,26 @@ public final class AccountingServiceImpl extends AbstractService
         costResult.setCostMedia(costMedia);
 
         /*
+         * Set cost.
+         */
+        if (costParms.getCustomCostSet() != null) {
+            costResult.setCostSet(costParms.getCustomCostSet());
+        }
+
+        /*
          * Copy cost.
          */
         if (costParms.getCustomCostCopy() != null) {
             costResult.setCostCopy(costParms.getCustomCostCopy().multiply(
                     BigDecimal.valueOf(costParms.getNumberOfCopies())));
+        }
+
+        /*
+         * Sheet cost.
+         */
+        if (costParms.getCustomCostSheet() != null) {
+            costResult.setCostSheet(costParms.getCustomCostSheet().multiply(
+                    BigDecimal.valueOf(costParms.getNumberOfSheets())));
         }
 
         /*
@@ -1089,13 +1175,28 @@ public final class AccountingServiceImpl extends AbstractService
             final ProxyPrintJobChunkInfo jobChunkInfo)
             throws ProxyPrintException {
 
+        final BigDecimal totalCostSet;
+
+        if (costParms.getCustomCostSet() == null) {
+            totalCostSet = BigDecimal.ZERO;
+        } else {
+            totalCostSet = costParms.getCustomCostSet();
+        }
+
         BigDecimal totalCostMedia = BigDecimal.ZERO;
+        BigDecimal totalCostSheet = BigDecimal.ZERO;
         BigDecimal totalCostCopy = BigDecimal.ZERO;
 
         /*
          * Traverse the chunks and calculate.
          */
         for (final ProxyPrintJobChunk chunk : jobChunkInfo.getChunks()) {
+
+            // Number of sheets
+            costParms.setNumberOfSheets(PdfPrintCollector
+                    .calcNumberOfPrintedSheets(chunk.getNumberOfPages(),
+                            costParms.getNumberOfCopies(), costParms.isDuplex(),
+                            costParms.getPagesPerSide(), false, false, false));
 
             costParms.setNumberOfPages(chunk.getNumberOfPages());
             costParms.setLogicalNumberOfPages(chunk.getLogicalJobPages());
@@ -1112,11 +1213,13 @@ public final class AccountingServiceImpl extends AbstractService
             chunk.setCostResult(chunkCostResult);
 
             totalCostCopy = totalCostCopy.add(chunkCostResult.getCostCopy());
+            totalCostSheet = totalCostSheet.add(chunkCostResult.getCostSheet());
             totalCostMedia = totalCostMedia.add(chunkCostResult.getCostMedia());
         }
 
         final ProxyPrintCostDto costResult = new ProxyPrintCostDto();
 
+        costResult.setCostSet(totalCostSet);
         costResult.setCostCopy(totalCostCopy);
         costResult.setCostMedia(totalCostMedia);
 
@@ -1456,7 +1559,6 @@ public final class AccountingServiceImpl extends AbstractService
 
     @Override
     public AbstractJsonRpcMethodResponse
-
             lazyUpdateSharedAccount(final SharedAccountDisplayInfoDto dto) {
 
         /*
@@ -1464,6 +1566,17 @@ public final class AccountingServiceImpl extends AbstractService
          */
         if (StringUtils.isBlank(dto.getName())) {
             return createErrorMsg("msg-shared-account-name-needed");
+        }
+
+        /*
+         * INVARIANT: Account name syntax MUST be valid.
+         */
+        final CharSequence reservedNameChars =
+                String.valueOf(PaperCutHelper.COMPOSED_ACCOUNT_NAME_SEPARATOR);
+
+        if (StringUtils.containsAny(reservedNameChars, dto.getName())) {
+            return createErrorMsg("msg-shared-account-name-syntax-error",
+                    reservedNameChars.toString());
         }
 
         final Account parent;
@@ -1490,36 +1603,18 @@ public final class AccountingServiceImpl extends AbstractService
             }
         }
 
-        /*
-         * INVARIANT: Top Account name MUST be case insensitive unique among top
-         * accounts.
-         *
-         * INVARIANT: Account name must be case insensitive unique among sibling
-         * sub accounts.
-         */
-        final Account accountDuplicate;
-
-        if (parent == null) {
-            accountDuplicate =
-                    accountDAO().findActiveSharedAccountByName(dto.getName());
-        } else {
-            accountDuplicate = accountDAO().findActiveSharedChildAccountByName(
-                    parent.getId(), dto.getName());
-        }
-
-        if (accountDuplicate != null
-                && !accountDuplicate.getId().equals(dto.getId())) {
-            return createErrorMsg("msg-shared-account-name-in-use");
-        }
-
         //
         final Account account;
         final boolean newAccount = dto.getId() == null;
 
+        final String prevAccountName;
+
         if (newAccount) {
+            prevAccountName = dto.getName();
             account = this.createSharedAccountTemplate(dto.getName(), parent);
         } else {
             account = accountDAO().findById(dto.getId());
+            prevAccountName = account.getName();
         }
 
         /*
@@ -1531,14 +1626,55 @@ public final class AccountingServiceImpl extends AbstractService
         }
 
         /*
-         * INVARIANT: Account MUST be of type SHARED.
+         * INVARIANT: Account MUST be of type SHARED or GROUP.
          */
-        checkAccountSharedOrGroup(account);
+        final AccountTypeEnum accountType = checkAccountSharedOrGroup(account);
 
         /*
          * Is this a top account?
          */
         final boolean topAccount = account.getParent() == null;
+
+        /*
+         * INVARIANT: Group Account MUST be a top account.
+         */
+        if (accountType == AccountTypeEnum.GROUP && !topAccount) {
+            throw new IllegalArgumentException(
+                    String.format("No parent account allowed for account [%s]",
+                            dto.getName()));
+        }
+        /*
+         * INVARIANT: Name of Group Account can NOT be changed (must be the same
+         * initial name).
+         */
+        if (accountType == AccountTypeEnum.GROUP
+                && !prevAccountName.equals(dto.getName())) {
+            throw new IllegalArgumentException(String.format(
+                    "Name of account [%s] can not be changed.", dto.getName()));
+        }
+
+        final Account accountDuplicate;
+
+        if (parent == null) {
+            /*
+             * INVARIANT: Top Account name MUST be case insensitive unique among
+             * top accounts.
+             */
+            accountDuplicate = accountDAO()
+                    .findActiveAccountByName(dto.getName(), accountType);
+        } else {
+            /*
+             * INVARIANT: Account name must be case insensitive unique among
+             * sibling sub accounts.
+             */
+            accountDuplicate = accountDAO().findActiveSharedChildAccountByName(
+                    parent.getId(), dto.getName());
+        }
+
+        if (accountDuplicate != null
+                && !accountDuplicate.getId().equals(dto.getId())) {
+            return createErrorMsg("msg-shared-account-name-in-use");
+        }
 
         /*
          * Logical delete.
@@ -1581,8 +1717,9 @@ public final class AccountingServiceImpl extends AbstractService
 
         final Locale dtoLocale;
 
-        if (dto.getLocale() != null) {
-            dtoLocale = Locale.forLanguageTag(dto.getLocale());
+        if (dto.getLocaleLanguage() != null && dto.getLocaleCountry() != null) {
+            dtoLocale =
+                    new Locale(dto.getLocaleLanguage(), dto.getLocaleCountry());
         } else {
             dtoLocale = ServiceContext.getLocale();
         }
@@ -1864,7 +2001,9 @@ public final class AccountingServiceImpl extends AbstractService
             throw new SpException(e);
         }
 
-        dto.setLocale(locale.getDisplayLanguage());
+        dto.setLocaleLanguage(locale.getLanguage());
+        dto.setLocaleCountry(locale.getCountry());
+
         dto.setCreditLimit(formattedCreditLimit);
         dto.setStatus(status);
     }
