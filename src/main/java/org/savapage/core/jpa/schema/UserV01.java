@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -42,11 +42,12 @@ import javax.persistence.TableGenerator;
  *
  */
 @Entity
-@Table(name = UserV01.TABLE_NAME,
-        indexes = { //
-                // Note that we can NOT use a unique index since Users are
-                // LOGICALLY deleted.
-                @Index(name = "ix_user_1", columnList = "user_name") })
+@Table(name = UserV01.TABLE_NAME, indexes = { //
+        // Note that we can NOT use a unique index since Users are
+        // LOGICALLY deleted.
+        @Index(name = "ix_user_1", columnList = "user_name"), //
+        @Index(name = "ix_user_2", columnList = "full_name")//
+})
 public class UserV01 implements SchemaEntityVersion {
 
     /**
@@ -57,9 +58,9 @@ public class UserV01 implements SchemaEntityVersion {
     @Id
     @Column(name = "user_id")
     @TableGenerator(name = "userPropGen", table = SequenceV01.TABLE_NAME,
-            pkColumnName = "SEQUENCE_NAME",
-            valueColumnName = "SEQUENCE_NEXT_VALUE", pkColumnValue = TABLE_NAME,
-            allocationSize = 1)
+            pkColumnName = SequenceV01.COL_SEQUENCE_NAME,
+            valueColumnName = SequenceV01.COL_SEQUENCE_NEXT_VALUE,
+            pkColumnValue = TABLE_NAME, allocationSize = 1)
     @GeneratedValue(strategy = GenerationType.TABLE, generator = "userPropGen")
     private Long id;
 

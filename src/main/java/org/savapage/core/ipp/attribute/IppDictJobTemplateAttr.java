@@ -437,39 +437,30 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
      * A set of IPP attribute keywords used in UI (Web App) that MUST have a
      * PPDE override, to be displayed.
      */
-    public static final String[] ATTR_SET_UI_PPDE_ONLY = new String[] {
-            /* */
-            ATTR_MEDIA_TYPE,
-            /* */
-            /* */
-            ATTR_OUTPUT_BIN };
+    public static final String[] ATTR_SET_UI_PPDE_ONLY = new String[] { //
+            ATTR_MEDIA_TYPE, //
+            ATTR_OUTPUT_BIN //
+    };
 
     /**
      * A set of IPP attribute keywords used in UI (Web App) for Page Options.
      * <p>
-     * Note that the option order in the array is the top-down order as they
-     * appear in the Web App.
+     * Note: the option order of this array is the top-down order as they will
+     * appear in a Printer Settings Dialog.
      * </p>
      */
-    public static final String[] ATTR_SET_UI_PAGE_SETUP = new String[] {
-            /* */
-            ATTR_MEDIA_SOURCE,
-            /* */
-            ATTR_OUTPUT_BIN,
-            /* */
-            ATTR_MEDIA,
-            /* */
-            ATTR_MEDIA_TYPE,
-            /* */
-            ATTR_SIDES,
-            /* */
-            ATTR_PRINT_COLOR_MODE,
-            /* */
-            ATTR_PRINTER_RESOLUTION,
-            /* */
-            ORG_SAVAPAGE_ATTR_INT_PAGE_ROTATE180,
-            /* */
-            ATTR_NUMBER_UP };
+    public static final String[] ATTR_SET_UI_PAGE_SETUP = new String[] { //
+            ATTR_MEDIA_SOURCE, //
+            ATTR_MEDIA, //
+            ATTR_MEDIA_TYPE, //
+            ATTR_SIDES, //
+            ATTR_PRINT_COLOR_MODE, //
+            ATTR_PRINTER_RESOLUTION, //
+            ORG_SAVAPAGE_ATTR_INT_PAGE_ROTATE180, //
+            ATTR_NUMBER_UP, //
+            ATTR_OUTPUT_BIN, //
+            ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET //
+    };
 
     /**
      * A set of IPP attribute keywords used in UI (Web App) for Job Options.
@@ -492,28 +483,24 @@ public final class IppDictJobTemplateAttr extends AbstractIppDict {
      * appear in the Web App.
      * </p>
      */
-    public static final String[] ATTR_SET_UI_ADVANCED = new String[] {
-            /* */
-            ORG_SAVAPAGE_ATTR_FINISHINGS_STAPLE,
-            /* */
-            ORG_SAVAPAGE_ATTR_FINISHINGS_PUNCH,
-            /* */
-            ORG_SAVAPAGE_ATTR_FINISHINGS_FOLD,
-            /* */
-            ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET };
+    public static final String[] ATTR_SET_UI_ADVANCED = new String[] { //
+            ORG_SAVAPAGE_ATTR_FINISHINGS_STAPLE, //
+            ORG_SAVAPAGE_ATTR_FINISHINGS_PUNCH, //
+            ORG_SAVAPAGE_ATTR_FINISHINGS_FOLD, //
+            ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET //
+    };
 
     /**
      * A set of IPP attribute keywords NOT used in UI (Web App) but for
      * reference only.
      */
-    public static final String[] ATTR_SET_REFERENCE_ONLY = new String[] {
-            /* */
-            ATTR_SHEET_COLLATE,
-            /* */
-            ATTR_PRINT_SCALING,
-            /* */
-            ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET
-            //
+    public static final String[] ATTR_SET_REFERENCE_ONLY = new String[] { //
+            ATTR_SHEET_COLLATE, //
+            ATTR_PRINT_SCALING, //
+            /*
+             * Note: "copies" is part of the UI, but not as IPP attribute.
+             */
+            ATTR_COPIES //
     };
 
     /*

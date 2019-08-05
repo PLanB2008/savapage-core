@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,6 +29,7 @@ import java.util.Map;
 import org.savapage.core.UnavailableException;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.dao.enums.IppQueueAttrEnum;
+import org.savapage.core.dao.enums.IppRoutingEnum;
 import org.savapage.core.dao.enums.ReservedIppQueueEnum;
 import org.savapage.core.jpa.IppQueue;
 import org.savapage.core.jpa.IppQueueAttr;
@@ -191,6 +192,15 @@ public interface QueueService {
     boolean isGcpPrintQueue(IppQueue queue);
 
     /**
+     * Does {@link IppQueue} support IPP Routing.
+     *
+     * @param queue
+     *            The queue.
+     * @return {@code true} when queue supports IPP Routing.
+     */
+    boolean isIppRoutingQueue(IppQueue queue);
+
+    /**
      * Does {@link IppQueue} represent the Mail Print queue.
      *
      * @param queue
@@ -222,13 +232,57 @@ public interface QueueService {
      * attribute.
      *
      * @param queue
-     *            The {@link IppQueue} .
-     * @param name
-     *            The name of the attribute.
+     *            The {@link IppQueue}.
+     * @param attr
+     *            The {@link IppQueueAttrEnum}.
      *
      * @return {@code null} when not found.
      */
-    String getAttributeValue(IppQueue queue, String name);
+    String getAttrValue(IppQueue queue, IppQueueAttrEnum attr);
+
+    /**
+     * Traverses the attributes of a {@link IppQueue} to get the value of
+     * {@link IppQueueAttrEnum#IPP_ROUTING}.
+     *
+     * @param queue
+     *            The {@link IppQueue}.
+     * @return {@code null} when not found.
+     */
+    IppRoutingEnum getIppRouting(IppQueue queue);
+
+    /**
+     * Traverses the attributes of a {@link IppQueue} to get the {@link Map} of
+     * {@link IppQueueAttrEnum#IPP_ROUTING_OPTIONS}.
+     *
+     * @param queue
+     *            The {@link IppQueue}.
+     * @return {@code null} when not found.
+     */
+    Map<String, String> getIppRoutingOptions(IppQueue queue);
+
+    /**
+     * Creates or updates the attribute value to the database.
+     *
+     * @param queue
+     *            The {@link IppQueue}.
+     * @param attrEnum
+     *            The name of the {@link IppQueueAttr}.
+     * @param attrValue
+     *            The value.
+     */
+    void setQueueAttrValue(IppQueue queue, IppQueueAttrEnum attrEnum,
+            String attrValue);
+
+    /**
+     * Deletes the attribute from the database.
+     *
+     * @param queue
+     *            The {@link IppQueue}.
+     * @param attrEnum
+     *            The name of the {@link IppQueueAttr}.
+     * @return {@code false} when attribute was not found.
+     */
+    boolean deleteQueueAttrValue(IppQueue queue, IppQueueAttrEnum attrEnum);
 
     /**
      * Sets queue instance as logically deleted (database is NOT updated).

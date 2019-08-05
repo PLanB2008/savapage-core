@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,18 +14,20 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.ipp.operation;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 
 import org.savapage.core.dao.enums.DocLogProtocolEnum;
+import org.savapage.core.ipp.IppProcessingException;
 import org.savapage.core.ipp.attribute.IppAttrValue;
 import org.savapage.core.jpa.User;
 import org.savapage.core.print.server.DocContentPrintProcessor;
@@ -58,10 +60,10 @@ public final class IppPrintJobReq extends AbstractIppRequest {
      *
      * @param operation
      * @param istr
-     * @throws Exception
+     * @throws IOException
      */
     public void processAttributes(final IppPrintJobOperation operation,
-            final InputStream istr) throws Exception {
+            final InputStream istr) throws IOException {
 
         final String authWebAppUser;
 
@@ -78,6 +80,10 @@ public final class IppPrintJobReq extends AbstractIppRequest {
         this.printInProcessor =
                 new DocContentPrintProcessor(operation.getQueue(),
                         operation.getOriginatorIp(), null, authWebAppUser);
+
+        this.printInProcessor
+                .setIppRoutinglistener(operation.getIppRoutingListener());
+
         /*
          * Then, read the IPP attributes.
          */
@@ -111,7 +117,7 @@ public final class IppPrintJobReq extends AbstractIppRequest {
     }
 
     @Override
-    void process(final InputStream istr) throws Exception {
+    void process(final InputStream istr) throws IOException {
         printInProcessor.process(istr, DocLogProtocolEnum.IPP, null, null,
                 null);
     }
@@ -205,11 +211,20 @@ public final class IppPrintJobReq extends AbstractIppRequest {
         return printInProcessor.getDeferredException() != null;
     }
 
-    public Exception getDeferredException() {
-        return printInProcessor.getDeferredException();
+    public IppProcessingException getDeferredException() {
+        final Exception ex = printInProcessor.getDeferredException();
+        if (ex == null) {
+            return null;
+        }
+        if (ex instanceof IppProcessingException) {
+            return (IppProcessingException) ex;
+        }
+        return new IppProcessingException(
+                IppProcessingException.StateEnum.INTERNAL_ERROR,
+                ex.getMessage(), ex);
     }
 
-    public void setDeferredException(Exception e) {
+    public void setDeferredException(IppProcessingException e) {
         printInProcessor.setDeferredException(e);
     }
 
@@ -222,14 +237,19 @@ public final class IppPrintJobReq extends AbstractIppRequest {
      * method.
      *
      * @param isAuthorized
-     * @throws Exception
+     * @throws IppProcessingException
      */
-    public void evaluateErrorState(boolean isAuthorized) throws Exception {
+    public void evaluateErrorState(final boolean isAuthorized)
+            throws IppProcessingException {
 
         printInProcessor.evaluateErrorState(isAuthorized);
 
         if (hasDeferredException()) {
             throw getDeferredException();
+        } else if (!isAuthorized) {
+            throw new IppProcessingException(
+                    IppProcessingException.StateEnum.UNAUTHORIZED,
+                    "not authorized");
         }
     }
 

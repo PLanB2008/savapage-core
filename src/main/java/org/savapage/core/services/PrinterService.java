@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,6 +24,7 @@ package org.savapage.core.services;
 import java.io.IOException;
 import java.util.Date;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.savapage.core.dao.enums.AccessControlScopeEnum;
@@ -31,6 +32,7 @@ import org.savapage.core.dao.enums.DeviceTypeEnum;
 import org.savapage.core.dao.enums.PrinterAttrEnum;
 import org.savapage.core.dao.helpers.JsonUserGroupAccess;
 import org.savapage.core.dao.helpers.ProxyPrinterSnmpInfoDto;
+import org.savapage.core.doc.store.DocStoreTypeEnum;
 import org.savapage.core.dto.PrinterSnmpDto;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.jpa.Device;
@@ -62,20 +64,69 @@ public interface PrinterService {
     /**
      * Reads the database to check if printer is internal use only.
      *
-     * @param printer
-     *            The {@link Printer}.
+     * @param id
+     *            The database primary key.
      * @return {@code true} when internal printer.
      */
-    boolean isInternalPrinter(Printer printer);
+    boolean isInternalPrinter(Long id);
+
+    /**
+     * Reads the database to check if if document store is disabled.
+     *
+     * @param store
+     *            The document store.
+     * @param id
+     *            The database primary key.
+     * @return {@code true} when document store is disabled.
+     */
+    boolean isDocStoreDisabled(DocStoreTypeEnum store, Long id);
+
+    /**
+     * Checks if document store is disabled.
+     * <p>
+     * Traverses the internal {@link PrinterAttr} list of a {@link Printer} to
+     * find the {@link PrinterAttrEnum} value.
+     * </p>
+     *
+     * @param store
+     *            The document store.
+     * @param printer
+     *            The {@link Printer}.
+     * @return {@code true} when document store is disabled.
+     */
+    boolean isDocStoreDisabled(DocStoreTypeEnum store, Printer printer);
+
+    /**
+     * Reads the database to check if Job Tickets Labels (Domain, Use, Tags) is
+     * enabled.
+     *
+     * @param id
+     *            The database primary key.
+     * @return {@code true} when Job Tickets Tags is enabled.
+     */
+    boolean isJobTicketLabelsEnabled(Long id);
+
+    /**
+     * Checks if if Job Tickets Labels (Domain, Use, Tags) is enabled.
+     * <p>
+     * Traverses the internal {@link PrinterAttr} list of a {@link Printer} to
+     * find the {@link PrinterAttrEnum} value.
+     * </p>
+     *
+     * @param printer
+     *            The {@link Printer}.
+     * @return {@code true} when Job Tickets Tags is enabled.
+     */
+    boolean isJobTicketLabelsEnabled(Printer printer);
 
     /**
      * Reads the database to check if printer is a Job Ticket printer.
      *
-     * @param printer
-     *            The {@link Printer}.
+     * @param id
+     *            The database primary key.
      * @return {@code true} when Job Ticket printer.
      */
-    boolean isJobTicketPrinter(Printer printer);
+    boolean isJobTicketPrinter(Long id);
 
     /**
      * Checks if the {@link Printer} can be used for proxy printing, i.e. it is
@@ -209,16 +260,27 @@ public interface PrinterService {
 
     /**
      * Traverses the internal {@link PrinterAttr} list of a {@link Printer} to
-     * get the value of
-     * {@link IppDictJobTemplateAttr#ATTR_PRINT_COLOR_MODE_DFLT}. This value,
-     * stored as printer attributes, overrides the default as retrieved from
-     * CUPS/IPP.
+     * get value of {@link IppDictJobTemplateAttr#ATTR_PRINT_COLOR_MODE_DFLT}.
+     * This value, stored as printer attributes, overrides the default as
+     * retrieved from CUPS/IPP.
      *
      * @param printer
      *            The {@link Printer}.
      * @return {@code null} when no default override is found.
      */
-    String getPrintColorModeDefault(final Printer printer);
+    String getPrintColorModeDefault(Printer printer);
+
+    /**
+     * Reads the database to get value of
+     * {@link IppDictJobTemplateAttr#ATTR_PRINT_COLOR_MODE_DFLT}.
+     *
+     * @see {@link #getPrintColorModeDefault(Printer).
+     *
+     * @param id
+     *            The database primary key.
+     * @return {@code null} when no default override is found.
+     */
+    String getPrintColorModeDefault(Long id);
 
     /**
      * Checks if monochrome conversion is performed client-side (locally).
@@ -234,6 +296,27 @@ public interface PrinterService {
     boolean isClientSideMonochrome(Printer printer);
 
     /**
+     * Gets printer attribute value (using the attribute list of the printer).
+     *
+     * @param printer
+     *            The {@link Printer}.
+     * @param attr
+     *            The attribute type.
+     * @return {@code null} if not present.
+     */
+    String getPrinterAttrValue(Printer printer, PrinterAttrEnum attr);
+
+    /**
+     * Checks if 2-up duplex booklet page ordering is performed client-side
+     * (locally).
+     *
+     * @param printer
+     *            The {@link Printer}.
+     * @return {@code true} if booklet page ordering is performed client-side.
+     */
+    boolean isClientSideBooklet(Printer printer);
+
+    /**
      * Sets printer instance as logically deleted (database is NOT updated).
      *
      * @param printer
@@ -247,7 +330,7 @@ public interface PrinterService {
      * @param printer
      *            The {@link Printer}.
      */
-    void undoLogicalDeleted(final Printer printer);
+    void undoLogicalDeleted(Printer printer);
 
     /**
      * Adds totals of a job to a {@link Printer} (database is NOT updated).
@@ -375,7 +458,7 @@ public interface PrinterService {
      *            The {@link Printer}.
      * @return {@code true} if printer supports hold/release printing.
      */
-    boolean isHoldReleasePrinter(final Printer printer);
+    boolean isHoldReleasePrinter(Printer printer);
 
     /**
      * Finds the first "media-source" of a printer that matches a "media".
@@ -389,11 +472,40 @@ public interface PrinterService {
      * @param requestedMedia
      *            The requested "media", as value of
      *            {@link IppDictJobTemplateAttr#ATTR_MEDIA}.
+     * @param preferredMediaSources
+     *            A set of preferred media sources (can be {@code null}).
      * @return The media source, or {@code null} when not found.
      */
     JsonProxyPrinterOptChoice findMediaSourceForMedia(
             PrinterAttrLookup printerAttrLookup,
-            JsonProxyPrinterOpt mediaSource, String requestedMedia);
+            JsonProxyPrinterOpt mediaSource, String requestedMedia,
+            Set<String> preferredMediaSources);
+
+    /**
+     * Gets the map with key (media-source choice) and value (media).
+     *
+     * @param printerAttrLookup
+     *            The {@link PrinterAttrLookup} containing the "media-source" to
+     *            "media" mapping.
+     * @param mediaSource
+     *            The "media-source" to search. See
+     *            {@link IppDictJobTemplateAttr#ATTR_MEDIA_SOURCE}
+     * @return The map (can be empty).
+     */
+    Map<String, String> getMediaSourceMediaMap(
+            PrinterAttrLookup printerAttrLookup,
+            JsonProxyPrinterOpt mediaSource);
+
+    /**
+     * Traverses the internal {@link PrinterAttr} list of a {@link Printer} to
+     * get the set of media-sources from
+     * {@link PrinterAttrEnum#JOB_SHEETS_MEDIA_SOURCES}.
+     *
+     * @param printer
+     *            The printer.
+     * @return {@code null} when printer attribute is not present.
+     */
+    Set<String> getJobSheetsMediaSources(Printer printer);
 
     /**
      * Sets SNMP printer info.

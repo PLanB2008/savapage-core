@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -58,8 +58,8 @@ public class AccountTrx extends org.savapage.core.jpa.Entity {
     @Column(name = "account_trx_id")
     @TableGenerator(name = "accountTrxPropGen", table = Sequence.TABLE_NAME,
             //
-            pkColumnName = "SEQUENCE_NAME",
-            valueColumnName = "SEQUENCE_NEXT_VALUE",
+            pkColumnName = Sequence.COL_SEQUENCE_NAME,
+            valueColumnName = Sequence.COL_SEQUENCE_NEXT_VALUE,
             //
             pkColumnValue = TABLE_NAME, allocationSize = 1)
     @GeneratedValue(strategy = GenerationType.TABLE,
@@ -142,8 +142,9 @@ public class AccountTrx extends org.savapage.core.jpa.Entity {
     private Boolean isCredit;
 
     /**
-     * Optional units responsible for the mathematical weight. For instance, the
-     * number of users, so trx_weight / trx_weight_unit = copies per user.
+     * Number of units. The meaning of "unit" is dependent on the transaction
+     * context. In a {@link PrintOut} context, "unit" is the divider used on
+     * {@link #transactionWeight}, for calculating cost and copies.
      */
     @Column(name = "trx_weight_unit", nullable = false)
     private Integer transactionWeightUnit;
@@ -496,11 +497,24 @@ public class AccountTrx extends org.savapage.core.jpa.Entity {
         this.costChange = costChange;
     }
 
+    /**
+     * @return Number of units. The meaning of "unit" is dependent on the
+     *         transaction context. In a {@link PrintOut} context, "unit" is the
+     *         divider used on {@link #transactionWeight}, for calculating cost
+     *         and copies.
+     */
     public Integer getTransactionWeightUnit() {
         return transactionWeightUnit;
     }
 
-    public void setTransactionWeightUnit(Integer transactionWeightUnit) {
+    /**
+     * @param transactionWeightUnit
+     *            Number of units. The meaning of "unit" is dependent on the
+     *            transaction context. In a {@link PrintOut} context, "unit" is
+     *            the divider used on {@link #transactionWeight}, for
+     *            calculating cost and copies.
+     */
+    public void setTransactionWeightUnit(final Integer transactionWeightUnit) {
         this.transactionWeightUnit = transactionWeightUnit;
     }
 

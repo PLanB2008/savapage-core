@@ -58,14 +58,19 @@ public class DaoEnumTest {
             for (final ACLPermissionEnum perm : ACLPermissionEnum.values()) {
                 if (permIn == perm) {
                     assertTrue(permIn.isGranted(perm));
-                } else {
-                    assertFalse(permIn.isGranted(perm));
                 }
             }
         }
 
         assertTrue(
                 ACLPermissionEnum.EDITOR.isGranted(ACLPermissionEnum.READER));
+
+        //
+        assertFalse(
+                ACLPermissionEnum.READER.isGranted(ACLPermissionEnum.SELECT));
+
+        assertFalse(
+                ACLPermissionEnum.READER.isGranted(ACLPermissionEnum.DOWNLOAD));
 
         //
         assertFalse(ACLPermissionEnum.EDITOR == ACLPermissionEnum

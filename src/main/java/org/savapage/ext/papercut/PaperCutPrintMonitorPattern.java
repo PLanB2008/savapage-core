@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -28,14 +28,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.commons.lang3.EnumUtils;
 import org.savapage.core.concurrent.ReadWriteLockEnum;
+import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.AccountTrxDao;
 import org.savapage.core.dao.AccountTrxDao.ListFilter;
 import org.savapage.core.dao.DaoContext;
 import org.savapage.core.dao.DocInOutDao;
 import org.savapage.core.dao.DocLogDao;
 import org.savapage.core.dao.PrintOutDao;
+import org.savapage.core.dao.enums.DaoEnumHelper;
 import org.savapage.core.dao.enums.DocLogProtocolEnum;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
@@ -46,10 +48,9 @@ import org.savapage.core.jpa.DocIn;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.DocOut;
 import org.savapage.core.jpa.PrintOut;
-import org.savapage.core.json.JsonAbstractBase;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
-import org.savapage.core.services.helpers.JobTicketSupplierData;
+import org.savapage.core.services.helpers.PrintSupplierData;
 import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.util.DateUtil;
 import org.savapage.ext.ExtSupplierConnectException;
@@ -94,12 +95,6 @@ public abstract class PaperCutPrintMonitorPattern
      */
     protected static final ProxyPrintService PROXY_PRINT_SERVICE =
             ServiceContext.getServiceFactory().getProxyPrintService();
-
-    /**
-     * Days after which a SavaPage print to PaperCut is set to error when the
-     * PaperCut print log is not found.
-     */
-    private static final int MAX_DAYS_WAIT_FOR_PAPERCUT_PRINT_LOG = 5;
 
     /**
      * .
@@ -311,7 +306,8 @@ public abstract class PaperCutPrintMonitorPattern
     /**
      * Processes pending SavaPage print jobs that cannot be found in PaperCut:
      * status is set to {@link ExternalSupplierStatusEnum#ERROR} when SavaPage
-     * print job is more then {@link #MAX_DAYS_WAIT_FOR_PAPERCUT_PRINT_LOG} old.
+     * print job is more then
+     * {@link PaperCutService#getPrintLogMaxWaitMinutes()} old.
      *
      * @param papercutDocNamesToFind
      *            The PaperCut documents to find.
@@ -321,6 +317,10 @@ public abstract class PaperCutPrintMonitorPattern
     private void processPrintJobsNotFound(
             final Map<String, DocLog> papercutDocNamesToFind,
             final Set<String> papercutDocNamesFound) {
+
+        final long maxWaitMsec = ConfigManager.instance()
+                .getConfigInt(Key.PROXY_PRINT_PAPERCUT_PRINTLOG_MAX_MINS)
+                * DateUtil.DURATION_MSEC_MINUTE;
 
         for (final String docName : papercutDocNamesToFind.keySet()) {
 
@@ -333,8 +333,7 @@ public abstract class PaperCutPrintMonitorPattern
             final long docAge = ServiceContext.getTransactionDate().getTime()
                     - docLog.getCreatedDate().getTime();
 
-            if (docAge < MAX_DAYS_WAIT_FOR_PAPERCUT_PRINT_LOG
-                    * DateUtil.DURATION_MSEC_DAY) {
+            if (docAge < maxWaitMsec) {
                 continue;
             }
 
@@ -480,9 +479,7 @@ public abstract class PaperCutPrintMonitorPattern
 
         //
         final PrintOut printOutLog = docLogOut.getDocOut().getPrintOut();
-
-        final PrintModeEnum printMode = EnumUtils.getEnum(PrintModeEnum.class,
-                printOutLog.getPrintMode());
+        final PrintModeEnum printMode = DaoEnumHelper.getPrintMode(printOutLog);
 
         /*
          * Set External Status to COMPLETED.
@@ -552,41 +549,113 @@ public abstract class PaperCutPrintMonitorPattern
             return;
         }
 
-        /*
-         * Get total number of copies from the external data and use as weight
-         * total. IMPORTANT: the accumulated weight of the individual Account
-         * transactions need NOT be the same as the number of copies (since
-         * parts of the printing costs may be charged to multiple accounts).
-         */
-        final int weightTotal =
-                this.getAccountTrxWeightTotal(docLogOut, docLogIn);
+        final int printedCopies =
+                docLogOut.getDocOut().getPrintOut().getNumberOfCopies();
 
-        /*
-         * Which printing cost to use?
-         */
-        final BigDecimal weightTotalCost;
+        final PrintSupplierData printSupplierData;
 
-        if (printMode == PrintModeEnum.TICKET
-                && docLogOut.getExternalData() != null) {
-
-            final JobTicketSupplierData supplierData = JsonAbstractBase.create(
-                    JobTicketSupplierData.class, docLogOut.getExternalData());
-
-            weightTotalCost = supplierData.getCostTotal();
-
+        if (docLogOut.getExternalData() == null) {
+            printSupplierData = null;
         } else {
-            weightTotalCost = BigDecimal.valueOf(papercutLog.getUsageCost());
+            printSupplierData = PrintSupplierData
+                    .createFromData(docLogOut.getExternalData());
         }
 
         /*
-         * Create PaperCut transactions.
+         * Determine printing cost to use, and whether to create PaperCut
+         * transactions.
          */
+        final int weightTotal;
+        final BigDecimal weightTotalCost;
+        final boolean createPaperCutTrx;
+        final boolean costPaperCutLeading;
+
+        if (printMode == PrintModeEnum.TICKET) {
+
+            if (printSupplierData == null) {
+                /*
+                 * TODO: use case?
+                 */
+                createPaperCutTrx = true;
+                costPaperCutLeading = true;
+
+                weightTotal = printedCopies;
+                weightTotalCost =
+                        BigDecimal.valueOf(papercutLog.getUsageCost());
+
+                LOGGER.warn("{} Print: no external data. Using PaperCut cost.",
+                        printMode);
+            } else {
+                /*
+                 * Ticket Print.
+                 */
+                createPaperCutTrx = true;
+                costPaperCutLeading = false;
+
+                weightTotalCost = printSupplierData.getCostTotal();
+
+                if (printSupplierData.getWeightTotal() == null) {
+                    /*
+                     * TODO: use case?
+                     */
+                    weightTotal = printedCopies;
+                    LOGGER.warn(
+                            "{} Print: no weight total in external data. "
+                                    + "Using printed copies as weight total.",
+                            printMode);
+                } else {
+                    weightTotal = printSupplierData.getWeightTotal().intValue();
+                }
+            }
+        } else {
+
+            final PaperCutIntegrationEnum papercutInt =
+                    PAPERCUT_SERVICE.getPrintIntegration();
+
+            createPaperCutTrx =
+                    papercutInt == PaperCutIntegrationEnum.DELEGATED_PRINT;
+
+            final BigDecimal costPaperCut =
+                    BigDecimal.valueOf(papercutLog.getUsageCost());
+
+            if (printSupplierData == null) {
+
+                costPaperCutLeading = true;
+                weightTotal = printedCopies;
+                weightTotalCost = costPaperCut;
+
+            } else {
+
+                if (printSupplierData.getWeightTotal() == null) {
+                    /*
+                     * Just in case...
+                     */
+                    weightTotal = printedCopies;
+                    LOGGER.warn(
+                            "{} Print: no weight total in external data. "
+                                    + "Using printed copies as weight total.",
+                            printMode);
+                } else {
+                    weightTotal = printSupplierData.getWeightTotal().intValue();
+                }
+
+                if (printSupplierData.hasCost()) {
+                    costPaperCutLeading = false;
+                    weightTotalCost = printSupplierData.getCostTotal();
+                } else {
+                    costPaperCutLeading = true;
+                    weightTotalCost = costPaperCut;
+                }
+            }
+        }
+
         final PaperCutAccountAdjustPrint accountAdjustPattern =
                 new PaperCutAccountAdjustPrint(papercutServerProxy, this,
                         this.getLogger());
 
         accountAdjustPattern.process(docLogTrx, docLogOut,
-                this.isDocInAccountTrx(), weightTotalCost, weightTotal);
+                this.isDocInAccountTrx(), weightTotalCost, weightTotal,
+                printedCopies, createPaperCutTrx);
 
         /*
          * DocLog updates.
@@ -608,6 +677,25 @@ public abstract class PaperCutPrintMonitorPattern
         docLogOut.setCost(weightTotalCost);
         docLogOut.setCostOriginal(weightTotalCost);
 
+        /*
+         * Update external data.
+         */
+        final PrintSupplierData printSupplierDataUpd;
+
+        if (printSupplierData == null) {
+            printSupplierDataUpd = new PrintSupplierData();
+        } else {
+            printSupplierDataUpd = printSupplierData;
+        }
+
+        printSupplierDataUpd
+                .setClientCost(Boolean.valueOf(costPaperCutLeading));
+        printSupplierDataUpd
+                .setClientCostTrx(Boolean.valueOf(createPaperCutTrx));
+
+        docLogOut.setExternalData(printSupplierDataUpd.dataAsString());
+
         DOC_LOG_DAO.update(docLogOut);
     }
+
 }

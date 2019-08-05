@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,11 +22,17 @@
 package org.savapage.core.dao.enums;
 
 /**
+ * Supplier of print data.
  *
  * @author Rijk Ravestein
  *
  */
 public enum ExternalSupplierEnum {
+
+    /**
+     * Microsoft Azure Active Directory (Azure AD)
+     */
+    AZURE("Azure", "microsoft.png"),
 
     /**
      * G.
@@ -55,14 +61,14 @@ public enum ExternalSupplierEnum {
 
     /**
      *
-     * @param uiText
+     * @param txt
      *            Text to display in user interface.
-     * @param imageFileName
+     * @param img
      *            Image file name.
      */
-    private ExternalSupplierEnum(final String uiText, final String imageFileName) {
-        this.uiText = uiText;
-        this.imageFileName = imageFileName;
+    ExternalSupplierEnum(final String txt, final String img) {
+        this.uiText = txt;
+        this.imageFileName = img;
     }
 
     /**

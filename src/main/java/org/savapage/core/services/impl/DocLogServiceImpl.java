@@ -49,6 +49,7 @@ import org.savapage.core.crypto.CryptoUser;
 import org.savapage.core.dao.DaoContext;
 import org.savapage.core.dao.DocLogDao;
 import org.savapage.core.dao.enums.AccountTrxTypeEnum;
+import org.savapage.core.dao.enums.DaoEnumHelper;
 import org.savapage.core.dao.enums.DocLogProtocolEnum;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
@@ -333,8 +334,7 @@ public final class DocLogServiceImpl extends AbstractService
                     if (accountTrxInfoSet == null) {
 
                         final ExternalSupplierEnum externalSupplier =
-                                EnumUtils.getEnum(ExternalSupplierEnum.class,
-                                        docLog.getExternalSupplier());
+                                DaoEnumHelper.getExtSupplier(docLog);
 
                         if (externalSupplier == null
                                 || externalSupplier == ExternalSupplierEnum.SAVAPAGE) {
@@ -844,7 +844,10 @@ public final class DocLogServiceImpl extends AbstractService
         if (supplierInfo != null) {
             docLog.setExternalId(supplierInfo.getId());
             docLog.setExternalStatus(supplierInfo.getStatus());
-            docLog.setExternalSupplier(supplierInfo.getSupplier().toString());
+            if (supplierInfo.getSupplier() != null) {
+                docLog.setExternalSupplier(
+                        supplierInfo.getSupplier().toString());
+            }
             if (supplierInfo.getData() != null) {
                 docLog.setExternalData(supplierInfo.getData().dataAsString());
             }
@@ -1146,7 +1149,12 @@ public final class DocLogServiceImpl extends AbstractService
 
         docLogCollect.setUser(user);
         docLogCollect.setUuid(java.util.UUID.randomUUID().toString());
-        docLogCollect.setMimetype(DocContent.MIMETYPE_PDF);
+
+        if (createInfo.isPgpSigned()) {
+            docLogCollect.setMimetype(DocContent.MIMETYPE_PDF_PGP);
+        } else {
+            docLogCollect.setMimetype(DocContent.MIMETYPE_PDF);
+        }
         docLogCollect.setNumberOfBytes(
                 Files.size(Paths.get(pdfFile.getAbsolutePath())));
 

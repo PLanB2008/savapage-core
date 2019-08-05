@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,25 +34,61 @@ import org.savapage.core.util.LocaleHelper;
 public enum NounEnum {
 
     /** */
+    ARCHIVE,
+    /** Financial position. */
+    BALANCE,
+    /** NFC card number. */
+    CARD_NUMBER,
+    /** */
     COMMENT,
     /** */
     COST,
     /** */
+    CREDIT_LIMIT,
+    /** */
     DATABASE,
+    /** */
+    DATE(true),
     /** */
     DELEGATE(true),
     /** */
     DELEGATOR(true),
     /** */
+    DISK_SPACE,
+    /** */
     DOCUMENT(true),
+    /** */
+    DOWNLOAD(true),
+    /** */
+    EMAIL,
     /** */
     GROUP(true),
     /** */
+    ID_NUMBER,
+    /** */
+    INPUT,
+    /** */
     INVOICING,
+    /** */
+    JOURNAL,
+    /** */
+    LOCATION,
     /** */
     MODE(true),
     /** */
+    NAME(true),
+    /** */
     QUEUE(true),
+    /** */
+    OUTPUT,
+    /** */
+    PASSWORD(true),
+    /** */
+    PERIOD(true),
+    /** */
+    PREFERRED_LIST,
+    /** */
+    PRINTER(true),
     /** */
     REFUND(true),
     /** */
@@ -60,15 +96,23 @@ public enum NounEnum {
     /** */
     REPORT,
     /** */
+    SORTING,
+    /** */
     STATISTICS,
     /** */
     STATUS,
+    /** */
+    TERMINAL(true),
     /** */
     TIME,
     /** */
     TITLE,
     /** */
+    TOTAL(true),
+    /** */
     TRANSACTION(true),
+    /** */
+    TYPE(true),
     /** */
     USER(true);
 

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -43,7 +43,6 @@ import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.time.DateUtils;
 import org.savapage.core.ShutdownException;
 import org.savapage.core.SpException;
-import org.savapage.core.UnavailableException;
 import org.savapage.core.cometd.AdminPublisher;
 import org.savapage.core.cometd.PubLevelEnum;
 import org.savapage.core.cometd.PubTopicEnum;
@@ -62,12 +61,10 @@ import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.dao.enums.PrintModeEnum;
 import org.savapage.core.doc.DocContent;
 import org.savapage.core.doc.DocContentToPdfException;
-import org.savapage.core.doc.DocContentTypeEnum;
-import org.savapage.core.doc.IFileConverter;
+import org.savapage.core.doc.IPdfConverter;
 import org.savapage.core.doc.PdfToGrayscale;
-import org.savapage.core.dto.IppMediaSourceCostDto;
+import org.savapage.core.doc.store.DocStoreException;
 import org.savapage.core.ipp.IppMediaSizeEnum;
-import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.ipp.client.IppConnectException;
 import org.savapage.core.job.AbstractJob;
 import org.savapage.core.jpa.DocLog;
@@ -76,14 +73,13 @@ import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
 import org.savapage.core.msg.UserMsgIndicator;
 import org.savapage.core.pdf.PdfCreateInfo;
+import org.savapage.core.pdf.PdfPasswordException;
 import org.savapage.core.pdf.PdfSecurityException;
+import org.savapage.core.pdf.PdfUnsupportedException;
 import org.savapage.core.pdf.PdfValidityException;
 import org.savapage.core.pdf.SpPdfPageProps;
 import org.savapage.core.print.proxy.ProxyPrintDocReq;
 import org.savapage.core.print.proxy.ProxyPrintException;
-import org.savapage.core.print.proxy.ProxyPrintJobChunk;
-import org.savapage.core.print.proxy.ProxyPrintJobChunkInfo;
-import org.savapage.core.print.proxy.ProxyPrintJobChunkRange;
 import org.savapage.core.print.server.DocContentPrintException;
 import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.DocLogService;
@@ -97,7 +93,6 @@ import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.core.services.helpers.InboxSelectScopeEnum;
-import org.savapage.core.services.helpers.PrinterAttrLookup;
 import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.users.IUserSource;
@@ -209,6 +204,9 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
 
     private static final String MSG_COMMENT_PRINT_CANCELLED_PDF_ENCRYPTED =
             MSG_COMMENT_PRINT_CANCELLED_PFX + "PDF document is versleuteld.";
+
+    private static final String MSG_COMMENT_PRINT_CANCELLED_PDF_PASSWORD =
+            MSG_COMMENT_PRINT_CANCELLED_PFX + "PDF document heeft wachtwoord.";
 
     private static final String MSG_COMMENT_PRINT_ERROR_NO_COPIES =
             "Geen kopieen gespecificeerd.";
@@ -1439,16 +1437,20 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
      *            The SavaPage assigned {@link UUID} for the downloaded
      *            document.
      * @return The {@link DocContentPrintInInfo}.
-     * @throws PdfSecurityException
-     *             When the PDF file has security restrictions.
      * @throws PdfValidityException
-     *             When the document isn't a valid PDF document.
+     *             When invalid PDF document.
+     * @throws PdfSecurityException
+     *             When encrypted PDF document.
+     * @throws PdfPasswordException
+     *             When password protected PDF document.
+     * @throws PdfUnsupportedException
+     *             When unsupported PDF document.
      */
     private static DocContentPrintInInfo createPrintInInfo(
             final SmartschoolConnection connection, final Document document,
             final File downloadedFile, final int nTotCopies, final UUID uuid)
-            throws PdfSecurityException, PdfValidityException {
-
+            throws PdfValidityException, PdfSecurityException,
+            PdfPasswordException, PdfUnsupportedException {
         /*
          * Get the PDF properties to check security issues.
          */
@@ -1456,7 +1458,8 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
 
         try {
             pdfProps = SpPdfPageProps.create(downloadedFile.getCanonicalPath());
-        } catch (PdfSecurityException | PdfValidityException e) {
+        } catch (PdfValidityException | PdfSecurityException
+                | PdfPasswordException | PdfUnsupportedException e) {
             throw e;
         } catch (IOException e) {
             throw new SpException(e.getMessage());
@@ -1752,7 +1755,7 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
                     MSG_COMMENT_PRINT_CANCELLED_PDF_ENCRYPTED,
                     monitor.simulationMode);
 
-        } catch (PdfValidityException e) {
+        } catch (PdfValidityException | PdfUnsupportedException e) {
 
             publishAdminMsg(PubLevelEnum.WARN, localizedMsg("print-cancelled",
                     document.getName(), e.getMessage()));
@@ -1760,6 +1763,16 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
             reportDocumentStatus(monitor.processingConnection, document.getId(),
                     SmartschoolPrintStatusEnum.CANCELLED,
                     MSG_COMMENT_PRINT_CANCELLED_PDF_INVALID,
+                    monitor.simulationMode);
+
+        } catch (PdfPasswordException e) {
+
+            publishAdminMsg(PubLevelEnum.WARN, localizedMsg("print-cancelled",
+                    document.getName(), e.getMessage()));
+
+            reportDocumentStatus(monitor.processingConnection, document.getId(),
+                    SmartschoolPrintStatusEnum.CANCELLED,
+                    MSG_COMMENT_PRINT_CANCELLED_PDF_PASSWORD,
                     monitor.simulationMode);
 
         } catch (ProxyPrintException e) {
@@ -2362,79 +2375,6 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
     }
 
     /**
-     * Adds a "pro-forma" {@link ProxyPrintJobChunk} object to the
-     * {@link ProxyPrintDocReq}.
-     *
-     * @param printer
-     *            The {@link Printer}.
-     * @param printReq
-     *            The {@link ProxyPrintDocReq}.
-     * @param ippMediaSize
-     *            The media size.
-     * @param hasMediaSourceAuto
-     *            {@code true} when printer has "auto"media source.
-     * @param isManagedByPaperCut
-     *            {@code true} when printer is managed by PaperCut.
-     * @throws ProxyPrintException
-     *             When printer has no media-source for media size.
-     */
-    private static void addProxyPrintJobChunk(final Printer printer,
-            final ProxyPrintDocReq printReq,
-            final IppMediaSizeEnum ippMediaSize,
-            final boolean hasMediaSourceAuto, final boolean isManagedByPaperCut)
-            throws ProxyPrintException {
-
-        final String printerName = printReq.getPrinterName();
-
-        final PrinterAttrLookup printerAttrLookup =
-                new PrinterAttrLookup(printer);
-
-        /*
-         * INVARIANT: If printer has media sources defined, a media-source MUST
-         * be available that matches the media size of the document.
-         */
-        final IppMediaSourceCostDto assignedMediaSourceCost =
-                printerAttrLookup.findAnyMediaSourceForMedia(ippMediaSize);
-
-        if (assignedMediaSourceCost == null) {
-            throw new ProxyPrintException(localizedMsg("printer-media-not-foud",
-                    printerName, ippMediaSize.getIppKeyword()));
-        }
-
-        final ProxyPrintJobChunk jobChunk = new ProxyPrintJobChunk();
-
-        jobChunk.setAssignedMedia(ippMediaSize);
-
-        /*
-         * If the printer is managed by PaperCut, set "media-source" to "auto"
-         * in the Print Request if printer supports it, otherwise set the
-         * assigned media-source in the Job Chunk.
-         */
-        if (isManagedByPaperCut && hasMediaSourceAuto) {
-            printReq.setMediaSourceOption(IppKeyword.MEDIA_SOURCE_AUTO);
-            jobChunk.setAssignedMediaSource(null);
-            jobChunk.setIppMediaSource(IppKeyword.MEDIA_SOURCE_AUTO);
-        } else {
-            jobChunk.setAssignedMediaSource(assignedMediaSourceCost);
-            jobChunk.setIppMediaSource(assignedMediaSourceCost.getSource());
-        }
-
-        /*
-         * Chunk range begins at first page.
-         */
-        final ProxyPrintJobChunkRange chunkRange =
-                new ProxyPrintJobChunkRange();
-
-        chunkRange.pageBegin = 1;
-        chunkRange.pageEnd =
-                chunkRange.pageBegin + printReq.getNumberOfPages() - 1;
-
-        jobChunk.getRanges().add(chunkRange);
-
-        printReq.setJobChunkInfo(new ProxyPrintJobChunkInfo(jobChunk));
-    }
-
-    /**
      * Encodes the job name of the proxy printed {@link Document} to a unique
      * name that can be used to query the PaperCut's tbl_printer_usage_log table
      * about the print status.
@@ -2580,7 +2520,7 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
         final Printer printer = printerDao.findByName(printerNameSelected);
 
         final boolean isJobTicketPrinter =
-                PRINTER_SERVICE.isJobTicketPrinter(printer);
+                PRINTER_SERVICE.isJobTicketPrinter(printer.getId());
 
         /*
          * Determine Print Mode.
@@ -2681,7 +2621,7 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
                 printMode == PrintModeEnum.AUTO
                         && monitor.isIntegratedWithPaperCut();
 
-        addProxyPrintJobChunk(printer, printReq, supplierData.getMediaSize(),
+        printReq.addProxyPrintJobChunk(printer, supplierData.getMediaSize(),
                 PROXY_PRINT_SERVICE.hasMediaSourceAuto(printerNameSelected),
                 isPrinterManagedByPaperCut);
 
@@ -2744,18 +2684,16 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
                 && printReq.isGrayscale()
                 && PRINTER_SERVICE.isClientSideMonochrome(printer)) {
 
-            final IFileConverter converter = new PdfToGrayscale();
+            final IPdfConverter converter = new PdfToGrayscale();
 
             try {
-                downloadedFileConverted = converter
-                        .convert(DocContentTypeEnum.PDF, downloadedFile);
-            } catch (UnavailableException e) {
+                downloadedFileConverted = converter.convert(downloadedFile);
+            } catch (IOException e) {
                 /*
                  * INVARIANT: Service MUST be available.
                  */
                 throw new DocContentToPdfException(
-                        "Monochrome conversion failed "
-                                + "because service is unavailable.");
+                        "Monochrome conversion failed.");
             }
 
             if (LOGGER.isDebugEnabled()) {
@@ -2809,8 +2747,8 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
                     JOBTICKET_SERVICE.proxyPrintPdf(lockedUser, printReq,
                             createInfo, printInInfo,
                             DateUtils.addHours(
-                                    ServiceContext.getTransactionDate(),
-                                    hours), null);
+                                    ServiceContext.getTransactionDate(), hours),
+                            null);
                 } else {
                     OUTBOX_SERVICE.proxyPrintPdf(lockedUser, printReq,
                             createInfo, printInInfo);
@@ -2824,8 +2762,12 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
 
             } else {
 
-                PROXY_PRINT_SERVICE.proxyPrintPdf(lockedUser, printReq,
-                        new PdfCreateInfo(fileToPrint));
+                try {
+                    PROXY_PRINT_SERVICE.proxyPrintPdf(lockedUser, printReq,
+                            new PdfCreateInfo(fileToPrint));
+                } catch (DocStoreException e) {
+                    throw new IOException(e.getMessage(), e);
+                }
             }
 
             daoContext.commit();

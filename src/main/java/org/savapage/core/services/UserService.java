@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -25,8 +25,10 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Date;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
+import org.savapage.core.OutOfBoundsException;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.dao.enums.UserAttrEnum;
 import org.savapage.core.dto.UserDto;
@@ -35,9 +37,11 @@ import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
 import org.savapage.core.jpa.UserAttr;
+import org.savapage.core.json.JobTicketProperties;
 import org.savapage.core.json.PdfProperties;
 import org.savapage.core.json.rpc.AbstractJsonRpcMethodResponse;
 import org.savapage.core.users.IUserSource;
+import org.savapage.lib.pgp.PGPKeyID;
 
 /**
  *
@@ -136,9 +140,9 @@ public interface UserService {
      *
      * @param user
      *            The {@link User}.
-     * @return {@code blank} when not found.
+     * @return {@code null} when not found.
      */
-    String getPGPPubKeyID(User user);
+    PGPKeyID getPGPPubKeyID(User user);
 
     /**
      * Gets the Primary email address of a User.
@@ -316,12 +320,12 @@ public interface UserService {
     /**
      * Add/Replace the Primary Card to/of the {@link User}.
      *
-     * <p>
-     * Note: Also removes any non-primary card having the same number.
-     * </p>
-     * <p>
-     * If the cardNumber is null or blank, the current card is removed.
-     * </p>
+     * <ul>
+     * <li>Also removes any non-primary card having the same number.</li>
+     * <li>If the cardNumber is null or blank, the current card is removed.</li>
+     * <li>An in-between <i>commit</i> is performed when a non-primary
+     * cardNumber is promoted to primary cardNumber.</li>
+     * </ul>
      *
      * @param user
      *            The {@link User}.
@@ -332,14 +336,14 @@ public interface UserService {
 
     /**
      * Add/Replace the Primary Email address to/of the {@link User}.
-     *
-     * <p>
-     * Note: Also removes any non-primary email having the same email address.
-     * </p>
-     * <p>
-     * If the emailAddress is null or blank, the current primary address is
-     * removed.
-     * </p>
+     * <ul>
+     * <li>Also removes any non-primary email having the same email
+     * address.</li>
+     * <li>If the emailAddress is null or blank, the current primary address is
+     * removed.</li>
+     * <li>An in-between <i>commit</i> is performed when a non-primary email
+     * address is promoted to primary email address.</li>
+     * </ul>
      *
      * @param user
      *            The {@link User}.
@@ -350,9 +354,12 @@ public interface UserService {
 
     /**
      * Add/Replace the Primary ID Number to the {@link User}.
-     * <p>
-     * If the ID Number is null or blank, the current ID NUmber is removed.
-     * </p>
+     * <ul>
+     * <li>If the ID Number is null or blank, the current ID NUmber is removed.
+     * </li>
+     * <li>An in-between <i>commit</i> is performed when a non-primary ID NUmber
+     * is promoted to primary ID NUmber.</li>
+     * </ul>
      *
      * @param user
      *            The {@link User}.
@@ -662,6 +669,30 @@ public interface UserService {
     void lazyUserHomeDir(String userId) throws IOException;
 
     /**
+     * Gets the latest saved Job Ticket properties for a {@link User} from the
+     * database or by supplying a default.
+     *
+     * @param user
+     *            The {@link User}.
+     * @return The {@link JobTicketProperties}.
+     */
+    JobTicketProperties getJobTicketPropsLatest(User user);
+
+    /**
+     * Stores the latest properties of Job Ticket, created by a user, to the
+     * database.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param objProps
+     *            The {@link PdfProperties}.
+     * @throws IOException
+     *             When JSON things go wrong.
+     */
+    void setJobTicketPropsLatest(User user, JobTicketProperties objProps)
+            throws IOException;
+
+    /**
      * Gets the saved PDF properties for a {@link User} from the database or by
      * supplying a default.
      * <p>
@@ -671,10 +702,8 @@ public interface UserService {
      * @param user
      *            The {@link User}.
      * @return The {@link PdfProperties}.
-     * @throws Exception
-     *             When errors.
      */
-    PdfProperties getPdfProperties(User user) throws Exception;
+    PdfProperties getPdfProperties(User user);
 
     /**
      * Stores the PDF properties for the SafePages of a user to the database.
@@ -711,5 +740,105 @@ public interface UserService {
      * @return The UI string.
      */
     String getUserIdUi(User user, Locale locale);
+
+    /**
+     * Traverses the internal {@link UserAttr} list of a {@link User} to get the
+     * set of {@link UserAttrEnum#PROXY_PRINT_DELEGATE_GROUPS_PREFERRED}.
+     *
+     * @param user
+     *            The {@link User}.
+     * @return {@code null} when user attribute is not present.
+     */
+    Set<Long> getPreferredDelegateGroups(User user);
+
+    /**
+     * Traverses the internal {@link UserAttr} list of a {@link User} to get and
+     * <b>prune</b> the set of
+     * {@link UserAttrEnum#PROXY_PRINT_DELEGATE_GROUPS_PREFERRED}: user groups
+     * that are not found (because they were removed), are removed as
+     * preference.
+     *
+     * @param user
+     *            The {@link User}.
+     * @return {@code null} when user attribute is not present.
+     */
+    Set<Long> prunePreferredDelegateGroups(User user);
+
+    /**
+     * Adds preferred delegate user groups.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param dbIds
+     *            The database IDs of the preferred User Groups to add.
+     * @return {@code true} if the resulting set changed as a result of the
+     *         call.
+     * @throws OutOfBoundsException
+     *             When max number of preferences is reached.
+     */
+    boolean addPreferredDelegateGroups(User user, Set<Long> dbIds)
+            throws OutOfBoundsException;
+
+    /**
+     * Removes preferred delegate user groups.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param dbIds
+     *            The database IDs of the preferred User Groups to remove.
+     * @return {@code true} if the resulting set changed as a result of the
+     *         call.
+     */
+    boolean removePreferredDelegateGroups(User user, Set<Long> dbIds);
+
+    /**
+     * Traverses the internal {@link UserAttr} list of a {@link User} to get the
+     * set of {@link UserAttrEnum#PROXY_PRINT_DELEGATE_ACCOUNTS_PREFERRED}.
+     *
+     * @param user
+     *            The {@link User}.
+     * @return {@code null} when user attribute is not present.
+     */
+    Set<Long> getPreferredDelegateAccounts(User user);
+
+    /**
+     * Traverses the internal {@link UserAttr} list of a {@link User} to get and
+     * <b>prune</b> the set of
+     * {@link UserAttrEnum#PROXY_PRINT_DELEGATE_ACCOUNTS_PREFERRED}: user groups
+     * that are not found (because they were removed), are removed as
+     * preference.
+     *
+     * @param user
+     *            The {@link User}.
+     * @return {@code null} when user attribute is not present.
+     */
+    Set<Long> prunePreferredDelegateAccounts(User user);
+
+    /**
+     * Adds preferred delegate user groups.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param dbIds
+     *            The database IDs of the preferred Shared Accounts to add.
+     * @return {@code true} if the resulting set changed as a result of the
+     *         call.
+     * @throws OutOfBoundsException
+     *             When max number of preferences is reached.
+     */
+    boolean addPreferredDelegateAccounts(User user, Set<Long> dbIds)
+            throws OutOfBoundsException;
+
+    /**
+     * Removes preferred delegate user groups.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param dbIds
+     *            The database IDs of the preferred Shared Accounts to remove.
+     * @return {@code true} if the resulting set changed as a result of the
+     *         call.
+     */
+    boolean removePreferredDelegateAccounts(User user, Set<Long> dbIds);
 
 }

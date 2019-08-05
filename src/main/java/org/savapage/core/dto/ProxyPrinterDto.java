@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -69,6 +69,12 @@ public class ProxyPrinterDto extends AbstractDto {
     @JsonProperty("disabled")
     Boolean disabled;
 
+    @JsonProperty("archiveDisabled")
+    Boolean archiveDisabled;
+
+    @JsonProperty("journalDisabled")
+    Boolean journalDisabled;
+
     /**
      * Is (logically) deleted?
      */
@@ -81,11 +87,13 @@ public class ProxyPrinterDto extends AbstractDto {
     @JsonProperty("jobTicket")
     Boolean jobTicket;
 
-    /**
-     *
-     */
+    /** */
     @JsonProperty("jobTicketGroup")
     String jobTicketGroup;
+
+    /** */
+    @JsonProperty("jobTicketLabelsEnabled")
+    Boolean jobTicketLabelsEnabled;
 
     /**
      * Is present in CUPS?
@@ -157,6 +165,22 @@ public class ProxyPrinterDto extends AbstractDto {
         this.disabled = disabled;
     }
 
+    public Boolean getArchiveDisabled() {
+        return archiveDisabled;
+    }
+
+    public void setArchiveDisabled(Boolean archiveDisabled) {
+        this.archiveDisabled = archiveDisabled;
+    }
+
+    public Boolean getJournalDisabled() {
+        return journalDisabled;
+    }
+
+    public void setJournalDisabled(Boolean journalDisabled) {
+        this.journalDisabled = journalDisabled;
+    }
+
     public Boolean getDeleted() {
         return deleted;
     }
@@ -187,6 +211,14 @@ public class ProxyPrinterDto extends AbstractDto {
 
     public void setJobTicketGroup(String jobTicketGroup) {
         this.jobTicketGroup = jobTicketGroup;
+    }
+
+    public Boolean getJobTicketLabelsEnabled() {
+        return jobTicketLabelsEnabled;
+    }
+
+    public void setJobTicketLabelsEnabled(Boolean jobTicketLabelsEnabled) {
+        this.jobTicketLabelsEnabled = jobTicketLabelsEnabled;
     }
 
 }

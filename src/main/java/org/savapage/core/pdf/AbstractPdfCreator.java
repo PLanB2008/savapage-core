@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,17 +22,21 @@
 package org.savapage.core.pdf;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.savapage.core.LetterheadNotFoundException;
 import org.savapage.core.PostScriptDrmException;
 import org.savapage.core.SpException;
 import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.IConfigProp;
+import org.savapage.core.doc.PdfToPgpSignedPdf;
 import org.savapage.core.imaging.EcoPrintPdfTask;
 import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.inbox.InboxInfoDto;
@@ -50,9 +54,18 @@ import org.savapage.core.json.PdfProperties;
 import org.savapage.core.print.proxy.BasePrintSheetCalcParms;
 import org.savapage.core.print.proxy.ProxyPrintSheetsCalcParms;
 import org.savapage.core.services.InboxService;
+import org.savapage.core.services.PGPPublicKeyService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.UserService;
 import org.savapage.core.services.impl.InboxServiceImpl;
+import org.savapage.core.util.FileSystemHelper;
+import org.savapage.lib.pgp.PGPBaseException;
+import org.savapage.lib.pgp.PGPPublicKeyInfo;
+import org.savapage.lib.pgp.PGPSecretKeyInfo;
+import org.savapage.lib.pgp.pdf.PdfPgpHelper;
+import org.savapage.lib.pgp.pdf.PdfPgpHelperAnyone;
+import org.savapage.lib.pgp.pdf.PdfPgpSigner;
+import org.savapage.lib.pgp.pdf.PdfPgpVerifyUrl;
 
 /**
  * Strategy for creating PDF document from inbox.
@@ -62,14 +75,13 @@ import org.savapage.core.services.impl.InboxServiceImpl;
  */
 public abstract class AbstractPdfCreator {
 
-    /**
-     * .
-     */
+    /** */
     private static final InboxService INBOX_SERVICE =
             ServiceContext.getServiceFactory().getInboxService();
-    /**
-     * .
-     */
+    /** */
+    private static final PGPPublicKeyService PGP_PUBLICKEY_SERVICE =
+            ServiceContext.getServiceFactory().getPGPPublicKeyService();
+    /** */
     private static final UserService USER_SERVICE =
             ServiceContext.getServiceFactory().getUserService();
 
@@ -107,9 +119,20 @@ public abstract class AbstractPdfCreator {
     private boolean useEcoPdfShadow = false;
 
     /**
-     * {@code true} when Grayscale PDF is to be created.
+     * {@code true} if Grayscale PDF is to be created.
      */
     private boolean isGrayscalePdf = false;
+
+    /**
+     * {@code true} if PDF with page porder for 2-up duplex booklet is to be
+     * created.
+     */
+    private boolean isBookletPageOrder = false;
+
+    /**
+     * {@code true} if PDF for print has to be repaired.
+     */
+    private boolean isRepairPdf = false;
 
     /**
      *
@@ -126,6 +149,9 @@ public abstract class AbstractPdfCreator {
      * find the {@link IppRuleNumberUp}.
      */
     protected PdfOrientationInfo firstPageOrientationInfo;
+
+    /** */
+    private PdfPgpVerifyUrl verifyUrl;
 
     /**
      *
@@ -152,6 +178,21 @@ public abstract class AbstractPdfCreator {
     }
 
     /**
+     * @return {@code true} if PDF with page porder for 2-up duplex booklet is
+     *         to be created.
+     */
+    protected final boolean isBookletPageOrder() {
+        return this.isBookletPageOrder;
+    }
+
+    /**
+     * @return {@code true} if PDF (for print) has to be repaired.
+     */
+    protected final boolean isRepairPdf() {
+        return this.isRepairPdf;
+    }
+
+    /**
      *
      * @return
      */
@@ -163,12 +204,33 @@ public abstract class AbstractPdfCreator {
         return create().getNumberOfPagesInPdfFile(filePathPdf);
     }
 
+    /**
+     *
+     * @param filePathPdf
+     *            PDF file path.
+     * @return {@link SpPdfPageProps}.
+     * @throws PdfValidityException
+     *             When invalid PDF document.
+     * @throws PdfSecurityException
+     *             When encrypted PDF document.
+     * @throws PdfPasswordException
+     *             When password protected PDF document.
+     * @throws PdfUnsupportedException
+     *             When unsupported PDF document.
+     */
     public static SpPdfPageProps pageProps(final String filePathPdf)
-            throws PdfSecurityException, PdfValidityException {
+            throws PdfValidityException, PdfSecurityException,
+            PdfPasswordException, PdfUnsupportedException {
         return create().getPageProps(filePathPdf);
     }
 
-    protected abstract int getNumberOfPagesInPdfFile(final String filePathPdf);
+    /**
+     *
+     * @param filePathPdf
+     *            PDF file path.
+     * @return Number of pages in PDF.
+     */
+    protected abstract int getNumberOfPagesInPdfFile(String filePathPdf);
 
     /**
      * Creates the {@link SpPdfPageProps} of an PDF document.
@@ -176,26 +238,18 @@ public abstract class AbstractPdfCreator {
      * @param filePathPdf
      *            The PDF document file path.
      * @return The {@link SpPdfPageProps}.
-     * @throws PdfSecurityException
-     *             When encrypted or password protected PDF document.
      * @throws PdfValidityException
-     *             When the document isn't a valid PDF document.
-     */
-    protected abstract SpPdfPageProps getPageProps(final String filePathPdf)
-            throws PdfSecurityException, PdfValidityException;
-
-    /**
-     * Creates an ordinal list of {@link SpPdfPageProps} of an PDF document.
-     * Each entry on the list represents a chunk of pages with the same size.
-     *
-     * @param filePathPdf
-     *            The PDF document file path.
-     * @return The {@link SpPdfPageProps} list.
+     *             When invalid PDF document.
      * @throws PdfSecurityException
-     *             When encrypted or password protected PDF document.
+     *             When encrypted PDF document.
+     * @throws PdfPasswordException
+     *             When password protected PDF document.
+     * @throws PdfUnsupportedException
+     *             When unsupported PDF document.
      */
-    public abstract List<SpPdfPageProps> getPageSizeChunks(
-            final String filePathPdf) throws PdfSecurityException;
+    protected abstract SpPdfPageProps getPageProps(String filePathPdf)
+            throws PdfValidityException, PdfSecurityException,
+            PdfPasswordException, PdfUnsupportedException;
 
     /**
      *
@@ -345,9 +399,9 @@ public abstract class AbstractPdfCreator {
      *             pending.
      */
     public PdfCreateInfo generate(final PdfCreateRequest createReq,
-            final Map<String, Integer> uuidPageCount, final DocLog docLog)
-            throws LetterheadNotFoundException, PostScriptDrmException,
-            EcoPrintPdfTaskPendingException {
+            final LinkedHashMap<String, Integer> uuidPageCount,
+            final DocLog docLog) throws LetterheadNotFoundException,
+            PostScriptDrmException, EcoPrintPdfTaskPendingException {
         //
         this.user = createReq.getUserObj().getUserId();
         this.userhome = ConfigManager.getUserHomeDir(this.user);
@@ -363,6 +417,10 @@ public abstract class AbstractPdfCreator {
         this.printNup = createReq.getPrintNup();
 
         this.isGrayscalePdf = createReq.isGrayscale();
+        this.isBookletPageOrder = createReq.isBookletPageOrder();
+
+        this.isRepairPdf = createReq.isForPrinting() && ConfigManager.instance()
+                .isConfigValue(IConfigProp.Key.PROXY_PRINT_REPAIR_ENABLE);
 
         this.removeGraphics = createReq.isRemoveGraphics();
 
@@ -381,6 +439,8 @@ public abstract class AbstractPdfCreator {
                                     + "PDF export is not permitted");
                 }
             }
+
+            this.verifyUrl = createReq.getVerifyUrl();
         }
 
         /*
@@ -456,7 +516,10 @@ public abstract class AbstractPdfCreator {
             logicalJobPages = null;
         }
 
+        final PdfProperties propPdf;
+
         try {
+            propPdf = USER_SERVICE.getPdfProperties(createReq.getUserObj());
 
             for (InboxJobRange page : pages) {
 
@@ -582,9 +645,6 @@ public abstract class AbstractPdfCreator {
             // Document Information
             // --------------------------------------------------------
             final Calendar now = new GregorianCalendar();
-
-            final PdfProperties propPdf =
-                    USER_SERVICE.getPdfProperties(createReq.getUserObj());
 
             if (docLog != null) {
                 docLog.setTitle(propPdf.getDesc().getTitle());
@@ -735,8 +795,15 @@ public abstract class AbstractPdfCreator {
 
         final File generatedPdf = new File(pdfFile);
 
+        final boolean isPgpSigned = !this.isForPrinting()
+                && BooleanUtils.isTrue(propPdf.isPgpSignature())
+                && this.verifyUrl != null;
+
         try {
             onPdfGenerated(generatedPdf);
+            if (isPgpSigned) {
+                onPgpSign(generatedPdf, this.verifyUrl, this.user);
+            }
         } catch (Exception e) {
             throw new SpException(e.getMessage(), e);
         }
@@ -746,7 +813,64 @@ public abstract class AbstractPdfCreator {
         createInfo.setBlankFillerPages(totFillerPages);
         createInfo.setLogicalJobPages(logicalJobPages);
         createInfo.setPdfOrientationInfo(this.firstPageOrientationInfo);
+        createInfo.setPgpSigned(isPgpSigned);
+        createInfo.setUuidPageCount(uuidPageCount);
 
         return createInfo;
     }
+
+    /**
+     *
+     * @param generatedPdf
+     *            The PDF.
+     * @param verifyUrl
+     *            The verification URL.
+     * @param userid
+     *            The User ID of the PDF author.
+     * @throws IOException
+     *             When IO error.
+     */
+    private static void onPgpSign(final File generatedPdf,
+            final PdfPgpVerifyUrl verifyUrl, final String userid)
+            throws IOException {
+
+        final ConfigManager cm = ConfigManager.instance();
+
+        final PGPSecretKeyInfo secKeyInfo = cm.getPGPSecretKeyInfo();
+        final PGPPublicKeyInfo pubKeyInfoSigner = cm.getPGPPublicKeyInfo();
+
+        try {
+            boolean isForAnyone = false; // TODO
+
+            final PdfPgpSigner signer;
+            if (isForAnyone) {
+                signer = PdfPgpHelperAnyone.instance();
+            } else {
+                signer = PdfPgpHelper.instance();
+            }
+            replaceWithConvertedPdf(generatedPdf,
+                    new PdfToPgpSignedPdf(signer, secKeyInfo, pubKeyInfoSigner,
+                            PGP_PUBLICKEY_SERVICE.readRingEntry(userid),
+                            verifyUrl).convert(generatedPdf));
+
+        } catch (PGPBaseException e) {
+            throw new IOException(e.getMessage());
+        }
+    }
+
+    /**
+     * Replaces original PDF file with converted version.
+     *
+     * @param pdfOrginal
+     *            The original PDF file.
+     * @param pdfConverted
+     *            The converted PDF file.
+     * @throws IOException
+     *             When IO error.
+     */
+    protected static void replaceWithConvertedPdf(final File pdfOrginal,
+            final File pdfConverted) throws IOException {
+        FileSystemHelper.replaceWithNewVersion(pdfOrginal, pdfConverted);
+    }
+
 }

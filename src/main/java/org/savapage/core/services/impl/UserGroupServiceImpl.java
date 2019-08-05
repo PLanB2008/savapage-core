@@ -44,6 +44,7 @@ import org.savapage.core.dao.enums.ACLRoleEnum;
 import org.savapage.core.dao.enums.ReservedUserGroupEnum;
 import org.savapage.core.dao.enums.UserGroupAttrEnum;
 import org.savapage.core.dao.helpers.DaoBatchCommitter;
+import org.savapage.core.dto.CreditLimitDtoEnum;
 import org.savapage.core.dto.QuickSearchItemDto;
 import org.savapage.core.dto.UserAccountingDto;
 import org.savapage.core.dto.UserGroupPropertiesDto;
@@ -60,6 +61,7 @@ import org.savapage.core.json.rpc.impl.ResultListStrings;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.UserGroupService;
 import org.savapage.core.users.CommonUser;
+import org.savapage.core.users.CommonUserGroup;
 import org.savapage.core.users.IUserSource;
 import org.savapage.core.users.conf.InternalGroupList;
 import org.savapage.core.util.BigDecimalUtil;
@@ -154,7 +156,7 @@ public final class UserGroupServiceImpl extends AbstractService
         final UserGroupDao.ListFilter filter = new UserGroupDao.ListFilter();
 
         final List<UserGroup> list = userGroupDAO().getListChunk(filter,
-                startIndex, itemsPerPage, UserGroupDao.Field.NAME, true);
+                startIndex, itemsPerPage, UserGroupDao.Field.ID, true);
 
         final List<QuickSearchItemDto> items = new ArrayList<>();
 
@@ -269,12 +271,15 @@ public final class UserGroupServiceImpl extends AbstractService
      *            The {@link DaoBatchCommitter}.
      * @param groupName
      *            The name of the group to add.
+     * @param groupFullName
+     *            The full name of the group to add.
      * @param commonUsers
      *            The {@link CommonUser} set to add.
      * @return The number user members added.
      */
     private int addUserGroupMembers(final DaoBatchCommitter batchCommitter,
-            final String groupName, final Set<CommonUser> commonUsers) {
+            final String groupName, final String groupFullName,
+            final Set<CommonUser> commonUsers) {
 
         final UserGroup userGroup = new UserGroup();
 
@@ -282,6 +287,7 @@ public final class UserGroupServiceImpl extends AbstractService
         userGroup.setCreatedBy(ServiceContext.getActor());
         userGroup.setCreatedDate(ServiceContext.getTransactionDate());
         userGroup.setGroupName(groupName);
+        userGroup.setFullName(groupFullName);
         userGroup.setSchedulePeriod(SchedulePeriodEnum.NONE.toString());
 
         userGroupDAO().create(userGroup);
@@ -339,7 +345,8 @@ public final class UserGroupServiceImpl extends AbstractService
         final SortedSet<CommonUser> members =
                 InternalGroupList.getUsersInGroup(groupName);
 
-        return this.addUserGroupMembers(batchCommitter, groupName, members);
+        return this.addUserGroupMembers(batchCommitter, groupName, groupName,
+                members);
     }
 
     @Override
@@ -362,7 +369,9 @@ public final class UserGroupServiceImpl extends AbstractService
          */
         final IUserSource userSource = ConfigManager.instance().getUserSource();
 
-        if (!userSource.isGroupPresent(groupName)) {
+        final CommonUserGroup commonUserGroup = userSource.getGroup(groupName);
+
+        if (commonUserGroup == null) {
             return JsonRpcMethodError.createBasicError(Code.INVALID_REQUEST,
                     "Group [" + groupName + "] does not exist in user source.",
                     null);
@@ -374,8 +383,8 @@ public final class UserGroupServiceImpl extends AbstractService
 
         final int nMembersTot = members.size();
 
-        final int nMembersAdd =
-                this.addUserGroupMembers(batchCommitter, groupName, members);
+        final int nMembersAdd = this.addUserGroupMembers(batchCommitter,
+                groupName, determineFullNameDb(commonUserGroup, null), members);
 
         return JsonRpcMethodResult.createOkResult(
                 "Group [" + groupName + "] added: [" + nMembersAdd + "] of ["
@@ -390,8 +399,8 @@ public final class UserGroupServiceImpl extends AbstractService
 
         final List<String> items = new ArrayList<>();
 
-        for (final String group : userSource.getGroups()) {
-            items.add(group);
+        for (final CommonUserGroup group : userSource.getGroups()) {
+            items.add(group.getGroupName());
         }
 
         final ResultListStrings data = new ResultListStrings();
@@ -676,14 +685,79 @@ public final class UserGroupServiceImpl extends AbstractService
         return userGroupDAO().findByName(groupName);
     }
 
+    /**
+     * Determines user group's full name to be used in the database.
+     *
+     * @param groupSrc
+     *            Raw user group data from source.
+     * @param groupDb
+     *            The current user group from database. If {@code null}, the
+     *            group is not yet present in database.
+     * @return The full name to be used in the database.
+     */
+    private static String determineFullNameDb(final CommonUserGroup groupSrc,
+            final UserGroup groupDb) {
+
+        final String name;
+
+        if (StringUtils.isBlank(groupSrc.getFullName())) {
+            if (groupDb == null || StringUtils.isBlank(groupDb.getFullName())) {
+                // Initialize from user source.
+                name = groupSrc.getGroupName();
+            } else {
+                // Database is leading.
+                name = groupDb.getFullName();
+            }
+        } else {
+            // User source is leading.
+            name = groupSrc.getFullName();
+        }
+        return name;
+    }
+
+    /**
+     * Updates the user group's full name.
+     *
+     * @param userGroupSrc
+     *            The user group from the source.
+     * @param userGroupDb
+     *            The user group from the database.
+     */
+    private static void updateFullName(final CommonUserGroup userGroupSrc,
+            final UserGroup userGroupDb) {
+        /*
+         * Note: commonUserGroup can be null, when user groups are present from
+         * previous user source type.
+         */
+        if (userGroupSrc == null) {
+            return;
+        }
+
+        final String fullNameDb =
+                determineFullNameDb(userGroupSrc, userGroupDb);
+
+        if (!StringUtils.defaultString(userGroupDb.getFullName())
+                .equals(fullNameDb)) {
+
+            userGroupDb.setFullName(fullNameDb);
+            userGroupDb.setModifiedBy(ServiceContext.getActor());
+            userGroupDb.setModifiedDate(ServiceContext.getTransactionDate());
+            userGroupDAO().update(userGroupDb);
+        }
+    }
+
     @Override
     public AbstractJsonRpcMethodResponse syncInternalUserGroup(
             final DaoBatchCommitter batchCommitter, final String groupName)
             throws IOException {
 
         final UserGroup userGroup = checkSyncGroupInvariants(groupName);
+
+        updateFullName(new CommonUserGroup(groupName), userGroup);
+
         final SortedSet<CommonUser> source =
                 InternalGroupList.getUsersInGroup(groupName);
+
         return syncUserGroupMembers(batchCommitter, userGroup, source, false);
     }
 
@@ -703,6 +777,15 @@ public final class UserGroupServiceImpl extends AbstractService
         }
 
         final IUserSource userSource = ConfigManager.instance().getUserSource();
+
+        /*
+         * Note: commonUserGroup can be null, when user groups are present from
+         * previous user source type.
+         */
+        final CommonUserGroup commonUserGroup = userSource.getGroup(groupName);
+
+        updateFullName(commonUserGroup, userGroup);
+
         final SortedSet<CommonUser> source =
                 userSource.getUsersInGroup(groupName, true);
 
@@ -730,14 +813,12 @@ public final class UserGroupServiceImpl extends AbstractService
             dtoLocale = ServiceContext.getLocale();
         }
 
-        final UserAccountingDto.CreditLimitEnum creditLimit =
-                accounting.getCreditLimit();
+        final CreditLimitDtoEnum creditLimit = accounting.getCreditLimit();
 
         if (creditLimit != null) {
 
             //
-            final boolean isRestricted =
-                    creditLimit != UserAccountingDto.CreditLimitEnum.NONE;
+            final boolean isRestricted = creditLimit != CreditLimitDtoEnum.NONE;
 
             if (jpaGroup.getInitiallyRestricted() != isRestricted) {
                 jpaGroup.setInitiallyRestricted(isRestricted);
@@ -746,7 +827,7 @@ public final class UserGroupServiceImpl extends AbstractService
 
             //
             final boolean useGlobalOverdraft =
-                    creditLimit == UserAccountingDto.CreditLimitEnum.DEFAULT;
+                    creditLimit == CreditLimitDtoEnum.DEFAULT;
 
             if (jpaGroup.getInitialUseGlobalOverdraft() != useGlobalOverdraft) {
                 jpaGroup.setInitialUseGlobalOverdraft(useGlobalOverdraft);
@@ -754,7 +835,7 @@ public final class UserGroupServiceImpl extends AbstractService
             }
 
             //
-            if (creditLimit == UserAccountingDto.CreditLimitEnum.INDIVIDUAL) {
+            if (creditLimit == CreditLimitDtoEnum.INDIVIDUAL) {
 
                 final String amount = accounting.getCreditLimitAmount();
 

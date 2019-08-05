@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -93,11 +93,25 @@ public interface ServiceFactory {
     DeviceService getDeviceService();
 
     /**
-     * Gets the {@link AppLogService} singleton.
+     * Gets the {@link DocLogService} singleton.
      *
      * @return The singleton.
      */
     DocLogService getDocLogService();
+
+    /**
+     * Gets the {@link DocStoreService} singleton.
+     *
+     * @return The singleton.
+     */
+    DocStoreService getDocStoreService();
+
+    /**
+     * Gets the {@link DownloadService} singleton.
+     *
+     * @return The singleton.
+     */
+    DownloadService getDownloadService();
 
     /**
      * Gets the {@link EcoPrintPdfTaskService} singleton.
@@ -182,6 +196,13 @@ public interface ServiceFactory {
      * @return The singleton.
      */
     QueueService getQueueService();
+
+    /**
+     * Gets the {@link RestClientService} singleton.
+     *
+     * @return The singleton.
+     */
+    RestClientService getRestClientService();
 
     /**
      * Gets the {@link RfIdReaderService} singleton.

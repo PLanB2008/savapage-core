@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,7 +34,31 @@ import org.savapage.core.util.LocaleHelper;
 public enum PhraseEnum {
 
     /** */
-    SYS_MAINTENANCE;
+    ACTIVATE_CARD_READER,
+    /** */
+    PDF_INVALID,
+    /** */
+    PDF_ENCRYPTED_UNSUPPORTED,
+    /** */
+    PDF_PASSWORD_UNSUPPORTED,
+    /** */
+    PDF_PRINTING_NOT_ALLOWED,
+    /** */
+    PDF_REPAIR_FAILED,
+    /** */
+    PDF_XFA_UNSUPPORTED,
+    /** */
+    REALTIME_ACTIVITY,
+    /** */
+    SELECT_AND_SORT,
+    /** */
+    SWIPE_CARD,
+    /** */
+    SYS_MAINTENANCE,
+    /** */
+    SYS_TEMP_UNAVAILABLE,
+    /** */
+    USER_DELETE_WARNING;
 
     /**
      * @param locale

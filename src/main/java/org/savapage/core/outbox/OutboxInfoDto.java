@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -28,11 +28,14 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.dto.AbstractDto;
 import org.savapage.core.inbox.PdfOrientationInfo;
 import org.savapage.core.ipp.IppJobStateEnum;
+import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
+import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.ipp.helpers.IppOptionMap;
 import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.services.helpers.AccountTrxInfo;
@@ -126,6 +129,11 @@ public final class OutboxInfoDto extends AbstractDto {
         private int weight;
 
         /**
+         * The divider used on {@link #weight}, for calculating cost and copies.
+         */
+        private Integer weightUnit;
+
+        /**
          * Free format details from external source.
          */
         private String extDetails;
@@ -148,6 +156,23 @@ public final class OutboxInfoDto extends AbstractDto {
 
         public void setWeight(int weight) {
             this.weight = weight;
+        }
+
+        /**
+         * @return The divider used on {@link #weight}, for calculating cost and
+         *         copies.
+         */
+        public Integer getWeightUnit() {
+            return weightUnit;
+        }
+
+        /**
+         * @param weightUnit
+         *            The divider used on {@link #weight}, for calculating cost
+         *            and copies.
+         */
+        public void setWeightUnit(Integer weightUnit) {
+            this.weightUnit = weightUnit;
         }
 
         public String getExtDetails() {
@@ -174,10 +199,13 @@ public final class OutboxInfoDto extends AbstractDto {
     public static final class OutboxAccountTrxInfoSet {
 
         /**
-         * The weight total. IMPORTANT: This total need NOT be the same as the
-         * accumulated weight of the individual Account transactions. For
-         * example: parts of the printing costs may be charged to (personal and
-         * shared) multiple accounts.
+         * The weight total.
+         * <p>
+         * <b>Note</b>: This total need NOT be the same as the accumulated
+         * weight of the individual Account transactions. For example: parts of
+         * the printing costs may be charged to (personal and shared) multiple
+         * accounts.
+         * </p>
          */
         private int weightTotal;
 
@@ -208,7 +236,7 @@ public final class OutboxInfoDto extends AbstractDto {
     *
     */
     @JsonInclude(Include.NON_NULL)
-    public static class OutboxJobBaseDto {
+    public static class OutboxJobBaseDto extends AbstractDto {
 
         private String ticketNumber;
         private String jobName;
@@ -303,8 +331,8 @@ public final class OutboxInfoDto extends AbstractDto {
     public static final class OutboxJobDto extends OutboxJobBaseDto {
 
         /**
-         * The primary database key of the {@link User}. Is {@code null} when in
-         * User outbox.
+         * The primary database key of the {@link User}. Is {@code null} when
+         * this job resides in User outbox.
          */
         private Long userId;
 
@@ -314,15 +342,29 @@ public final class OutboxInfoDto extends AbstractDto {
          */
         private Long printOutId;
 
-        /**
-         *
-         */
+        /** */
+        private String jobTicketDomain;
+        /** */
+        private String jobTicketUse;
+        /** */
+        private String jobTicketTag;
+
+        /** */
+        private Boolean ticketReopen;
+
+        /** */
         @JsonIgnore
         private IppJobStateEnum ippJobState;
 
         /**
+         * Set with Printer Group IDs the (ticket) printer is member of.
+         */
+        @JsonIgnore
+        private Set<Long> printerGroupIDs;
+        /**
          * .
          */
+        @JsonIgnore
         private ExternalSupplierInfo externalSupplierInfo;
 
         private String file;
@@ -349,7 +391,29 @@ public final class OutboxInfoDto extends AbstractDto {
         private ProxyPrintCostDto costResult;
         private long submitTime;
         private long expiryTime;
+
+        /**
+         * 1-based index of chunkSize. All chunks have same {@link #submitTime}.
+         */
+        private Integer chunkIndex;
+
+        /**
+         * Total number of chunks. All chunks have same {@link #submitTime}.
+         */
+        private Integer chunkSize;
+
+        /**
+         * Note for developers: This attribute must be removed after reasonable
+         * time, when old persisted JSON files are not present anymore.
+         *
+         * @deprecated Use {@link IppDictJobTemplateAttr#ATTR_PRINT_SCALING}
+         *             instead.
+         */
+        @Deprecated
         private Boolean fitToPage;
+
+        /** */
+        private Boolean archive;
 
         /**
          * The RFC2911 IPP {@code media-source} keyword of the Job Sheet.
@@ -389,11 +453,48 @@ public final class OutboxInfoDto extends AbstractDto {
             this.costResult = new ProxyPrintCostDto();
         }
 
-        //
+        /**
+         * @return {@code true} if this is a Monochrome job.
+         */
+        @JsonIgnore
+        public boolean isMonochromeJob() {
+            return this.optionValues == null || this.optionValues
+                    .getOrDefault(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE,
+                            IppKeyword.PRINT_COLOR_MODE_MONOCHROME)
+                    .equals(IppKeyword.PRINT_COLOR_MODE_MONOCHROME);
+        }
+
+        /**
+         * @return {@code true} if this is a Booklet job.
+         */
+        @JsonIgnore
+        public boolean isBookletJob() {
+            boolean booklet = false;
+            if (this.optionValues != null) {
+                final String value = this.optionValues.get(
+                        IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET);
+                if (value != null) {
+                    booklet = !value.equals(
+                            IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET_NONE);
+                }
+            }
+            return booklet;
+        }
+
+        /**
+         *
+         * @return The primary database key of the {@link User}. Is {@code null}
+         *         when this job resides in User outbox.
+         */
         public Long getUserId() {
             return userId;
         }
 
+        /**
+         * @param userId
+         *            The primary database key of the {@link User}. Is
+         *            {@code null} when this job resides in User outbox.
+         */
         public void setUserId(Long userId) {
             this.userId = userId;
         }
@@ -406,6 +507,53 @@ public final class OutboxInfoDto extends AbstractDto {
             this.printOutId = printOutId;
         }
 
+        /**
+         * @return Job Ticket Domain or {@code null}.
+         */
+        public String getJobTicketDomain() {
+            return jobTicketDomain;
+        }
+
+        /**
+         *
+         * @param jobTicketDomain
+         *            Job Ticket Domain or {@code null}.
+         */
+        public void setJobTicketDomain(String jobTicketDomain) {
+            this.jobTicketDomain = jobTicketDomain;
+        }
+
+        /**
+         * @return Job Ticket Use or {@code null}.
+         */
+        public String getJobTicketUse() {
+            return jobTicketUse;
+        }
+
+        /**
+         *
+         * @param jobTicketUse
+         *            Job Ticket Use or {@code null}.
+         */
+        public void setJobTicketUse(String jobTicketUse) {
+            this.jobTicketUse = jobTicketUse;
+        }
+
+        /**
+         * @return Job Ticket Tag or {@code null}.
+         */
+        public String getJobTicketTag() {
+            return jobTicketTag;
+        }
+
+        /**
+         * @param jobTicketTag
+         *            Job Ticket Tag or {@code null}.
+         */
+        public void setJobTicketTag(String jobTicketTag) {
+            this.jobTicketTag = jobTicketTag;
+        }
+
         @JsonIgnore
         public IppJobStateEnum getIppJobState() {
             return ippJobState;
@@ -416,10 +564,22 @@ public final class OutboxInfoDto extends AbstractDto {
             this.ippJobState = ippJobState;
         }
 
+        @JsonIgnore
+        public Set<Long> getPrinterGroupIDs() {
+            return printerGroupIDs;
+        }
+
+        @JsonIgnore
+        public void setPrinterGroupIDs(Set<Long> printerGroupIDs) {
+            this.printerGroupIDs = printerGroupIDs;
+        }
+
+        @JsonIgnore
         public ExternalSupplierInfo getExternalSupplierInfo() {
             return externalSupplierInfo;
         }
 
+        @JsonIgnore
         public void setExternalSupplierInfo(
                 ExternalSupplierInfo externalSupplierInfo) {
             this.externalSupplierInfo = externalSupplierInfo;
@@ -521,12 +681,81 @@ public final class OutboxInfoDto extends AbstractDto {
             this.expiryTime = expiryTime;
         }
 
+        /**
+         * @return 1-based index of {@link #getChunkSize()}. All chunks have
+         *         same {@link #submitTime}.
+         */
+        public Integer getChunkIndex() {
+            return chunkIndex;
+        }
+
+        /**
+         * @param chunkIndex
+         *            1-based index of chunkSize. All chunks have same
+         *            {@link #submitTime}.
+         */
+        public void setChunkIndex(Integer chunkIndex) {
+            this.chunkIndex = chunkIndex;
+        }
+
+        /**
+         * @return Total number of chunks. All chunks have same
+         *         {@link #submitTime}.
+         */
+        public Integer getChunkSize() {
+            return chunkSize;
+        }
+
+        /**
+         * @param chunkSize
+         *            Total number of chunks. All chunks have same
+         *            {@link #submitTime}.
+         */
+        public void setChunkSize(Integer chunkSize) {
+            this.chunkSize = chunkSize;
+        }
+
+        /**
+         * Note for developers: This method must be removed after reasonable
+         * time, when old persisted JSON files are not present anymore.
+         *
+         * @deprecated Use {@link IppDictJobTemplateAttr#ATTR_PRINT_SCALING}
+         *             instead.
+         * @return {@code true} if print must be fit-to-page.
+         */
+        @Deprecated
         public Boolean getFitToPage() {
             return fitToPage;
         }
 
+        /**
+         * Note for developers: This method must be removed after reasonable
+         * time, when old persisted JSON files are not present anymore.
+         *
+         * @deprecated Use {@link IppDictJobTemplateAttr#ATTR_PRINT_SCALING}
+         *             instead.
+         * @param fitToPage
+         *            {@code true} if print must be fit-to-page.
+         */
+        @Deprecated
         public void setFitToPage(Boolean fitToPage) {
             this.fitToPage = fitToPage;
+        }
+
+        public Boolean getArchive() {
+            return archive;
+        }
+
+        public void setArchive(Boolean archive) {
+            this.archive = archive;
+        }
+
+        public Boolean getTicketReopen() {
+            return ticketReopen;
+        }
+
+        public void setTicketReopen(Boolean ticketReopen) {
+            this.ticketReopen = ticketReopen;
         }
 
         /**
@@ -632,12 +861,48 @@ public final class OutboxInfoDto extends AbstractDto {
         }
 
         /**
-         *
          * @return {@code true} when this is a Delegated Print Job Ticket.
          */
         @JsonIgnore
         public boolean isDelegatedPrint() {
             return this.accountTransactions != null;
+        }
+
+        /**
+         * @return {@code true} when this Job Ticket is charged to a single
+         *         account.
+         */
+        @JsonIgnore
+        public boolean isSingleAccountPrint() {
+            if (this.accountTransactions == null) {
+                return true;
+            }
+            if (this.accountTransactions.transactions.size() != 1) {
+                return false;
+            }
+            final OutboxAccountTrxInfo trx =
+                    this.accountTransactions.transactions.get(0);
+
+            return trx.getWeight() == this.getCopies()
+                    && trx.getWeightUnit() == 1 && this.accountTransactions
+                            .getWeightTotal() == this.getCopies();
+        }
+
+        /**
+         * Sets number of printed copies for a single account print.
+         *
+         * @param copies
+         *            Number of printed copies.
+         */
+        public void setSingleAccountPrintCopies(final int copies) {
+            if (!this.isSingleAccountPrint()) {
+                throw new IllegalStateException("not a single account.");
+            }
+            this.setCopies(copies);
+            if (this.isDelegatedPrint()) {
+                this.accountTransactions.setWeightTotal(copies);
+                this.accountTransactions.transactions.get(0).setWeight(copies);
+            }
         }
 
         /**

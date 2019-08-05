@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,8 +26,8 @@ import java.util.Map;
 
 import org.apache.commons.cli.CommandLine;
 import org.savapage.core.dao.enums.ACLRoleEnum;
+import org.savapage.core.dto.CreditLimitDtoEnum;
 import org.savapage.core.dto.UserAccountingDto;
-import org.savapage.core.dto.UserAccountingDto.CreditLimitEnum;
 import org.savapage.core.dto.UserGroupPropertiesDto;
 import org.savapage.core.json.rpc.AbstractJsonRpcMethodParms;
 import org.savapage.core.json.rpc.ErrorDataBasic;
@@ -84,6 +84,9 @@ public class CliSetUserGroupProperties extends AbstractAppApi {
     /**
      * Role.
      */
+    private static final String CLI_OPT_ROLE_PRINT_SITE_OPERATOR =
+            "role-print-site-operator";
+
     private static final String CLI_OPT_ROLE_JOB_TICKET_CREATOR =
             "role-job-ticket-creator";
 
@@ -105,6 +108,8 @@ public class CliSetUserGroupProperties extends AbstractAppApi {
      * Mapping CLI role option to {@link ACLRoleEnum}.
      */
     private static final String[][] OPT_ROLE_MAP = new String[][] {
+            { CLI_OPT_ROLE_PRINT_SITE_OPERATOR,
+                    ACLRoleEnum.PRINT_SITE_OPERATOR.toString() },
             { CLI_OPT_ROLE_JOB_TICKET_CREATOR,
                     ACLRoleEnum.JOB_TICKET_CREATOR.toString() },
             { CLI_OPT_ROLE_JOB_TICKET_OPERATOR,
@@ -262,17 +267,17 @@ public class CliSetUserGroupProperties extends AbstractAppApi {
         value = cmd.getOptionValue(CLI_OPT_CREDIT_LIMIT_AMOUNT);
         if (value != null) {
             dtoAccounting.setCreditLimitAmount(value);
-            dtoAccounting.setCreditLimit(CreditLimitEnum.INDIVIDUAL);
+            dtoAccounting.setCreditLimit(CreditLimitDtoEnum.INDIVIDUAL);
             dto.setAccounting(dtoAccounting);
         }
 
         if (this.getSwitchValue(cmd, CLI_SWITCH_CREDIT_LIMIT)) {
-            dtoAccounting.setCreditLimit(CreditLimitEnum.DEFAULT);
+            dtoAccounting.setCreditLimit(CreditLimitDtoEnum.DEFAULT);
             dto.setAccounting(dtoAccounting);
         }
 
         if (this.getSwitchValue(cmd, CLI_SWITCH_CREDIT_LIMIT_NONE)) {
-            dtoAccounting.setCreditLimit(CreditLimitEnum.NONE);
+            dtoAccounting.setCreditLimit(CreditLimitDtoEnum.NONE);
             dto.setAccounting(dtoAccounting);
         }
 

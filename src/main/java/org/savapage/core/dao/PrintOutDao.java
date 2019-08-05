@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,6 +24,8 @@ package org.savapage.core.dao;
 import java.util.List;
 import java.util.Map;
 
+import org.savapage.core.dao.enums.ExternalSupplierEnum;
+import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.ipp.IppJobStateEnum;
 import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.jpa.Printer;
@@ -37,8 +39,38 @@ import org.savapage.core.print.proxy.JsonProxyPrintJob;
 public interface PrintOutDao extends GenericDao<PrintOut> {
 
     /**
-     * Finds the CUPS print job with the identifying attributes equal to the
-     * parameters passed.
+     * @return Number of distinct active CUPS jobs.
+     */
+    long countActiveCupsJobs();
+
+    /**
+     * @return Number of distinct users with active CUPS jobs.
+     */
+    long countActiveCupsJobUsers();
+
+    /**
+     * @param suppl
+     *            External supplier.
+     * @param stat
+     *            External status.
+     * @return Number of jobs.
+     */
+    long countExtSupplierJobs(ExternalSupplierEnum suppl,
+            ExternalSupplierStatusEnum stat);
+
+    /**
+     * @param suppl
+     *            External supplier.
+     * @param stat
+     *            External status.
+     * @return Number of distinct users with jobs.
+     */
+    long countExtSupplierJobUsers(ExternalSupplierEnum suppl,
+            ExternalSupplierStatusEnum stat);
+
+    /**
+     * Finds the CUPS print job, that is NOT end-of-state, with the
+     * identifying attributes equal to the parameters passed.
      *
      * @param jobPrinterName
      *            The name of the printer.
@@ -46,14 +78,32 @@ public interface PrintOutDao extends GenericDao<PrintOut> {
      *            The job ID.
      * @return The PrintOut object or {@code null} when not found.
      */
-    PrintOut findCupsJob(String jobPrinterName, Integer jobId);
+    PrintOut findActiveCupsJob(String jobPrinterName, Integer jobId);
 
     /**
-     * Finds the CUPS jobs which are NOT registered as completed.
+     * Finds the CUPS print job, that is end-of-state, with the
+     * identifying attributes equal to the parameters passed.
      *
-     * @return The list of jobs ordered by CUPS printer name and job id.
+     * @param jobPrinterName
+     *            The name of the printer.
+     * @param jobId
+     *            The job ID.
+     * @return The PrintOut object or {@code null} when not found.
      */
-    List<PrintOut> findActiveCupsJobs();
+    PrintOut findEndOfStateCupsJob(String jobPrinterName, Integer jobId);
+
+    /**
+     * Finds the CUPS jobs that are NOT end-of-state.
+     *
+     * @param maxResults
+     *            The maximum number of rows in the chunk. If {@code null}, then
+     *            ALL (remaining rows) are returned.
+     *
+     * @return The {@link PrintOut} list, sorted by
+     *         {@link PrintOut#getCupsJobId()} ascending and
+     *         {@link PrintOut#getId()} descending.
+     */
+    List<PrintOut> getActiveCupsJobsChunk(Integer maxResults);
 
     /**
      * Updates a {@link PrintOut} instance with new CUPS job state data.

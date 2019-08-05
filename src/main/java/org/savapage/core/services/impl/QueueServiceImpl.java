@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,19 +24,24 @@ package org.savapage.core.services.impl;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Date;
+import java.util.Map;
 
+import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.UnavailableException;
+import org.savapage.core.concurrent.ReadLockObtainFailedException;
 import org.savapage.core.concurrent.ReadWriteLockEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.enums.DocLogProtocolEnum;
 import org.savapage.core.dao.enums.IppQueueAttrEnum;
+import org.savapage.core.dao.enums.IppRoutingEnum;
 import org.savapage.core.dao.enums.ReservedIppQueueEnum;
 import org.savapage.core.doc.DocContent;
 import org.savapage.core.doc.DocContentTypeEnum;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
+import org.savapage.core.i18n.PhraseEnum;
 import org.savapage.core.jpa.IppQueue;
 import org.savapage.core.jpa.IppQueueAttr;
 import org.savapage.core.jpa.User;
@@ -51,6 +56,7 @@ import org.savapage.core.print.server.UnsupportedPrintJobContent;
 import org.savapage.core.services.QueueService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.util.InetUtils;
+import org.savapage.core.util.JsonHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -99,15 +105,55 @@ public final class QueueServiceImpl extends AbstractService
     }
 
     @Override
-    public String getAttributeValue(final IppQueue queue, final String name) {
+    public String getAttrValue(final IppQueue queue,
+            final IppQueueAttrEnum attr) {
 
-        for (final IppQueueAttr attr : queue.getAttributes()) {
+        for (final IppQueueAttr attrWlk : queue.getAttributes()) {
 
-            if (attr.getName().equals(name)) {
-                return attr.getValue();
+            if (attrWlk.getName().equals(attr.getDbName())) {
+                return attrWlk.getValue();
             }
         }
         return null;
+    }
+
+    @Override
+    public IppRoutingEnum getIppRouting(final IppQueue queue) {
+        return EnumUtils.getEnum(IppRoutingEnum.class,
+                this.getAttrValue(queue, IppQueueAttrEnum.IPP_ROUTING));
+    }
+
+    @Override
+    public Map<String, String> getIppRoutingOptions(final IppQueue queue) {
+        return JsonHelper.createStringMapOrNull(
+                this.getAttrValue(queue, IppQueueAttrEnum.IPP_ROUTING_OPTIONS));
+    }
+
+    @Override
+    public boolean isIppRoutingQueue(final IppQueue queue) {
+        final IppRoutingEnum val = this.getIppRouting(queue);
+        return val != null && val == IppRoutingEnum.TERMINAL;
+    }
+
+    @Override
+    public void setQueueAttrValue(final IppQueue queue,
+            final IppQueueAttrEnum attrEnum, final String attrValue) {
+
+        this.setAttrValue(ippQueueAttrDAO().findByName(queue.getId(), attrEnum),
+                queue, attrEnum, attrValue);
+    }
+
+    @Override
+    public boolean deleteQueueAttrValue(final IppQueue queue,
+            final IppQueueAttrEnum attrEnum) {
+
+        final IppQueueAttr attr =
+                ippQueueAttrDAO().findByName(queue.getId(), attrEnum);
+
+        if (attr == null) {
+            return false;
+        }
+        return ippQueueAttrDAO().delete(attr);
     }
 
     @Override
@@ -375,10 +421,12 @@ public final class QueueServiceImpl extends AbstractService
         DocContentPrintProcessor processor = null;
 
         boolean isAuthorized = false;
-
-        ReadWriteLockEnum.DATABASE_READONLY.setReadLock(true);
+        boolean isDbReadLock = false;
 
         try {
+            ReadWriteLockEnum.DATABASE_READONLY.tryReadLock();
+            isDbReadLock = true;
+
             /*
              * Get the Queue object.
              */
@@ -442,6 +490,9 @@ public final class QueueServiceImpl extends AbstractService
                                 requestingUserId, reservedQueue.getUrlPath()));
             }
 
+        } catch (ReadLockObtainFailedException e) {
+            throw new DocContentPrintException(PhraseEnum.SYS_TEMP_UNAVAILABLE
+                    .uiText(ServiceContext.getLocale()));
         } catch (Exception e) {
             if (processor != null) {
                 processor.setDeferredException(e);
@@ -449,7 +500,9 @@ public final class QueueServiceImpl extends AbstractService
                 throw new SpException(e.getMessage(), e);
             }
         } finally {
-            ReadWriteLockEnum.DATABASE_READONLY.setReadLock(false);
+            if (isDbReadLock) {
+                ReadWriteLockEnum.DATABASE_READONLY.setReadLock(false);
+            }
         }
 
         /*
@@ -486,6 +539,11 @@ public final class QueueServiceImpl extends AbstractService
          */
         if (printException != null) {
             throw printException;
+        }
+
+        if (processor.isPdfRepaired()) {
+            LOGGER.warn("PDF [{}] is invalid and has been repaired.",
+                    printReq.getFileName());
         }
 
         return printRsp;

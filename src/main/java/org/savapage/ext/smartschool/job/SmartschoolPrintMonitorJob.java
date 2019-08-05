@@ -23,6 +23,7 @@ package org.savapage.ext.smartschool.job;
 
 import java.math.BigDecimal;
 import java.net.UnknownHostException;
+import java.sql.Connection;
 import java.text.ParseException;
 import java.util.Locale;
 import java.util.Map;
@@ -145,6 +146,7 @@ public final class SmartschoolPrintMonitorJob extends AbstractJob {
 
             PaperCutServerProxy papercutServerProxy = null;
             PaperCutDbProxy papercutDbProxy = null;
+            Connection papercutDbConnection = null;
 
             try {
                 final ConfigManager cm = ConfigManager.instance();
@@ -171,10 +173,10 @@ public final class SmartschoolPrintMonitorJob extends AbstractJob {
                 if (isPaperCutPrintNonSecure || isPrintByJobTicket) {
 
                     papercutServerProxy = PaperCutServerProxy.create(cm, true);
-                    papercutDbProxy = PaperCutDbProxy.create(cm, true);
+                    papercutDbProxy = new PaperCutDbProxy(cm, true);
 
                     papercutServerProxy.connect();
-                    papercutDbProxy.connect();
+                    papercutDbConnection = papercutDbProxy.openConnection();
                 }
 
                 //
@@ -248,7 +250,7 @@ public final class SmartschoolPrintMonitorJob extends AbstractJob {
                 }
 
                 if (papercutDbProxy != null) {
-                    papercutDbProxy.disconnect();
+                    papercutDbProxy.closeConnection(papercutDbConnection);
                 }
 
                 if (papercutServerProxy != null) {

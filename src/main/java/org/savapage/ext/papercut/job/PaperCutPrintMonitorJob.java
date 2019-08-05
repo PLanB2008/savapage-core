@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,6 +22,7 @@
 package org.savapage.ext.papercut.job;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -129,13 +130,14 @@ public final class PaperCutPrintMonitorJob extends AbstractJob
 
         PaperCutServerProxy papercutServerProxy = null;
         PaperCutDbProxy papercutDbProxy = null;
+        Connection papercutDbConnection = null;
 
         try {
 
             final ConfigManager cm = ConfigManager.instance();
 
             papercutServerProxy = PaperCutServerProxy.create(cm, true);
-            papercutDbProxy = PaperCutDbProxy.create(cm, true);
+            papercutDbProxy = new PaperCutDbProxy(cm, true);
 
             /*
              * Connect to PaperCut. Check every 3 seconds, for 2 minutes.
@@ -149,7 +151,7 @@ public final class PaperCutPrintMonitorJob extends AbstractJob
              * We assume database is up-and-running after connected to PaperCut
              * API.
              */
-            papercutDbProxy.connect();
+            papercutDbConnection = papercutDbProxy.openConnection();
 
             //
             final PaperCutPrintMonitorPattern monitor =
@@ -184,7 +186,7 @@ public final class PaperCutPrintMonitorJob extends AbstractJob
         } finally {
 
             if (papercutDbProxy != null) {
-                papercutDbProxy.disconnect();
+                papercutDbProxy.closeConnection(papercutDbConnection);
             }
 
             if (papercutServerProxy != null) {

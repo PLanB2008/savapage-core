@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,6 +22,7 @@
 package org.savapage.core.jpa.tools;
 
 import java.util.Map;
+import java.util.Map.Entry;
 
 import javax.persistence.EntityManagerFactory;
 
@@ -35,6 +36,49 @@ import org.hibernate.jpa.HibernatePersistenceProvider;
  *
  */
 public final class DbConfig {
+
+    /**
+     * JDBC information.
+     */
+    public static class JdbcInfo {
+
+        private String driver;
+        private String url;
+
+        public String getDriver() {
+            return driver;
+        }
+
+        public void setDriver(String driver) {
+            this.driver = driver;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+
+    }
+
+    /**
+     * Hibernate information.
+     */
+    public static class HibernateInfo {
+
+        private String dialect;
+
+        public String getDialect() {
+            return dialect;
+        }
+
+        public void setDialect(String dialect) {
+            this.dialect = dialect;
+        }
+
+    }
 
     /**
      * Constants only.
@@ -68,13 +112,13 @@ public final class DbConfig {
      * The JDBC connection user name. See
      * {@link AvailableSettings#JPA_JDBC_USER}.
      */
-    public static final String JPA_JDBC_USER = AvailableSettings.JPA_JDBC_USER;
+    private static final String JPA_JDBC_USER = AvailableSettings.JPA_JDBC_USER;
 
     /**
      * The JDBC connection password. See
      * {@link AvailableSettings#JPA_JDBC_PASSWORD}.
      */
-    public static final String JPA_JDBC_PASSWORD =
+    private static final String JPA_JDBC_PASSWORD =
             AvailableSettings.JPA_JDBC_PASSWORD;
 
     /**
@@ -107,36 +151,20 @@ public final class DbConfig {
     /**
      * Configures the Hibernate Connection Pool.
      *
+     * @param valueMap
+     *            The {@link DbConnectionPoolEnum} key value map of hibernate
+     *            C3p0 values.
      * @param config
-     *            The configuration map.
+     *            The configuration map to put values on.
      */
-    public static void configHibernateC3p0(final Map<String, Object> config) {
-        /*
-         * Minimum number of JDBC connections in the pool.
-         */
-        config.put(AvailableSettings.C3P0_MIN_SIZE, "5");
-        /*
-         * Maximum number of JDBC connections in the pool.
-         */
-        config.put(AvailableSettings.C3P0_MAX_SIZE, "400");
+    public static void configHibernateC3p0(
+            final Map<DbConnectionPoolEnum, String> valueMap,
+            final Map<String, Object> config) {
 
-        /*
-         * When an idle connection is removed from the pool (in second).
-         * Hibernate default: 0, never expire.
-         */
-        config.put(AvailableSettings.C3P0_TIMEOUT, "600");
-
-        /*
-         * Number of prepared statements will be cached. Increase performance.
-         * Hibernate default: 0 , caching is disable.
-         */
-        config.put(AvailableSettings.C3P0_MAX_STATEMENTS, "50");
-
-        /*
-         * Idle time in seconds before a connection is automatically validated.
-         * Hibernate default: 0.
-         */
-        config.put(AvailableSettings.C3P0_IDLE_TEST_PERIOD, "120");
+        for (final Entry<DbConnectionPoolEnum, String> entry : valueMap
+                .entrySet()) {
+            config.put(entry.getKey().getC3p0Key(), entry.getValue());
+        }
     }
 
     /**
@@ -169,21 +197,48 @@ public final class DbConfig {
             final String jdbcPassword, final String jdbcUrl,
             final String jdbcDriver) {
 
-        config.put(HIBERNATE_DIALECT,
-                "org.hibernate.dialect.PostgreSQLDialect");
+        final String jdbcDriverWrk;
 
-        final String jdbcDriverDefault = "org.postgresql.Driver";
+        if (jdbcDriver == null) {
+            jdbcDriverWrk = org.postgresql.Driver.class.getName();
+        } else {
+            jdbcDriverWrk = jdbcDriver;
+        }
+
+        configHibernateExternal(config, jdbcUser, jdbcPassword, jdbcUrl,
+                jdbcDriverWrk,
+                org.hibernate.dialect.PostgreSQL82Dialect.class.getName());
+    }
+
+    /**
+     * Sets the Hibernate properties for an external database.
+     *
+     * @param config
+     *            The configuration map.
+     * @param jdbcUser
+     *            User.
+     * @param jdbcPassword
+     *            Password.
+     * @param jdbcUrl
+     *            URL.
+     * @param jdbcDriverClassName
+     *            JDBC driver class name.
+     * @param dialectClassName
+     *            Hibernate dialect class name.
+     */
+    public static void configHibernateExternal(final Map<String, Object> config,
+            final String jdbcUser, final String jdbcPassword,
+            final String jdbcUrl, final String jdbcDriverClassName,
+            final String dialectClassName) {
 
         if (jdbcUser != null) {
-            config.put(DbConfig.JPA_JDBC_USER, jdbcUser);
-            config.put(DbConfig.JPA_JDBC_PASSWORD, jdbcPassword);
-            config.put(DbConfig.JPA_JDBC_URL, jdbcUrl);
+            config.put(JPA_JDBC_USER, jdbcUser);
+            config.put(JPA_JDBC_PASSWORD, jdbcPassword);
+            config.put(JPA_JDBC_URL, jdbcUrl);
         }
-        if (jdbcDriver == null) {
-            config.put(DbConfig.JPA_JDBC_DRIVER, jdbcDriverDefault);
-        } else {
-            config.put(DbConfig.JPA_JDBC_DRIVER, jdbcDriver);
-        }
+
+        config.put(JPA_JDBC_DRIVER, jdbcDriverClassName);
+        config.put(HIBERNATE_DIALECT, dialectClassName);
     }
 
     /**
@@ -194,9 +249,7 @@ public final class DbConfig {
      * @return The {@link EntityManagerFactory}.
      */
     public static EntityManagerFactory
-
             createEntityManagerFactory(final Map<String, Object> config) {
-
         /*
          * Since Mantis #348
          */

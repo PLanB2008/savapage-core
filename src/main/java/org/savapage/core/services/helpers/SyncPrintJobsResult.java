@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,13 +14,14 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.services.helpers;
 
+import org.savapage.core.ipp.IppJobStateEnum;
 import org.savapage.core.jpa.PrintOut;
 
 /**
@@ -39,7 +40,13 @@ public final class SyncPrintJobsResult {
      * The number of {@link PrintOut} jobs that were updated with a new CUPS
      * state.
      */
-    private final int jobsUpdated;
+    private final int jobsStateChange;
+
+    /**
+     * The number of CUPS jobs that were forced to cancel because they were
+     * {@link IppJobStateEnum#IPP_JOB_STOPPED}.
+     */
+    private final int jobsForcedCancel;
 
     /**
      * The number of jobs that were not found in CUPS: this could be due to an
@@ -48,20 +55,32 @@ public final class SyncPrintJobsResult {
     private final int jobsNotFound;
 
     /**
+     * The last CUPS job id handled.
+     */
+    private final int jobIdLast;
+
+    /**
      *
      * @param active
      *            The number of active {@link PrintOut} jobs.
-     * @param updated
+     * @param stateChange
      *            The number of {@link PrintOut} jobs that were updated with a
      *            new CUPS state.
+     * @param forcedCancel
+     *            The number of CUPS jobs that were forced to cancel because
+     *            they were {@link IppJobStateEnum#IPP_JOB_STOPPED}.
      * @param notFound
      *            The number of jobs that were not found in CUPS.
+     * @param lastJobId
+     *            The last CUPS job id handled.
      */
-    public SyncPrintJobsResult(final int active, final int updated,
-            final int notFound) {
+    public SyncPrintJobsResult(final int active, final int stateChange,
+            final int forcedCancel, final int notFound, final int lastJobId) {
         this.jobsActive = active;
-        this.jobsUpdated = updated;
+        this.jobsStateChange = stateChange;
+        this.jobsForcedCancel = forcedCancel;
         this.jobsNotFound = notFound;
+        this.jobIdLast = lastJobId;
     }
 
     /**
@@ -75,8 +94,23 @@ public final class SyncPrintJobsResult {
      * @return The number of {@link PrintOut} jobs that were updated with a new
      *         CUPS state.
      */
-    public int getJobsUpdated() {
-        return jobsUpdated;
+    public int getJobsStateChange() {
+        return jobsStateChange;
+    }
+
+    /**
+     * @return The number of CUPS jobs that were forced to cancel because they
+     *         were {@link IppJobStateEnum#IPP_JOB_STOPPED}.
+     */
+    public int getJobsForcedCancel() {
+        return jobsForcedCancel;
+    }
+
+    /**
+     * @return
+     */
+    public int getJobsIdentical() {
+        return jobsActive - jobsStateChange - jobsNotFound;
     }
 
     /**
@@ -84,6 +118,13 @@ public final class SyncPrintJobsResult {
      */
     public int getJobsNotFound() {
         return jobsNotFound;
+    }
+
+    /**
+     * @return The last CUPS job id handled.
+     */
+    public int getJobIdLast() {
+        return jobIdLast;
     }
 
 }

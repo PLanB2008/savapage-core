@@ -28,7 +28,7 @@ import org.quartz.CronExpression;
  * @author Rijk Ravestein
  *
  */
-public final class CronExpressionValidator implements ConfigPropValidator {
+public class CronExpressionValidator implements ConfigPropValidator {
 
     @Override
     public ValidationResult validate(final String value) {

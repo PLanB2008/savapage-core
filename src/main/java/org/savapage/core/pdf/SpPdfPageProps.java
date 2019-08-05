@@ -125,13 +125,18 @@ public final class SpPdfPageProps {
      * @param filePathPdf
      *            The PDF document file path.
      * @return The {@link SpPdfPageProps}.
-     * @throws PdfSecurityException
-     *             When encrypted or password protected PDF document.
      * @throws PdfValidityException
-     *             When the document isn't a valid PDF document.
+     *             When invalid PDF document.
+     * @throws PdfSecurityException
+     *             When encrypted PDF document.
+     * @throws PdfPasswordException
+     *             When password protected PDF document.
+     * @throws PdfUnsupportedException
+     *             When unsupported PDF document.
      */
     public static SpPdfPageProps create(final String filePathPdf)
-            throws PdfSecurityException, PdfValidityException {
+            throws PdfValidityException, PdfSecurityException,
+            PdfPasswordException, PdfUnsupportedException {
         return AbstractPdfCreator.pageProps(filePathPdf);
     }
 }

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -23,12 +23,12 @@ package org.savapage.core.services.impl;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.Properties;
@@ -41,6 +41,7 @@ import javax.mail.Message;
 import javax.mail.MessagingException;
 import javax.mail.PasswordAuthentication;
 import javax.mail.SendFailedException;
+import javax.mail.Transport;
 import javax.mail.internet.InternetAddress;
 import javax.mail.internet.MimeBodyPart;
 import javax.mail.internet.MimeMessage;
@@ -48,7 +49,6 @@ import javax.mail.internet.MimeMultipart;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpInfo;
 import org.savapage.core.circuitbreaker.CircuitBreaker;
@@ -60,9 +60,14 @@ import org.savapage.core.config.CircuitBreakerEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.config.ServerPathEnum;
+import org.savapage.core.dao.UserEmailDao;
+import org.savapage.core.jpa.UserEmail;
 import org.savapage.core.services.EmailService;
+import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.email.EmailMsgParms;
 import org.savapage.core.util.FileSystemHelper;
+import org.savapage.lib.pgp.PGPBaseException;
 import org.savapage.lib.pgp.PGPPublicKeyInfo;
 import org.savapage.lib.pgp.PGPSecretKeyInfo;
 import org.savapage.lib.pgp.mime.PGPBodyPartEncrypter;
@@ -73,7 +78,6 @@ import org.slf4j.LoggerFactory;
 
 /**
  *
- * @since 0.9.9
  * @author Rijk Ravestein
  *
  */
@@ -108,7 +112,8 @@ public final class EmailServiceImpl extends AbstractService
     private String smtpSSLProtocols;
 
     /**
-     * Creates a session for <i>writing</i> the MIME message file.
+     * Creates an empty (dummy) session for creating a MIME message from/to
+     * file.
      *
      * @return The {@link javax.mail.Session}.
      */
@@ -116,12 +121,8 @@ public final class EmailServiceImpl extends AbstractService
         return javax.mail.Session.getInstance(new Properties());
     }
 
-    /**
-     * Creates a session for <i>sending</i> the mail.
-     *
-     * @return The {@link javax.mail.Session}.
-     */
-    private javax.mail.Session createSendMailSession() {
+    @Override
+    public javax.mail.Session createSendMailSession() {
 
         final ConfigManager conf = ConfigManager.instance();
 
@@ -144,6 +145,8 @@ public final class EmailServiceImpl extends AbstractService
          * Create properties and get the default Session
          */
         final java.util.Properties props = new java.util.Properties();
+
+        props.put("mail.transport.protocol", "smtp");
 
         /*
          * Timeout (in milliseconds) for establishing the SMTP connection.
@@ -203,6 +206,7 @@ public final class EmailServiceImpl extends AbstractService
     }
 
     /**
+     * Creates a MIME message.
      * <p>
      * See the <a href=
      * "https://javamail.java.net/nonav/docs/api/com/sun/mail/smtp/package-summary.html"
@@ -210,19 +214,25 @@ public final class EmailServiceImpl extends AbstractService
      * </p>
      *
      * @param msgParms
-     * @param isSync
-     * @return
+     *            The {@link EmailMsgParms}.
+     * @param isSendNow
+     *            If {@code true} the message is created for immediate sending.
+     *            If {@code false}, the message is created for
+     *            store-and-forward.
+     * @return The {@link MimeMessage}.
      * @throws MessagingException
+     *             Error in message.
      * @throws IOException
+     *             IO error.
      */
     private MimeMessage createMimeMessage(final EmailMsgParms msgParms,
-            final boolean isSync) throws MessagingException, IOException {
+            final boolean isSendNow) throws MessagingException, IOException {
 
         final ConfigManager conf = ConfigManager.instance();
 
         final javax.mail.Session session;
 
-        if (isSync) {
+        if (isSendNow) {
             session = this.createSendMailSession();
         } else {
             session = this.createMimeMsgSession();
@@ -371,6 +381,9 @@ public final class EmailServiceImpl extends AbstractService
      * Sends a {@link MimeMessage} using the
      * {@link CircuitBreakerEnum#SMTP_CONNECTION}.
      *
+     * @param transport
+     *            If {@code null}, the static
+     *            {@link javax.mail.Transport#send(Message)} method is used.
      * @param msg
      *            The a {@link MimeMessage}.
      * @throws CircuitBreakerException
@@ -379,7 +392,8 @@ public final class EmailServiceImpl extends AbstractService
      * @throws InterruptedException
      *             When the thread is interrupted.
      */
-    private static void sendMimeMessage(final MimeMessage msg)
+    private static void sendMimeMessage(final Transport transport,
+            final MimeMessage msg)
             throws InterruptedException, CircuitBreakerException {
 
         final CircuitBreakerOperation operation =
@@ -394,7 +408,12 @@ public final class EmailServiceImpl extends AbstractService
                         }
 
                         try {
-                            javax.mail.Transport.send(msg);
+                            if (transport == null) {
+                                javax.mail.Transport.send(msg);
+                            } else {
+                                transport.sendMessage(msg,
+                                        msg.getAllRecipients());
+                            }
                         } catch (SendFailedException e) {
                             throw new CircuitNonTrippingException(e);
                         } catch (MessagingException e) {
@@ -408,12 +427,13 @@ public final class EmailServiceImpl extends AbstractService
                 .getCircuitBreaker(CircuitBreakerEnum.SMTP_CONNECTION);
 
         breaker.execute(operation);
-
     }
 
     @Override
     public void writeEmail(final EmailMsgParms parms)
-            throws MessagingException, IOException {
+            throws MessagingException, IOException, PGPBaseException {
+
+        this.setPublicKeyList(parms);
 
         final String fileBaseName =
                 String.format("%d-%s.%s", System.currentTimeMillis(),
@@ -422,22 +442,18 @@ public final class EmailServiceImpl extends AbstractService
         final Path filePathTemp =
                 Paths.get(ConfigManager.getAppTmpDir(), fileBaseName);
 
-        final FileOutputStream fos =
-                new FileOutputStream(filePathTemp.toFile());
+        try (FileOutputStream fos =
+                new FileOutputStream(filePathTemp.toFile());) {
 
-        try {
             final MimeMessage msg = this.createMimeMessage(parms, false);
             msg.writeTo(fos);
 
             fos.flush();
             fos.getFD().sync();
-
-        } finally {
-            IOUtils.closeQuietly(fos);
         }
 
         final Path filePath = Paths.get(ConfigManager.getServerHome(),
-                ConfigManager.getServerRelativeEmailOutboxPath(), fileBaseName);
+                ServerPathEnum.EMAIL_OUTBOX.getPath(), fileBaseName);
 
         FileSystemHelper.doAtomicFileMove(filePathTemp, filePath);
     }
@@ -445,32 +461,79 @@ public final class EmailServiceImpl extends AbstractService
     @Override
     public void sendEmail(final EmailMsgParms parms)
             throws InterruptedException, CircuitBreakerException,
-            MessagingException, IOException {
+            MessagingException, IOException, PGPBaseException {
 
-        sendMimeMessage(this.createMimeMessage(parms, true));
+        setPublicKeyList(parms);
+        sendMimeMessage(null, this.createMimeMessage(parms, true));
     }
 
     @Override
-    public MimeMessage sendEmail(final File mimeFile)
-            throws FileNotFoundException, MessagingException,
-            InterruptedException, CircuitBreakerException {
+    public MimeMessage sendEmail(final File mimeFile) throws MessagingException,
+            InterruptedException, CircuitBreakerException, IOException {
 
-        final FileInputStream fis = new FileInputStream(mimeFile);
-        final MimeMessage msg = new MimeMessage(createSendMailSession(), fis);
+        try (FileInputStream fis = new FileInputStream(mimeFile);) {
+            final MimeMessage msg =
+                    new MimeMessage(createSendMailSession(), fis);
+            sendMimeMessage(null, msg);
+            return msg;
+        }
+    }
 
-        try {
-            sendMimeMessage(msg);
-        } finally {
-            IOUtils.closeQuietly(fis);
+    @Override
+    public MimeMessage sendEmail(final Transport transport, final File mimeFile)
+            throws MessagingException, InterruptedException,
+            CircuitBreakerException, IOException {
+
+        try (FileInputStream fis = new FileInputStream(mimeFile);) {
+            final MimeMessage msg =
+                    new MimeMessage(this.createMimeMsgSession(), fis);
+            sendMimeMessage(transport, msg);
+            return msg;
+        }
+    }
+
+    /**
+     * Finds PGP public keys to encrypt mail with. When found, set keys in
+     * {@link EmailMsgParms}.
+     * <p>
+     * Invariant: Mail address must be set in emailParms.
+     * </p>
+     *
+     * @param emailParms
+     *            The {@link EmailMsgParms} to set public keys in.
+     * @throws PGPBaseException
+     *             If PGP error.
+     */
+    private void setPublicKeyList(final EmailMsgParms emailParms)
+            throws PGPBaseException {
+
+        if (StringUtils.isBlank(emailParms.getToAddress())) {
+            throw new IllegalStateException("Email address not present.");
         }
 
-        return msg;
+        final UserEmailDao daoUserEmail =
+                ServiceContext.getDaoContext().getUserEmailDao();
+
+        final UserEmail userEmail = daoUserEmail
+                .findByEmail(emailParms.getToAddress().toLowerCase());
+
+        if (userEmail != null) {
+
+            final PGPPublicKeyInfo info =
+                    pgpPublicKeyService().readRingEntry(userEmail.getUser());
+
+            if (info != null) {
+                final List<PGPPublicKeyInfo> list = new ArrayList<>();
+                list.add(info);
+                emailParms.setPublicKeyList(list);
+            }
+        }
     }
 
     @Override
     public Path getOutboxMimeFilesPath() {
         return Paths.get(ConfigManager.getServerHome(),
-                ConfigManager.getServerRelativeEmailOutboxPath());
+                ServerPathEnum.EMAIL_OUTBOX.getPath());
     }
 
     @Override

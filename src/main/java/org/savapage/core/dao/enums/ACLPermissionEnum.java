@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http:savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http:www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -29,30 +29,16 @@ import java.util.Locale;
 import org.savapage.core.util.LocaleHelper;
 
 /**
+ * Permissions for Actions and Roles.
  *
  * @author Rijk Ravestein
  *
  */
 public enum ACLPermissionEnum {
-    /**
-     * Allowed to read the domain object.
-     */
-    READER(ACLPermissionEnum.BIT_READER),
 
-    /**
-     * Allowed to send domain object.
-     */
-    SEND(ACLPermissionEnum.BIT_READER_SEND),
-
-    /**
-     * Allowed to download domain object.
-     */
-    DOWNLOAD(ACLPermissionEnum.BIT_READER_DOWNLOAD),
-
-    /**
-     * Allowed read and to make changes to the domain object.
-     */
-    EDITOR(ACLPermissionEnum.BIT_EDITOR, ACLPermissionEnum.BIT_READER),
+    // ----------------------------------------------------------------------
+    // Actions: more can be added as BIT_RESERVED_* allows.
+    // ----------------------------------------------------------------------
 
     /**
      * Allowed to create the domain object.
@@ -65,14 +51,50 @@ public enum ACLPermissionEnum {
     DELETE(ACLPermissionEnum.BIT_EDITOR_DELETE),
 
     /**
+     * Allowed to download domain object.
+     */
+    DOWNLOAD(ACLPermissionEnum.BIT_READER_DOWNLOAD),
+
+    /**
+     * Allowed to select domain object.
+     */
+    SELECT(ACLPermissionEnum.BIT_READER_SELECT),
+
+    /**
+     * Allowed to send domain object.
+     */
+    SEND(ACLPermissionEnum.BIT_READER_SEND),
+
+    /**
+     * Allowed to sign domain object.
+     */
+    SIGN(ACLPermissionEnum.BIT_READER_SIGN),
+
+    /**
      * Allowed to restore a previously deleted domain object.
      */
     UNDELETE(ACLPermissionEnum.BIT_EDITOR_UNDELETE),
 
+    // ----------------------------------------------------------------------
+    // Roles: FIXED, do NOT add, since JavaScript handling depends on it.
+    // ----------------------------------------------------------------------
+
+    /**
+     * Allowed to read the domain object.
+     */
+    READER(ACLPermissionEnum.BIT_READER),
+
+    /**
+     * Allowed to read and optionally create, (un)delete or edit a domain
+     * object.
+     */
+    EDITOR(ACLPermissionEnum.BIT_EDITOR, ACLPermissionEnum.BIT_READER),
+
     /**
      * Allowed to perform all of the above actions.
      */
-    OPERATOR(ACLPermissionEnum.BIT_OPERATOR, ACLPermissionEnum.BITMASK_OPERATOR),
+    OPERATOR(ACLPermissionEnum.BIT_OPERATOR,
+            ACLPermissionEnum.BITMASK_OPERATOR),
 
     /**
      * Allowed to perform all of the above actions, and in addition allowed to
@@ -98,9 +120,9 @@ public enum ACLPermissionEnum {
     //
     private static final int BIT_READER_DOWNLOAD = 0x2;
     private static final int BIT_READER_SEND = 0x4;
+    private static final int BIT_READER_SELECT = 0x8;
+    private static final int BIT_READER_SIGN = 0x10;
     //
-    private static final int BIT_RESERVED_4 = 0x8;
-    private static final int BIT_RESERVED_5 = 0x10;
     private static final int BIT_RESERVED_6 = 0x20;
     private static final int BIT_RESERVED_7 = 0x40;
     private static final int BIT_RESERVED_8 = 0x80;
@@ -161,9 +183,16 @@ public enum ACLPermissionEnum {
                     ACLPermissionEnum.MASTER, ACLPermissionEnum.OPERATOR,
                     ACLPermissionEnum.EDITOR, ACLPermissionEnum.READER };
 
+    /**
+     * Permissions a {@link #READER} can have.
+     */
     private static final EnumSet<ACLPermissionEnum> PERMS_READER =
-            EnumSet.of(ACLPermissionEnum.DOWNLOAD, ACLPermissionEnum.SEND);
+            EnumSet.of(ACLPermissionEnum.DOWNLOAD, ACLPermissionEnum.SEND,
+                    ACLPermissionEnum.SELECT, ACLPermissionEnum.SIGN);
 
+    /**
+     * Permissions an {@link #EDITOR} can have.
+     */
     private static final EnumSet<ACLPermissionEnum> PERMS_EDITOR =
             EnumSet.of(ACLPermissionEnum.CREATE, ACLPermissionEnum.DELETE,
                     ACLPermissionEnum.UNDELETE);
@@ -174,30 +203,30 @@ public enum ACLPermissionEnum {
     private int flag;
 
     /**
-     * A set of permission flags as bitmask.
+     * The set of permission flags as bitmask.
      */
     private int privileges;
 
     /**
      *
-     * @param flag
-     *            The identifying bitmask flag.
+     * @param bitmask
+     *            The identifying action bitmask.
      */
-    ACLPermissionEnum(final int flag) {
-        this.flag = flag;
-        this.privileges = flag;
+    ACLPermissionEnum(final int bitmask) {
+        this.flag = bitmask;
+        this.privileges = bitmask;
     }
 
     /**
      *
-     * @param flag
-     *            The identifying bitmask flag.
+     * @param role
+     *            The identifying role bitmask flag.
      * @param bitmask
-     *            A set of permission flags as bitmask.
+     *            A set of additional permission flags as bitmask.
      */
-    ACLPermissionEnum(final int flag, final int bitmask) {
-        this.flag = flag;
-        this.privileges = flag | bitmask;
+    ACLPermissionEnum(final int role, final int bitmask) {
+        this.flag = role;
+        this.privileges = role | bitmask;
     }
 
     /**

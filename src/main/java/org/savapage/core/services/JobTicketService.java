@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -28,14 +28,21 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.SortedSet;
 
 import org.savapage.core.dao.enums.ACLRoleEnum;
+import org.savapage.core.doc.store.DocStoreException;
+import org.savapage.core.dto.JobTicketDomainDto;
+import org.savapage.core.dto.JobTicketLabelDto;
 import org.savapage.core.dto.JobTicketTagDto;
+import org.savapage.core.dto.JobTicketUseDto;
 import org.savapage.core.dto.RedirectPrinterDto;
 import org.savapage.core.imaging.EcoPrintPdfTask;
 import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.ipp.client.IppConnectException;
 import org.savapage.core.ipp.helpers.IppOptionMap;
+import org.savapage.core.ipp.rules.IppRuleValidationException;
+import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
@@ -70,6 +77,11 @@ public interface JobTicketService extends StatefulService {
          */
         private String searchTicketId;
 
+        /**
+         * Primary DB key of job ticket printer group.
+         */
+        private Long printerGroupID;
+
         public Long getUserId() {
             return userId;
         }
@@ -86,6 +98,14 @@ public interface JobTicketService extends StatefulService {
             this.searchTicketId = searchTicketId;
         }
 
+        public Long getPrinterGroupID() {
+            return printerGroupID;
+        }
+
+        public void setPrinterGroupID(Long printerGroupID) {
+            this.printerGroupID = printerGroupID;
+        }
+
     }
 
     /**
@@ -100,13 +120,27 @@ public interface JobTicketService extends StatefulService {
      *            The {@link ProxyPrintInboxReq}.
      * @param deliveryDate
      *            The requested date of delivery.
-     * @param tag
-     *            The tag (to be pre-pended to the generated ticket number). Can
-     *            be {@code null} or empty.
+     * @param label
+     *            The label(to be pre-pended to the generated ticket number).
+     *            Can be {@code null} or empty.
      * @return The job ticket created.
      */
     OutboxJobDto createCopyJob(User user, ProxyPrintInboxReq request,
-            Date deliveryDate, String tag);
+            Date deliveryDate, JobTicketLabelDto label);
+
+    /**
+     * Reopens a Job Ticket for extra copies.
+     *
+     * @param docLog
+     *            The original {@link DocLog}.
+     * @return The job ticket created.
+     * @throws IOException
+     *             If IO error.
+     * @throws DocStoreException
+     *             If original ticket does not exist.
+     */
+    OutboxJobDto reopenTicketForExtraCopies(DocLog docLog)
+            throws IOException, DocStoreException;
 
     /**
      * Sends Job Ticket(s) to the OutBox.
@@ -120,9 +154,9 @@ public interface JobTicketService extends StatefulService {
      *            The {@link ProxyPrintInboxReq}.
      * @param deliveryDate
      *            The requested date of delivery.
-     * @param tag
-     *            The tag (to be pre-pended to the generated ticket number). Can
-     *            be {@code null} or empty.
+     * @param label
+     *            The label (to be pre-pended to the generated ticket number).
+     *            Can be {@code null} or empty.
      * @return The job tickets created.
      *
      * @throws EcoPrintPdfTaskPendingException
@@ -130,8 +164,8 @@ public interface JobTicketService extends StatefulService {
      *             pending.
      */
     List<OutboxJobDto> proxyPrintInbox(User lockedUser,
-            ProxyPrintInboxReq request, Date deliveryDate, String tag)
-            throws EcoPrintPdfTaskPendingException;
+            ProxyPrintInboxReq request, Date deliveryDate,
+            JobTicketLabelDto label) throws EcoPrintPdfTaskPendingException;
 
     /**
      * Sends Print Job to the OutBox.
@@ -151,15 +185,15 @@ public interface JobTicketService extends StatefulService {
      *            The {@link DocContentPrintInInfo}.
      * @param deliveryDate
      *            The requested date of delivery.
-     * @param tag
-     *            The tag (to be pre-pended to the generated ticket number). Can
-     *            be {@code null} or empty.
+     * @param label
+     *            The label (to be pre-pended to the generated ticket number).
+     *            Can be {@code null} or empty.
      * @throws IOException
      *             When file IO error occurs.
      */
     void proxyPrintPdf(User lockedUser, ProxyPrintDocReq request,
             PdfCreateInfo createInfo, DocContentPrintInInfo printInfo,
-            Date deliveryDate, String tag) throws IOException;
+            Date deliveryDate, JobTicketLabelDto label) throws IOException;
 
     /**
      * Creates and formats a unique ticket number.
@@ -277,6 +311,19 @@ public interface JobTicketService extends StatefulService {
     OutboxJobDto closeTicketPrint(String fileName);
 
     /**
+     * Updates Job Ticket Printer Groups in ticket cache.
+     */
+    void updatePrinterGroupIDs();
+
+    /**
+     * Updates Job Ticket Printer Groups of printer in ticket cache.
+     *
+     * @param printer
+     *            Printer.
+     */
+    void updatePrinterGroupIDs(Printer printer);
+
+    /**
      * Updates a Job Ticket.
      *
      * @param dto
@@ -346,9 +393,11 @@ public interface JobTicketService extends StatefulService {
      *             When IO error.
      * @throws IppConnectException
      *             When connection to CUPS fails.
+     * @throws IppRuleValidationException
+     *             When IPP constraint violations.
      */
     OutboxJobDto printTicket(JobTicketExecParms parms)
-            throws IOException, IppConnectException;
+            throws IOException, IppConnectException, IppRuleValidationException;
 
     /**
      * Retries a Job Ticket Print (typically after a job is cancelled, due to
@@ -363,9 +412,11 @@ public interface JobTicketService extends StatefulService {
      *             When IO error.
      * @throws IppConnectException
      *             When connection to CUPS fails.
+     * @throws IppRuleValidationException
+     *             When IPP constraint violations.
      */
     OutboxJobDto retryTicketPrint(JobTicketExecParms parms)
-            throws IOException, IppConnectException;
+            throws IOException, IppConnectException, IppRuleValidationException;
 
     /**
      * Settles a Job Ticket without printing it.
@@ -383,6 +434,33 @@ public interface JobTicketService extends StatefulService {
      */
     OutboxJobDto settleTicket(String operator, Printer printer, String fileName)
             throws IOException;
+
+    /**
+     * Checks if job represents a reopened Job Ticket.
+     *
+     * @param job
+     *            The Job Ticket.
+     * @return {@code true} when this is a Reopened Job Ticket.
+     */
+    boolean isReopenedTicket(OutboxJobDto job);
+
+    /**
+     * Checks if job ticket number represents a reopened Job Ticket.
+     *
+     * @param ticketNumber
+     *            The Job Ticket number (can be {@code null}).
+     * @return {@code true} when ticket number represents a reopened Job Ticket.
+     */
+    boolean isReopenedTicketNumber(String ticketNumber);
+
+    /**
+     * Checks if job ticket number is active as reopened Job Ticket.
+     *
+     * @param ticketNumber
+     *            The Job Ticket number.
+     * @return {@code true} when ticket number is active as reopened Job Ticket.
+     */
+    boolean isTicketReopened(String ticketNumber);
 
     /**
      * Gets the list of {@link RedirectPrinterDto} compatible printers for a Job
@@ -448,23 +526,61 @@ public interface JobTicketService extends StatefulService {
     TicketJobSheetDto getTicketJobSheet(IppOptionMap options);
 
     /**
+     * Get the ticket domains from cache, sorted by domain name.
+     *
+     * @return The sorted domains, or empty when no domains are defined or
+     *         domains are disabled.
+     */
+    Collection<JobTicketDomainDto> getTicketDomainsByName();
+
+    /**
+     * Get the ticket uses from cache, sorted by use name.
+     *
+     * @return The sorted uses, or empty when no uses are defined or uses are
+     *         disabled.
+     */
+    Collection<JobTicketUseDto> getTicketUsesByName();
+
+    /**
      * Get the ticket tags from cache, sorted by tag word.
      *
      * @return The sorted tags, or empty when no tags are defined or tags are
      *         disabled.
-     *
-     * @throws IllegalArgumentException
-     *             When error parsing formatted tags string.
      */
-    Collection<JobTicketTagDto> getTicketTagsByWord();
+    Collection<JobTicketTagDto> getTicketTagsByName();
 
     /**
-     * Gets the {@link JobTicketTagDto} from a ticket number.
+     * Gets the prefix label from a ticket number.
      *
      * @param ticketNumber
      *            The ticket number.
-     * @return {@code null| when not present.
+     * @return {@code null} when not present.
      */
-    JobTicketTagDto getTicketNumberTag(String ticketNumber);
+    String getTicketNumberLabel(String ticketNumber);
+
+    /**
+     * Creates a job ticket label from constituents.
+     *
+     * @param label
+     *            The label.
+     * @return The aggregated label (can be empty)
+     */
+    String createTicketLabel(JobTicketLabelDto label);
+
+    /**
+     *
+     * @return Valid delivery weekdays as set of ordinals, sorted ascending
+     *         (Sunday is zero).
+     */
+    SortedSet<Integer> getDeliveryDaysOfWeek();
+
+    /**
+     * Calculates the next Job Ticket delivery date.
+     *
+     * @param offsetDate
+     *            Date offset.
+     * @return Next Job Ticket delivery date.
+     */
+    Date getDeliveryDateNext(Date offsetDate);
 
 }

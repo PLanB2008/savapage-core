@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -38,11 +38,8 @@ import com.fasterxml.jackson.annotation.JsonInclude.Include;
 @JsonInclude(Include.NON_NULL)
 public final class JsonPrinterDetail extends JsonPrinter {
 
-    /**
-     * {@code true} when print-scaling was injected from a SavaPage PPD
-     * extension.
-     */
-    private boolean printScalingExt = false;
+    /** */
+    private boolean archiveDisabled = false;
 
     /**
      *
@@ -104,21 +101,12 @@ public final class JsonPrinterDetail extends JsonPrinter {
         this.mediaSources = mediaSources;
     }
 
-    /**
-     * @return {@code true} when print-scaling was injected from a SavaPage PPD
-     *         extension.
-     */
-    public boolean isPrintScalingExt() {
-        return printScalingExt;
+    public boolean isArchiveDisabled() {
+        return archiveDisabled;
     }
 
-    /**
-     * @param printScalingExt
-     *            {@code true} when print-scaling was injected from a SavaPage
-     *            PPD extension.
-     */
-    public void setPrintScalingExt(boolean printScalingExt) {
-        this.printScalingExt = printScalingExt;
+    public void setArchiveDisabled(boolean archiveDisabled) {
+        this.archiveDisabled = archiveDisabled;
     }
 
     /**
@@ -132,7 +120,7 @@ public final class JsonPrinterDetail extends JsonPrinter {
 
         super.copy(copy);
 
-        copy.printScalingExt = this.printScalingExt;
+        copy.archiveDisabled = this.archiveDisabled;
 
         copy.groups = new ArrayList<>();
         for (final JsonProxyPrinterOptGroup group : groups) {

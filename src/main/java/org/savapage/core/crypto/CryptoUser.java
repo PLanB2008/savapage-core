@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -48,12 +48,13 @@ import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.PBEParameterSpec;
 
 import org.apache.commons.codec.digest.DigestUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.SpInfo;
 import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.ServerPathEnum;
+import org.savapage.core.util.IOHelper;
 
 import net.iharder.Base64;
 
@@ -66,6 +67,13 @@ import net.iharder.Base64;
 public final class CryptoUser {
 
     public static final String INTERNAL_USER_PW_CHECKSUM_PREFIX = "HASH:";
+
+    /**
+     * The relative path of the encryption.properties file (relative to the
+     * {@code server} directory).
+     */
+    private static final String FILE_ENCRYPTION_PROPERTIES =
+            "encryption.properties";
 
     private static final String PROP_CIPHER_PASSWORD = "cipher.password";
     private static final String PROP_CIPHER_SALT = "cipher.salt";
@@ -107,12 +115,11 @@ public final class CryptoUser {
 
     /**
      * Initialization of the private singleton so the
-     * {@link ConfigManager#SERVER_REL_PATH_ENCRYPTION_PROPERTIES} gets lazy
-     * created.
+     * {@link SERVER_REL_PATH_ENCRYPTION_PROPERTIES} gets lazy created.
      *
      * @throws IOException
      */
-    synchronized static public void init() throws IOException {
+    public static synchronized void init() throws IOException {
         getInstance();
     }
 
@@ -120,8 +127,8 @@ public final class CryptoUser {
      *
      */
     private CryptoUser() {
-        try {
 
+        try {
             readProperties();
 
             /*
@@ -167,9 +174,8 @@ public final class CryptoUser {
         final int pwLength = 48;
 
         final Properties props = new Properties();
-        final File fileProp = Paths
-                .get(ConfigManager.getServerHome(),
-                        ConfigManager.SERVER_REL_PATH_ENCRYPTION_PROPERTIES)
+        final File fileProp = Paths.get(ConfigManager.getServerHome(),
+                ServerPathEnum.DATA.getPath(), FILE_ENCRYPTION_PROPERTIES)
                 .toFile();
 
         InputStream istr = null;
@@ -240,13 +246,14 @@ public final class CryptoUser {
                 Files.setPosixFilePermissions(
                         fs.getPath(fileProp.getAbsolutePath()), permissions);
 
-                SpInfo.instance().log(String.format("Created %s",
-                        ConfigManager.SERVER_REL_PATH_ENCRYPTION_PROPERTIES));
+                SpInfo.instance().log(String.format("Created %s%c%s",
+                        ServerPathEnum.DATA.getPath(), File.separatorChar,
+                        FILE_ENCRYPTION_PROPERTIES));
             }
 
         } finally {
-            IOUtils.closeQuietly(writer);
-            IOUtils.closeQuietly(istr);
+            IOHelper.closeQuietly(writer);
+            IOHelper.closeQuietly(istr);
         }
     }
 

@@ -195,6 +195,20 @@ public interface AccountingService {
             String currencySymbol);
 
     /**
+     * Formats a user balance (using the right number of decimals).
+     *
+     * @param balance
+     *            The user balance.
+     * @param locale
+     *            The {@link Locale}.
+     * @param currencySymbol
+     *            The currency symbol.
+     * @return The formatted balance.
+     */
+    String formatUserBalance(BigDecimal balance, Locale locale,
+            String currencySymbol);
+
+    /**
      * Gets the {@link Account} information of a {@link User} meant for display.
      * A {@link UserAccount} is lazy created when needed.
      *
@@ -367,7 +381,7 @@ public interface AccountingService {
             Account.AccountTypeEnum accountType);
 
     /**
-     * Gets the {@link Account} account of an {@link UserGroup} by group name.
+     * Gets the {@link Account} account of a {@link UserGroup} by group name.
      *
      * @param groupName
      *            The user group name.
@@ -474,14 +488,16 @@ public interface AccountingService {
      * @param weightTotal
      *            The weight total.
      * @param weight
-     *            The mathematical weight of the amount in the context of the
-     *            weightTotal.
+     *            The mathematical weight of the transaction in the context of a
+     *            transaction set.
+     * @param weightUnit
+     *            The weight unit.
      * @param scale
-     *            The scale (precision) of the calculated result.
+     *            The scale (precision).
      * @return The weighted amount.
      */
     BigDecimal calcWeightedAmount(BigDecimal amount, int weightTotal,
-            int weight, int scale);
+            int weight, int weightUnit, int scale);
 
     /**
      * Redeems a voucher.
@@ -546,9 +562,8 @@ public interface AccountingService {
      *            The {@link UserPaymentGatewayDto}
      * @throws AccountingException
      *             When invariant is violated.
-     * @since 0.9.9
      */
-    void acceptPendingFundsFromGateway(final AccountTrx trx,
+    void acceptPendingFundsFromGateway(AccountTrx trx,
             UserPaymentGatewayDto dto) throws AccountingException;
 
     /**
@@ -612,7 +627,36 @@ public interface AccountingService {
      *            The name of the account.
      * @param parent
      *            The shared {@link Account} parent.
-     * @return
+     * @return Shared account.
      */
     Account createSharedAccountTemplate(String name, Account parent);
+
+    /**
+     * Calculates the cost per printed copy.
+     *
+     * @param totalCost
+     *            The cost total of all copies.
+     * @param copies
+     *            The number of printed copies (can't be zero).
+     * @return Cost per copy.
+     */
+    BigDecimal calcCostPerPrintedCopy(BigDecimal totalCost, int copies);
+
+    /**
+     * Calculates the number of printed copies.
+     * <p>
+     * Note: result can be negative, depending on sign of input parameters.
+     * </p>
+     *
+     * @param cost
+     *            The cost.
+     * @param costPerCopy
+     *            The cost per copy (can't be zero).
+     * @param scale
+     *            The scale of the returned value.
+     * @return Number of printed copies.
+     */
+    BigDecimal calcPrintedCopies(BigDecimal cost, BigDecimal costPerCopy,
+            int scale);
+
 }

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,6 +27,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -49,7 +50,6 @@ import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 import javax.persistence.EntityManager;
-import javax.persistence.EntityManagerFactory;
 import javax.persistence.EntityTransaction;
 import javax.persistence.Query;
 import javax.xml.stream.XMLInputFactory;
@@ -61,7 +61,6 @@ import javax.xml.stream.XMLStreamWriter;
 import org.apache.commons.beanutils.BeanUtils;
 import org.apache.commons.beanutils.ConvertUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
 import org.hibernate.Session;
@@ -74,6 +73,7 @@ import org.hibernate.tool.hbm2ddl.SchemaExport.Action;
 import org.hibernate.tool.schema.TargetType;
 import org.hibernate.type.descriptor.java.JdbcTimestampTypeDescriptor;
 import org.savapage.core.SpException;
+import org.savapage.core.SpInfo;
 import org.savapage.core.VersionInfo;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
@@ -101,12 +101,14 @@ import org.savapage.core.jpa.IppQueueAttr;
 import org.savapage.core.jpa.PdfOut;
 import org.savapage.core.jpa.PosItem;
 import org.savapage.core.jpa.PosPurchase;
+import org.savapage.core.jpa.PosPurchaseItem;
 import org.savapage.core.jpa.PrintIn;
 import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.PrinterAttr;
 import org.savapage.core.jpa.PrinterGroup;
 import org.savapage.core.jpa.PrinterGroupMember;
+import org.savapage.core.jpa.Sequence;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
 import org.savapage.core.jpa.UserAttr;
@@ -234,6 +236,132 @@ public final class DbTools implements ServiceEntryPoint {
             "yyyy-MM-dd'T'HH:mm:ss.S";
 
     /**
+     * Table Info for DB health check.
+     * <p>
+     * DB_SCHEMA_DEPENDENT: when a new schema version is introduced this
+     * implementation should be updated (search for DB_SCHEMA_DEPENDENT to find
+     * other critical update places).
+     * </p>
+     */
+    private enum HealthCheckEntityEnum {
+        /** */
+        ACCOUNT(Account.TABLE_NAME, Account.class),
+        /** */
+        ACCOUNT_ATTR(AccountAttr.TABLE_NAME, AccountAttr.class),
+        /** */
+        ACCOUNT_TRX(AccountTrx.TABLE_NAME, AccountTrx.class),
+        /** */
+        ACCOUNT_VOUCHER(AccountVoucher.TABLE_NAME, AccountVoucher.class),
+        /** */
+        APP_LOG(AppLog.TABLE_NAME, AppLog.class),
+        /** */
+        CONFIG_PROPERTY(ConfigProperty.TABLE_NAME, ConfigProperty.class),
+        /** */
+        COST_CHANGE(CostChange.TABLE_NAME, CostChange.class),
+        /** */
+        DEVICE(Device.TABLE_NAME, Device.class),
+        /** */
+        DEVICE_ATTR(DeviceAttr.TABLE_NAME, DeviceAttr.class),
+        /** */
+        DOC_IN(DocIn.TABLE_NAME, DocIn.class),
+        /** */
+        DOC_IN_OUT(DocInOut.TABLE_NAME, DocInOut.class),
+        /** */
+        DOC_LOG(DocLog.TABLE_NAME, DocLog.class),
+        /** */
+        DOC_OUT(DocOut.TABLE_NAME, DocOut.class),
+        /** */
+        IPP_QUEUE(IppQueue.TABLE_NAME, IppQueue.class),
+        /** */
+        IPP_QUEUE_ATTR(IppQueueAttr.TABLE_NAME, IppQueueAttr.class),
+        /** */
+        PDF_OUT(PdfOut.TABLE_NAME, PdfOut.class),
+        /** */
+        POS_ITEM(PosItem.TABLE_NAME, PosItem.class),
+        /** */
+        POS_PURCHASE(PosPurchase.TABLE_NAME, PosPurchase.class),
+        /** */
+        POS_PURCHASE_ITEM(PosPurchaseItem.TABLE_NAME, PosPurchaseItem.class),
+        /** */
+        PRINTER(Printer.TABLE_NAME, Printer.class),
+        /** */
+        PRINTER_ATTR(PrinterAttr.TABLE_NAME, PrinterAttr.class),
+        /** */
+        PRINTER_GROUP(PrinterGroup.TABLE_NAME, PrinterGroup.class),
+        /** */
+        PRINTER_GROUP_MEMBER(PrinterGroupMember.TABLE_NAME,
+                PrinterGroupMember.class),
+        /** */
+        PRINT_IN(PrintIn.TABLE_NAME, PrintIn.class),
+        /** */
+        PRINT_OUT(PrintOut.TABLE_NAME, PrintOut.class),
+        //
+        // Sequence skip intended.
+        //
+        /** */
+        USER(User.TABLE_NAME, User.class),
+        /** */
+        USER_ACCOUNT(UserAccount.TABLE_NAME, UserAccount.class),
+        /** */
+        USER_ATTR(UserAttr.TABLE_NAME, UserAttr.class),
+        /** */
+        USER_CARD(UserCard.TABLE_NAME, UserCard.class),
+        /** */
+        USER_EMAIL(UserEmail.TABLE_NAME, UserEmail.class),
+        /** */
+        USER_GROUP(UserGroup.TABLE_NAME, UserGroup.class),
+        /** */
+        USER_GROUP_ACCOUNT(UserGroupAccount.TABLE_NAME, UserGroupAccount.class),
+        /** */
+        USER_GROUP_ATTR(UserGroupAttr.TABLE_NAME, UserGroupAttr.class),
+        /** */
+        USER_GROUP_MEMBER(UserGroupMember.TABLE_NAME, UserGroupMember.class),
+        /** */
+        USER_NUMBER(UserNumber.TABLE_NAME, UserNumber.class);
+
+        /**
+         * Database table name.
+         */
+        private final String tableName;
+
+        /**
+         * Name of {@link Entity} primary key sequence ID attribute.
+         */
+        private final String attrId;
+
+        /**
+         * Database table {@link Entity} class.
+         */
+        private final Class<? extends Entity> entClazz;
+
+        /**
+         *
+         * @param table
+         *            Table name.
+         * @param clazz
+         *            Entity class.
+         */
+        HealthCheckEntityEnum(final String table,
+                final Class<? extends Entity> clazz) {
+            this.tableName = table;
+            this.entClazz = clazz;
+            this.attrId = Entity.ATTR_ID;
+        }
+
+        /**
+         * @return Look-up with DB table name as key.
+         */
+        public static Map<String, HealthCheckEntityEnum> createLookup() {
+            final Map<String, HealthCheckEntityEnum> map = new HashMap<>();
+            for (final HealthCheckEntityEnum value : HealthCheckEntityEnum
+                    .values()) {
+                map.put(value.tableName, value);
+            }
+            return map;
+        }
+    }
+
+    /**
      * <b>*** HISTORY - DO NOT EDIT ***</b>
      * <p>
      * List of @Entity annotated classes which are part of the
@@ -325,9 +453,7 @@ public final class DbTools implements ServiceEntryPoint {
             // since V01.00
             UserGroupMemberV01.class,
             // since V01.06
-            UserGroupAccountV01.class
-
-            /* */
+            UserGroupAccountV01.class //
     };
 
     /**
@@ -351,7 +477,7 @@ public final class DbTools implements ServiceEntryPoint {
      * @since 0.9.6
      * @see Mantis #369
      */
-    private static final String[][] SCHEMA_ENTITIES_XML_EXPORT_ORDER_BY = {
+    private static final String[][] XML_SCHEMA_ENTITIES_EXPORT_ORDER_BY = {
             /*
              * AccountV01 has a foreign key that points to itself. Therefore the
              * rows that do NOT have this relation (NULL value for secondary
@@ -372,6 +498,21 @@ public final class DbTools implements ServiceEntryPoint {
     /**
      * <b>*** HISTORY - DO NOT EDIT ***</b>
      * <p>
+     * Sequence entity class used for the database export and import for the
+     * {@link #SCHEMA_V01} database schema.
+     * </p>
+     * <p>
+     * DB_SCHEMA_DEPENDENT: when a new schema version is introduced a new
+     * constant should be added (search for DB_SCHEMA_DEPENDENT to find other
+     * critical update places).
+     * </p>
+     */
+    private static final Class<?> XML_SCHEMA_SEQUENCE_ENTITY_V01 =
+            XSequenceV01.class;
+
+    /**
+     * <b>*** HISTORY - DO NOT EDIT ***</b>
+     * <p>
      * List of XML @Entity annotated classes used for the database export and
      * import for the {@link #SCHEMA_V01} database schema.
      * </p>
@@ -380,16 +521,12 @@ public final class DbTools implements ServiceEntryPoint {
      * data-model, so foreign key constraints are satisfied.
      * </p>
      * <p>
-     * NOTE: the Sequence class IS part of this list, since its content needs to
-     * be restored.
-     * </p>
-     * <p>
      * DB_SCHEMA_DEPENDENT: when a new schema version is introduced a new
      * constant should be added (search for DB_SCHEMA_DEPENDENT to find other
      * critical update places).
      * </p>
      */
-    private static final Class<?>[] SCHEMA_ENTITIES_V01_XML = {
+    private static final Class<?>[] XML_SCHEMA_ENTITIES_V01 = {
             // since V01
             XAppLogV01.class,
             // since V01
@@ -476,9 +613,7 @@ public final class DbTools implements ServiceEntryPoint {
 
             // --------------------
             // since V01
-            XSequenceV01.class
-
-            /* */
+            XML_SCHEMA_SEQUENCE_ENTITY_V01 //
     };
 
     /**
@@ -651,16 +786,33 @@ public final class DbTools implements ServiceEntryPoint {
     /**
      *
      * @param version
-     * @return
+     *            Schema version.
+     * @return XML schema version entity classes.
      */
-    private static Class<?>[] getSchemaEntitiesForXml(final String version) {
+    private static Class<?>[] getXmlSchemaEntities(final String version) {
 
         if (version.equals(SCHEMA_V01)) {
-            return SCHEMA_ENTITIES_V01_XML;
+            return XML_SCHEMA_ENTITIES_V01;
         }
 
         throw new SpException(
                 "XML schema version [" + version + "] is not supported");
+    }
+
+    /**
+     *
+     * @param version
+     *            Schema version.
+     * @return XML schema version Sequence entity class.
+     */
+    private static Class<?> getXmlSchemaSequenceEntity(final String version) {
+
+        if (version.equals(SCHEMA_V01)) {
+            return XML_SCHEMA_SEQUENCE_ENTITY_V01;
+        }
+
+        throw new SpException("XML Sequence Entity version [" + version
+                + "] is not supported");
     }
 
     /**
@@ -872,22 +1024,18 @@ public final class DbTools implements ServiceEntryPoint {
         final boolean applyToDatabase =
                 (fileDropSql == null && fileCreateSql == null);
 
-        final EntityManagerFactory theEmf =
-                ConfigManager.instance().getEntityManagerFactory();
-
-        final String hibernateDialect = theEmf.getProperties()
-                .get(DbConfig.HIBERNATE_DIALECT).toString();
-        final String hibernateDriver =
-                theEmf.getProperties().get(DbConfig.JPA_JDBC_DRIVER).toString();
-        final String jdbcUrl =
-                theEmf.getProperties().get(DbConfig.JPA_JDBC_URL).toString();
+        final ConfigManager cm = ConfigManager.instance();
 
         final Map<String, Object> settingsMap = new HashMap<>();
 
-        settingsMap.put(DbConfig.HIBERNATE_DIALECT, hibernateDialect);
-        settingsMap.put(DbConfig.HIBERNATE_DRIVER, hibernateDriver);
+        settingsMap.put(DbConfig.HIBERNATE_DIALECT,
+                cm.getHibernateInfo().getDialect());
+        settingsMap.put(DbConfig.HIBERNATE_DRIVER,
+                cm.getJdbcInfo().getDriver());
 
         if (applyToDatabase) {
+
+            final String jdbcUrl = cm.getJdbcInfo().getUrl();
 
             /*
              * NOTE: the ";create=true" at the end ensures that a new database
@@ -908,24 +1056,14 @@ public final class DbTools implements ServiceEntryPoint {
                         ConfigManager.getServerHome()) + ";create=true";
             } else {
                 url = jdbcUrl;
-
-                final String jdbcUser;
-
-                // Mantis #879
-                final boolean jdbcUserFromConfigManager = true;
-
-                if (jdbcUserFromConfigManager) {
-                    jdbcUser = ConfigManager.getPostgreSQLUser();
-                } else {
-                    // Mantis #879: the EMF returns value "****", why?
-                    jdbcUser = theEmf.getProperties()
-                            .get(DbConfig.JPA_JDBC_USER).toString();
-                }
-
-                settingsMap.put(Environment.USER, jdbcUser);
-
-                settingsMap.put(Environment.PASS, theEmf.getProperties()
-                        .get(DbConfig.JPA_JDBC_PASSWORD).toString());
+                /*
+                 * Mantis #879, #968: do NOT use DbConfig.JPA_JDBC_USER and
+                 * DbConfig.JPA_JDBC_PASSWORD keys from theEmf.getProperties().
+                 */
+                settingsMap.put(Environment.USER,
+                        ConfigManager.getExternalDbUser());
+                settingsMap.put(Environment.PASS,
+                        ConfigManager.getExternalDbPassword());
             }
 
             settingsMap.put(Environment.URL, url);
@@ -974,6 +1112,131 @@ public final class DbTools implements ServiceEntryPoint {
                         metadata.buildMetadata());
             }
         }
+    }
+
+    /**
+     * Checks Database health.
+     *
+     * @param info
+     *            Information log.
+     * @param err
+     *            Error log.
+     * @param fix
+     *            If {@code true} then fix any inconsistency.
+     */
+    private static void checkSequences(final StringBuilder info,
+            final StringBuilder err, final boolean fix) {
+        final Map<String, HealthCheckEntityEnum> lookup =
+                HealthCheckEntityEnum.createLookup();
+
+        final EntityManager em = DaoContextImpl.peekEntityManager();
+
+        final Query queryList = em.createQuery(String
+                .format("SELECT S FROM %s S", Sequence.class.getSimpleName()));
+        @SuppressWarnings("unchecked")
+        final List<Sequence> seqList = queryList.getResultList();
+
+        boolean dbTrx = false;
+        if (fix && !em.getTransaction().isActive()) {
+            em.getTransaction().begin();
+            dbTrx = true;
+        }
+
+        try {
+            for (final Sequence seq : seqList) {
+
+                final String tableName = seq.getName();
+                final HealthCheckEntityEnum entEnum = lookup.get(tableName);
+
+                if (entEnum == null) {
+                    throw new IllegalStateException(tableName + " is missing.");
+                }
+
+                final long lastSequenceId = seq.getValue().longValue();
+
+                final Query queryMax = em.createQuery(String.format(
+                        "SELECT MAX(S.%s) FROM %s S", entEnum.attrId,
+                        entEnum.entClazz.getSimpleName()));
+                final Long maxSeqID = (Long) queryMax.getSingleResult();
+                final long maxIdTable;
+                if (maxSeqID == null) {
+                    maxIdTable = 0;
+                } else {
+                    maxIdTable = maxSeqID.longValue();
+                }
+
+                if (maxSeqID != null && maxIdTable > lastSequenceId) {
+                    if (fix) {
+                        seq.setValue(Long.valueOf(maxIdTable));
+                        em.merge(seq);
+                        if (info.length() > 0) {
+                            info.append("\n");
+                        }
+                        info.append(String.format("FIXED [%s]: id %d > %d",
+                                entEnum.tableName, maxIdTable, lastSequenceId));
+                    } else {
+                        if (err.length() > 0) {
+                            info.append("\n");
+                        }
+                        err.append(String.format("ERROR [%s]: id %d > %d",
+                                entEnum.tableName, maxIdTable, lastSequenceId));
+                    }
+
+                } else {
+                    if (info.length() > 0) {
+                        info.append("\n");
+                    }
+                    info.append(String.format("OK [%s] id %d <= %d",
+                            entEnum.tableName, maxIdTable, lastSequenceId));
+                }
+            }
+        } finally {
+            if (dbTrx) {
+                em.getTransaction().commit();
+            }
+        }
+    }
+
+    /**
+     * Checks Database health.
+     */
+    public static void checkSequences() {
+
+        final StringBuilder info = new StringBuilder();
+        final StringBuilder err = new StringBuilder();
+
+        checkSequences(info, err, false);
+
+        if (err.length() == 0) {
+            SpInfo.instance().log(
+                    String.format("Database [%s] OK.", Sequence.TABLE_NAME));
+        } else {
+            LOGGER.error("{}\n", err.toString());
+            throw new IllegalStateException(String
+                    .format("Database [%s] MISMATCH.", Sequence.TABLE_NAME));
+        }
+    }
+
+    /**
+     * Checks Database health.
+     *
+     * @param strInfo
+     *            Information log.
+     * @param strErr
+     *            Error log.
+     * @param fix
+     *            If {@code true} then fix any inconsistency.
+     */
+    public static void checkSequences(final PrintStream strInfo,
+            final PrintStream strErr, final boolean fix) {
+
+        final StringBuilder info = new StringBuilder();
+        final StringBuilder err = new StringBuilder();
+
+        checkSequences(info, err, fix);
+
+        strInfo.println(info.toString());
+        strErr.println(err.toString());
     }
 
     /**
@@ -1027,10 +1290,8 @@ public final class DbTools implements ServiceEntryPoint {
         final Path backupPath = FileSystems.getDefault()
                 .getPath(ConfigManager.getDbBackupHome());
 
-        final DirectoryStream<Path> ds =
-                Files.newDirectoryStream(backupPath, "savapage*.zip");
-
-        try {
+        try (DirectoryStream<Path> ds =
+                Files.newDirectoryStream(backupPath, "savapage*.zip");) {
             /*
              * Iterate over the paths in the directory and print filenames
              */
@@ -1053,8 +1314,6 @@ public final class DbTools implements ServiceEntryPoint {
                     nFilesDeleted++;
                 }
             }
-        } finally {
-            IOUtils.closeQuietly(ds);
         }
 
         return nFilesDeleted;
@@ -1249,7 +1508,7 @@ public final class DbTools implements ServiceEntryPoint {
              * version of the application, since e.g. we want to backup the
              * database before an upgrade.
              */
-            for (Class<?> objClass : getSchemaEntitiesForXml(
+            for (Class<?> objClass : getXmlSchemaEntities(
                     getDbSchemaVersion())) {
                 exportDbTable(em, queryMaxResults, writer, objClass);
             }
@@ -1305,7 +1564,7 @@ public final class DbTools implements ServiceEntryPoint {
          * Some entities need an ORDER BY clause, to ensure that on import
          * recursive foreign key constraints are satisfied.
          */
-        for (final String[] props : SCHEMA_ENTITIES_XML_EXPORT_ORDER_BY) {
+        for (final String[] props : XML_SCHEMA_ENTITIES_EXPORT_ORDER_BY) {
             if (props[0].equals(entityClassNameSimple)) {
                 jpql.append(" ORDER BY ").append(props[1]);
                 break;
@@ -1603,8 +1862,8 @@ public final class DbTools implements ServiceEntryPoint {
             readerPosition = reader.next();
 
             while (readerPosition == XMLStreamReader.START_ELEMENT) {
-                readerPosition =
-                        importDbEntityFromXml(reader, batchCommitter, listener);
+                readerPosition = importDbEntityFromXml(reader, batchCommitter,
+                        listener, getXmlSchemaSequenceEntity(xmlSchemaVersion));
                 batchCommitter.commit();
             }
 
@@ -1673,23 +1932,30 @@ public final class DbTools implements ServiceEntryPoint {
      *            The {@link DaoBatchCommitter}.
      * @param listener
      *            The {@link DbProcessListener}.
+     * @param schemaSequenceEntityClass
+     *            XML Entity Sequence class.
      * @return The current {@link XMLStreamReader#getEventType()} of the reader.
      * @throws Exception
      *             When an error occurs.
      */
     private static int importDbEntityFromXml(final XMLStreamReader reader,
             final DaoBatchCommitter batchCommitter,
-            final DbProcessListener listener) throws Exception {
+            final DbProcessListener listener,
+            final Class<?> schemaSequenceEntityClass) throws Exception {
 
         final String entityClassName = reader.getAttributeValue("", "name");
         final Class<?> entityClass = getEntityClassFromXmlAttr(entityClassName);
+
+        final boolean isSequenceEntity = entityClass.getSimpleName()
+                .equals(schemaSequenceEntityClass.getSimpleName());
 
         int count = 0;
 
         int readerPosition = reader.next();
 
         while (readerPosition == XMLStreamReader.START_ELEMENT) {
-            readerPosition = importDbEntityRowFromXml(reader, entityClass);
+            readerPosition = importDbEntityRowFromXml(reader, entityClass,
+                    isSequenceEntity);
             count++;
             batchCommitter.increment();
         }
@@ -1711,12 +1977,15 @@ public final class DbTools implements ServiceEntryPoint {
      *            The {@link XMLStreamReader}.
      * @param entityClass
      *            The class of type {@link XEntityVersion}.
+     * @param isSequenceEntityClass
+     *            If {@code true}, entityClass represents a Sequence.
      * @return The current {@link XMLStreamReader#getEventType()} of the reader.
      * @throws Exception
      *             When an error occurs.
      */
     private static int importDbEntityRowFromXml(final XMLStreamReader reader,
-            final Class<?> entityClass) throws Exception {
+            final Class<?> entityClass, final boolean isSequenceEntityClass)
+            throws Exception {
 
         final Map<String, String> properties = new HashMap<String, String>();
         final StringBuilder value = new StringBuilder();
@@ -1751,7 +2020,12 @@ public final class DbTools implements ServiceEntryPoint {
         if (!properties.isEmpty()) {
             BeanUtils.populate(objEntity, properties);
         }
-        em.persist(objEntity);
+
+        if (isSequenceEntityClass) {
+            em.merge(objEntity);
+        } else {
+            em.persist(objEntity);
+        }
 
         return reader.next();
     }

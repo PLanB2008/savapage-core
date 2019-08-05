@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,9 +24,9 @@ package org.savapage.lib.pgp;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -40,7 +40,6 @@ import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 
-import org.apache.commons.io.IOUtils;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.bcpg.BCPGOutputStream;
 import org.bouncycastle.bcpg.CompressionAlgorithmTags;
@@ -69,6 +68,7 @@ import org.bouncycastle.openpgp.PGPSignatureGenerator;
 import org.bouncycastle.openpgp.PGPSignatureList;
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
 import org.bouncycastle.openpgp.PGPUtil;
+import org.bouncycastle.openpgp.jcajce.JcaPGPObjectFactory;
 import org.bouncycastle.openpgp.operator.KeyFingerPrintCalculator;
 import org.bouncycastle.openpgp.operator.PGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.PGPContentVerifierBuilderProvider;
@@ -79,9 +79,13 @@ import org.bouncycastle.openpgp.operator.bc.BcPGPContentSignerBuilder;
 import org.bouncycastle.openpgp.operator.bc.BcPGPContentVerifierBuilderProvider;
 import org.bouncycastle.openpgp.operator.bc.BcPublicKeyDataDecryptorFactory;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
+import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentVerifierBuilderProvider;
 import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyDecryptorBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcePGPDataEncryptorBuilder;
 import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyKeyEncryptionMethodGenerator;
+import org.savapage.core.util.IOHelper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -89,6 +93,12 @@ import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyKeyEncryptionMethodG
  *
  */
 public final class PGPHelper {
+
+    /**
+     * The logger.
+     */
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(PGPHelper.class);
 
     /**
      * Buffer for encryption streaming.
@@ -119,6 +129,15 @@ public final class PGPHelper {
         /** */
         static final PGPHelper SINGLETON = new PGPHelper();
     }
+
+    /** */
+    public static final String FILENAME_EXT_ASC = "asc";
+
+    /**
+     *
+     */
+    public static final PGPHashAlgorithmEnum CONTENT_SIGN_ALGORITHM =
+            PGPHashAlgorithmEnum.SHA256;
 
     /** */
     private final BouncyCastleProvider bcProvider;
@@ -174,10 +193,7 @@ public final class PGPHelper {
 
         final List<PGPSecretKeyInfo> list = new ArrayList<>();
 
-        InputStream istrBinary = null;
-
-        try {
-            istrBinary = PGPUtil.getDecoderStream(istr);
+        try (InputStream istrBinary = PGPUtil.getDecoderStream(istr)) {
 
             final PGPSecretKeyRingCollection pgpPriv =
                     new PGPSecretKeyRingCollection(istrBinary,
@@ -205,8 +221,6 @@ public final class PGPHelper {
 
         } catch (IOException | PGPException e) {
             throw new PGPBaseException(e.getMessage(), e);
-        } finally {
-            IOUtils.closeQuietly(istrBinary);
         }
 
         if (list.isEmpty()) {
@@ -253,12 +267,10 @@ public final class PGPHelper {
     public PGPPublicKeyInfo readPublicKey(final InputStream istr)
             throws PGPBaseException {
 
-        InputStream istrBinary = null;
         PGPPublicKey encryptionKey = null;
         PGPPublicKey masterKey = null;
 
-        try {
-            istrBinary = PGPUtil.getDecoderStream(istr);
+        try (InputStream istrBinary = PGPUtil.getDecoderStream(istr);) {
 
             final PGPPublicKeyRingCollection pgpPub =
                     new PGPPublicKeyRingCollection(istrBinary,
@@ -293,8 +305,8 @@ public final class PGPHelper {
             }
 
             if (encryptionKey == null) {
-                throw new PGPBaseException(
-                        "No Encryption Key found in PublicKeyRing.");
+//                throw new PGPBaseException(
+//                        "No Encryption Key found in PublicKeyRing.");
             }
 
             if (masterKey == null) {
@@ -304,8 +316,6 @@ public final class PGPHelper {
 
         } catch (IOException | PGPException e) {
             throw new PGPBaseException(e.getMessage(), e);
-        } finally {
-            IOUtils.closeQuietly(istrBinary);
         }
 
         return new PGPPublicKeyInfo(masterKey, encryptionKey);
@@ -325,10 +335,7 @@ public final class PGPHelper {
 
         final List<PGPPublicKey> list = new ArrayList<>();
 
-        InputStream istrBinary = null;
-
-        try {
-            istrBinary = PGPUtil.getDecoderStream(istr);
+        try (InputStream istrBinary = PGPUtil.getDecoderStream(istr);) {
 
             final PGPPublicKeyRingCollection pgpPub =
                     new PGPPublicKeyRingCollection(istrBinary,
@@ -350,8 +357,6 @@ public final class PGPHelper {
 
         } catch (IOException | PGPException e) {
             throw new PGPBaseException(e.getMessage(), e);
-        } finally {
-            IOUtils.closeQuietly(istrBinary);
         }
 
         if (list.isEmpty()) {
@@ -376,12 +381,9 @@ public final class PGPHelper {
     public static void downloadPublicKey(final URL lookupUrl,
             final OutputStream ostr) throws UnknownHostException, IOException {
 
-        InputStream istr = null;
-        BufferedReader reader = null;
-
-        try {
-            istr = lookupUrl.openStream();
-            reader = new BufferedReader(new InputStreamReader(istr));
+        try (InputStream istr = lookupUrl.openStream();
+                BufferedReader reader =
+                        new BufferedReader(new InputStreamReader(istr));) {
 
             String line;
 
@@ -399,9 +401,9 @@ public final class PGPHelper {
                     }
                 }
             }
-        } finally {
-            IOUtils.closeQuietly(reader);
-            IOUtils.closeQuietly(istr);
+            if (!processLine) {
+                LOGGER.warn("{} : no public key.", lookupUrl);
+            }
         }
     }
 
@@ -420,22 +422,44 @@ public final class PGPHelper {
 
         for (final File file : publicKeyFiles) {
 
-            InputStream signPublicKeyInputStream = null;
-
-            try {
-                signPublicKeyInputStream = new FileInputStream(file);
+            try (InputStream signPublicKeyInputStream =
+                    new FileInputStream(file);) {
 
                 final PGPPublicKeyInfo encKey =
                         readPublicKey(signPublicKeyInputStream);
+
                 pgpPublicKeyList.add(encKey);
-            } catch (FileNotFoundException e) {
+
+            } catch (IOException e) {
                 throw new PGPBaseException(e.getMessage(), e);
-            } finally {
-                IOUtils.closeQuietly(signPublicKeyInputStream);
             }
 
         }
         return pgpPublicKeyList;
+    }
+
+    /**
+     * Encode public key as ASCII armored byte array.
+     *
+     * @param pubKey
+     *            Public key
+     * @return ASCII armored byte array.
+     * @throws IOException
+     *             If IO error.
+     */
+    public static byte[] encodeArmored(final PGPPublicKey pubKey)
+            throws IOException {
+
+        try (ByteArrayOutputStream ostrPubKey = new ByteArrayOutputStream();
+                ArmoredOutputStream ostrArmored =
+                        new ArmoredOutputStream(ostrPubKey)) {
+            pubKey.encode(ostrArmored);
+            /*
+             * Do not flush(), but close() !!
+             */
+            ostrArmored.close();
+            return ostrPubKey.toByteArray();
+        }
     }
 
     /**
@@ -521,7 +545,7 @@ public final class PGPHelper {
             // Start signature
             final PGPContentSignerBuilder csb = new BcPGPContentSignerBuilder(
                     secretKeyInfo.getPublicKey().getAlgorithm(),
-                    PGPHashAlgorithmEnum.SHA256.getBcTag());
+                    CONTENT_SIGN_ALGORITHM.getBcTag());
 
             final PGPSignatureGenerator signatureGenerator =
                     new PGPSignatureGenerator(csb);
@@ -575,18 +599,18 @@ public final class PGPHelper {
         } finally {
 
             // (3) In case we missed closes because of exception.
-            IOUtils.closeQuietly(literalOut);
+            IOHelper.closeQuietly(literalOut);
             closePGPDataGenerator(literalDataGenerator);
 
             // (4) Close the rest.
-            IOUtils.closeQuietly(compressedOut);
+            IOHelper.closeQuietly(compressedOut);
             closePGPDataGenerator(compressedDataGenerator);
 
-            IOUtils.closeQuietly(encryptedOut);
+            IOHelper.closeQuietly(encryptedOut);
             closePGPDataGenerator(encryptedDataGenerator);
 
             if (asciiArmor) {
-                IOUtils.closeQuietly(targetOut);
+                IOHelper.closeQuietly(targetOut);
             }
         }
     }
@@ -614,12 +638,10 @@ public final class PGPHelper {
             throws PGPBaseException {
 
         // Objects to be closed when finished.
-        InputStream istr = null;
         OutputStream ostr = null;
         BCPGOutputStream pgostr = null;
 
-        try {
-            istr = new BufferedInputStream(contentStream);
+        try (InputStream istr = new BufferedInputStream(contentStream);) {
 
             if (asciiArmor) {
                 ostr = new ArmoredOutputStream(
@@ -650,12 +672,84 @@ public final class PGPHelper {
         } catch (PGPException | IOException e) {
             throw new PGPBaseException(e.getMessage(), e);
         } finally {
-            IOUtils.closeQuietly(istr);
-            IOUtils.closeQuietly(pgostr);
+            IOHelper.closeQuietly(pgostr);
 
             if (asciiArmor) {
-                IOUtils.closeQuietly(ostr);
+                IOHelper.closeQuietly(ostr);
             }
+        }
+    }
+
+    /**
+     * Gets signature object from signature input stream.
+     *
+     * @param signature
+     *            The signature stream.
+     * @return The {@link PGPSignature} object.
+     * @throws PGPBaseException
+     *             When error.
+     */
+    public PGPSignature getSignature(final InputStream signature)
+            throws PGPBaseException {
+
+        try (InputStream istr = PGPUtil.getDecoderStream(signature)) {
+
+            JcaPGPObjectFactory pgpFact = new JcaPGPObjectFactory(istr);
+
+            final PGPSignatureList p3;
+            final Object o = pgpFact.nextObject();
+
+            if (o instanceof PGPCompressedData) {
+                PGPCompressedData c1 = (PGPCompressedData) o;
+
+                pgpFact = new JcaPGPObjectFactory(c1.getDataStream());
+
+                p3 = (PGPSignatureList) pgpFact.nextObject();
+            } else {
+                p3 = (PGPSignatureList) o;
+            }
+
+            return p3.get(0);
+
+        } catch (IOException | PGPException e) {
+            throw new PGPBaseException(e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Verifies PGP signature against content and its public key.
+     *
+     * @see {@link org.bouncycastle.openpgp.examples.DetachedSignatureProcessor}.
+     *
+     * @param content
+     *            The content.
+     * @param sig
+     *            The signature.
+     * @param publicKey
+     *            The public key of signature.
+     * @return {@code true} when signature is valid.
+     * @throws PGPBaseException
+     *             When signature error.
+     */
+    public boolean verifySignature(final InputStream content,
+            final PGPSignature sig, final PGPPublicKey publicKey)
+            throws PGPBaseException {
+
+        try {
+            sig.init(new JcaPGPContentVerifierBuilderProvider()
+                    .setProvider("BC"), publicKey);
+
+            int ch;
+            while ((ch = content.read()) >= 0) {
+                sig.update((byte) ch);
+            }
+
+            content.close();
+
+            return sig.verify();
+
+        } catch (IOException | PGPException e) {
+            throw new PGPBaseException(e.getMessage(), e);
         }
     }
 
@@ -707,10 +801,11 @@ public final class PGPHelper {
      *            the content was encrypted with.
      * @param ostrClearContent
      *            The clear content OutputStream.
+     * @return The signature.
      * @throws PGPBaseException
      *             When errors.
      */
-    public void decryptOnePassSignature(final InputStream istrEncrypted,
+    public PGPSignature decryptOnePassSignature(final InputStream istrEncrypted,
             final List<PGPPublicKey> signPublicKeyList,
             final List<PGPSecretKeyInfo> secretKeyInfoList,
             final OutputStream ostrClearContent) throws PGPBaseException {
@@ -764,7 +859,7 @@ public final class PGPHelper {
             }
 
             if (privateKey == null) {
-                throw new PGPBaseException("secret key for message not found");
+                throw new PGPBaseException("Secret key of message not found.");
             }
 
             // Get a handle to the decrypted data as an input stream
@@ -789,6 +884,7 @@ public final class PGPHelper {
             }
 
             PGPOnePassSignature calculatedSignature = null;
+
             if (message instanceof PGPOnePassSignatureList) {
 
                 calculatedSignature =
@@ -842,14 +938,21 @@ public final class PGPHelper {
             }
             ostrClearContent.close();
 
+            //
+            PGPSignature messageSignature = null;
+
             if (calculatedSignature != null) {
                 final PGPSignatureList signatureList =
                         (PGPSignatureList) objectFactory.nextObject();
-                final PGPSignature messageSignature = signatureList.get(0);
-                if (!calculatedSignature.verify(messageSignature)) {
-                    throw new PGPBaseException(
-                            "Signature verification failed.");
-                }
+                messageSignature = signatureList.get(0);
+            }
+
+            if (messageSignature == null) {
+                throw new PGPBaseException("Signature not found.");
+            }
+
+            if (!calculatedSignature.verify(messageSignature)) {
+                throw new PGPBaseException("Signature verification failed.");
             }
 
             if (encryptedData.isIntegrityProtected()
@@ -857,10 +960,12 @@ public final class PGPHelper {
                 throw new PGPBaseException("Message failed integrity check.");
             }
 
+            return messageSignature;
+
         } catch (IOException | PGPException e) {
             throw new PGPBaseException(e.getMessage(), e);
         } finally {
-            IOUtils.closeQuietly(clearDataInputStream);
+            IOHelper.closeQuietly(clearDataInputStream);
         }
     }
 }

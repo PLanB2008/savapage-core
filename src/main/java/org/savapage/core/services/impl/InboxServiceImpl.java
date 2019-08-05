@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -31,6 +31,7 @@ import java.nio.file.FileSystems;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
@@ -58,6 +59,7 @@ import org.savapage.core.PostScriptDrmException;
 import org.savapage.core.SpException;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.config.UserHomePathEnum;
 import org.savapage.core.dao.DocLogDao;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.doc.DocContent;
@@ -76,7 +78,9 @@ import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.User;
 import org.savapage.core.pdf.AbstractPdfCreator;
 import org.savapage.core.pdf.PdfPageRotateHelper;
+import org.savapage.core.pdf.PdfPasswordException;
 import org.savapage.core.pdf.PdfSecurityException;
+import org.savapage.core.pdf.PdfUnsupportedException;
 import org.savapage.core.pdf.PdfValidityException;
 import org.savapage.core.pdf.SpPdfPageProps;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
@@ -133,11 +137,6 @@ public final class InboxServiceImpl implements InboxService {
      *
      */
     private static final String INBOX_DESCRIPT_FILE_NAME = "savapage.json";
-
-    /**
-     *
-     */
-    private static final String LETTERHEADS_DIR_NAME = "letterheads";
 
     /**
      *
@@ -224,9 +223,9 @@ public final class InboxServiceImpl implements InboxService {
             fileSource = fileTarget;
         }
 
-        try {
+        try (FileWriter writer = new FileWriter(fileSource)) {
 
-            JsonHelper.write(jobinfo, new FileWriter(fileSource));
+            JsonHelper.write(jobinfo, writer);
 
         } catch (IOException e) {
             throw new SpException("Error writing file ["
@@ -264,7 +263,8 @@ public final class InboxServiceImpl implements InboxService {
         try {
             return SpPdfPageProps.create(filePathPdf);
 
-        } catch (PdfSecurityException | PdfValidityException e) {
+        } catch (PdfValidityException | PdfSecurityException
+                | PdfPasswordException | PdfUnsupportedException e) {
             throw new SpException(e.getMessage());
         }
     }
@@ -520,11 +520,15 @@ public final class InboxServiceImpl implements InboxService {
          */
         final String ranges = rangesIn.trim().replace(" ", "");
 
-        final List<RangeAtom> rangeAtoms;
+        List<RangeAtom> rangeAtoms = null;
 
         try {
             rangeAtoms = this.createSortedRangeArray(ranges);
         } catch (Exception e) {
+            rangeAtoms = null;
+        }
+
+        if (rangeAtoms == null) {
             throw new PageRangeException(PageRangeException.Reason.SYNTAX,
                     nPagesInScope, ranges);
         }
@@ -719,7 +723,8 @@ public final class InboxServiceImpl implements InboxService {
                 final int nPageFrom =
                         atom.pageBegin == null ? 1 : atom.pageBegin;
                 final int nPageTo = atom.pageEnd == null
-                        ? jobs.get(page.getJob()).getPages() : atom.pageEnd;
+                        ? jobs.get(page.getJob()).getPages()
+                        : atom.pageEnd;
                 nPages += nPageTo - nPageFrom + 1;
             }
         }
@@ -858,7 +863,7 @@ public final class InboxServiceImpl implements InboxService {
         if (user == null) {
             return ConfigManager.getLetterheadDir();
         }
-        return ConfigManager.getUserHomeDir(user) + "/" + LETTERHEADS_DIR_NAME;
+        return UserHomePathEnum.LETTERHEADS.getFullPath(user);
     }
 
     @Override
@@ -1434,10 +1439,12 @@ public final class InboxServiceImpl implements InboxService {
 
     @Override
     public int deleteAllPages(final String user) {
-        /*
-         * TODO: there must be a more efficient way.
-         */
-        return deletePages(user, "1-"); // dirty trick
+        return deletePages(user, "1-"); // hack
+    }
+
+    @Override
+    public int deleteAllJobs(final String user) {
+        return this.deleteJobs(user, Long.MAX_VALUE, 0L);
     }
 
     @Override
@@ -1631,8 +1638,8 @@ public final class InboxServiceImpl implements InboxService {
         int iJob = 0;
 
         /*
-         * Collect the zero-based index of the jobs that are NOT present in the
-         * database.
+         * Collect the zero-based indices of the jobs that are not present in
+         * the database, or are not present as inbox document.
          */
         for (final InboxJob job : dto.getJobs()) {
 
@@ -1640,14 +1647,21 @@ public final class InboxServiceImpl implements InboxService {
 
             final DocLog docLog = dao.findByUuid(user.getId(), uuid);
 
-            if (docLog == null) {
+            if (docLog == null
+                    || !Paths.get(homedir, job.getFile()).toFile().exists()) {
                 docLogAbsent.add(Integer.valueOf(iJob));
+
+                if (docLog != null) {
+                    LOGGER.warn(
+                            "Repaired user [{}] inbox for missing document.",
+                            user.getUserId());
+                }
             }
             iJob++;
         }
 
         /*
-         * An jobs absent?
+         * Are jobs absent?
          */
         if (!docLogAbsent.isEmpty()) {
 

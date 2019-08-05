@@ -27,6 +27,8 @@ import java.util.Map;
 import org.savapage.core.SpException;
 import org.savapage.core.dao.UserAttrDao;
 import org.savapage.core.jpa.UserAttr;
+import org.savapage.core.json.JobTicketProperties;
+import org.savapage.lib.pgp.PGPKeyID;
 
 /**
  * {@link UserAttr} names. See {@link UserAttr#setName(String)}.
@@ -74,15 +76,31 @@ public enum UserAttrEnum {
     INTERNAL_PASSWORD("internal-password"),
 
     /**
+     * JSON string of {@link JobTicketProperties}.
+     */
+    JOBTICKET_PROPS_LATEST("jobticket.properties.latest"),
+
+    /**
      * Encrypted PIN optionally to be used in combination with ID number and
      * Card(s).
      */
     PIN("pin"),
 
     /**
-     * User PGP Public Key ID in upper-case hex notation (without "0x" prefix).
+     * User PGP Public Key ID in upper-case hex notation <i>without</i> "0x"
+     * prefix.
      */
     PGP_PUBKEY_ID("pgp.pubkey.id"),
+
+    /**
+     * Prefix for PGP public key ID in Key Ring, in upper-case hex notation
+     * <i>without</i> "0x" prefix. This key is not used as such: note the <u>dot
+     * character</u> at the end.
+     * <p>
+     * Usage example: {@code pgp.pubring.key.id.AD234BCC27362AF1}
+     * </p>
+     */
+    PFX_PGP_PUBRING_KEY_ID("pgp.pubring.key.id."),
 
     /**
      *
@@ -101,7 +119,8 @@ public enum UserAttrEnum {
      * {@code 1342562400000,7,16,2,9,16}
      * </p>
      */
-    PRINT_IN_ROLLING_WEEK_PAGES("print.in." + UserAttrDao.STATS_ROLLING + "-week.pages"),
+    PRINT_IN_ROLLING_WEEK_PAGES("print.in." + UserAttrDao.STATS_ROLLING //
+            + "-week.pages"),
 
     /**
      * Statistic time series. Example:
@@ -109,7 +128,8 @@ public enum UserAttrEnum {
      * {@code 1342562400000,70033,163344,22335511,9999332,16345}
      * </p>
      */
-    PRINT_IN_ROLLING_WEEK_BYTES("print.in." + UserAttrDao.STATS_ROLLING + "-week.bytes"),
+    PRINT_IN_ROLLING_WEEK_BYTES("print.in." + UserAttrDao.STATS_ROLLING //
+            + "-week.bytes"),
 
     /**
      * Statistic time series. Example:
@@ -117,66 +137,8 @@ public enum UserAttrEnum {
      * {@code 1342562400000,7,16,2,9,16}
      * </p>
      */
-    PRINT_IN_ROLLING_MONTH_PAGES("print.in." + UserAttrDao.STATS_ROLLING + "-month.pages"),
-
-    /**
-     * Statistic time series. Example:
-     * <p>
-     * {@code 1342562400000,70033,163344,22335511,9999332,16345}
-     * </p>
-     */
-    PRINT_IN_ROLLING_MONTH_BYTES("print.in." + UserAttrDao.STATS_ROLLING + "-month.bytes"),
-    /**
-     * Statistic time series. Example:
-     * <p>
-     * {@code 1342562400000,7,16,2,9,16}
-     * </p>
-     */
-    PRINT_OUT_ROLLING_WEEK_PAGES("print.out." + UserAttrDao.STATS_ROLLING + "-week.pages"),
-
-    /**
-     * Statistic time series. Example:
-     * <p>
-     * {@code 1342562400000,7,16,2,9,16}
-     * </p>
-     */
-    PRINT_OUT_ROLLING_WEEK_SHEETS("print.out." + UserAttrDao.STATS_ROLLING + "-week.sheets"),
-    /**
-     * Statistic time series. Example:
-     * <p>
-     * {@code 1342562400000,7,16,2,9,16}
-     * </p>
-     */
-    PRINT_OUT_ROLLING_WEEK_ESU("print.out." + UserAttrDao.STATS_ROLLING + "-week.esu"),
-    /**
-     * Statistic time series. Example:
-     * <p>
-     * {@code 1342562400000,70033,163344,22335511,9999332,16345}
-     * </p>
-     */
-    PRINT_OUT_ROLLING_WEEK_BYTES("print.out." + UserAttrDao.STATS_ROLLING + "-week.bytes"),
-    /**
-     * Statistic time series. Example:
-     * <p>
-     * {@code 1342562400000,7,16,2,9,16}
-     * </p>
-     */
-    PRINT_OUT_ROLLING_MONTH_PAGES("print.out." + UserAttrDao.STATS_ROLLING + "-month.pages"),
-
-    /**
-     * Statistic time series. Example:
-     * <p>
-     * {@code 1342562400000,7,16,2,9,16}
-     * </p>
-     */
-    PRINT_OUT_ROLLING_MONTH_SHEETS("print.out." + UserAttrDao.STATS_ROLLING + "-month.sheets"),
-    /**
-     * Statistic time series. Example:
-     * <p>
-     * {@code 1342562400000,7,16,2,9,16}
-     * </p>
-     */
-    PRINT_OUT_ROLLING_MONTH_ESU("print.out." + UserAttrDao.STATS_ROLLING + "-month.esu"),
+    PRINT_IN_ROLLING_MONTH_PAGES("print.in." + UserAttrDao.STATS_ROLLING //
+            + "-month.pages"),
 
     /**
      * Statistic time series. Example:
@@ -184,7 +146,16 @@ public enum UserAttrEnum {
      * {@code 1342562400000,70033,163344,22335511,9999332,16345}
      * </p>
      */
-    PRINT_OUT_ROLLING_MONTH_BYTES("print.out." + UserAttrDao.STATS_ROLLING + "-month.bytes"),
+    PRINT_IN_ROLLING_MONTH_BYTES("print.in." + UserAttrDao.STATS_ROLLING //
+            + "-month.bytes"),
+    /**
+     * Statistic time series. Example:
+     * <p>
+     * {@code 1342562400000,7,16,2,9,16}
+     * </p>
+     */
+    PRINT_OUT_ROLLING_WEEK_PAGES("print.out." + UserAttrDao.STATS_ROLLING //
+            + "-week.pages"),
 
     /**
      * Statistic time series. Example:
@@ -192,15 +163,32 @@ public enum UserAttrEnum {
      * {@code 1342562400000,7,16,2,9,16}
      * </p>
      */
-    PDF_OUT_ROLLING_WEEK_PAGES("pdf.out." + UserAttrDao.STATS_ROLLING + "-week.pages"),
-
+    PRINT_OUT_ROLLING_WEEK_SHEETS("print.out." + UserAttrDao.STATS_ROLLING //
+            + "-week.sheets"),
+    /**
+     * Statistic time series. Example:
+     * <p>
+     * {@code 1342562400000,7,16,2,9,16}
+     * </p>
+     */
+    PRINT_OUT_ROLLING_WEEK_ESU("print.out." + UserAttrDao.STATS_ROLLING //
+            + "-week.esu"),
     /**
      * Statistic time series. Example:
      * <p>
      * {@code 1342562400000,70033,163344,22335511,9999332,16345}
      * </p>
      */
-    PDF_OUT_ROLLING_WEEK_BYTES("pdf.out." + UserAttrDao.STATS_ROLLING + "-week.bytes"),
+    PRINT_OUT_ROLLING_WEEK_BYTES("print.out." + UserAttrDao.STATS_ROLLING //
+            + "-week.bytes"),
+    /**
+     * Statistic time series. Example:
+     * <p>
+     * {@code 1342562400000,7,16,2,9,16}
+     * </p>
+     */
+    PRINT_OUT_ROLLING_MONTH_PAGES("print.out." + UserAttrDao.STATS_ROLLING //
+            + "-month.pages"),
 
     /**
      * Statistic time series. Example:
@@ -208,7 +196,16 @@ public enum UserAttrEnum {
      * {@code 1342562400000,7,16,2,9,16}
      * </p>
      */
-    PDF_OUT_ROLLING_MONTH_PAGES("pdf.out." + UserAttrDao.STATS_ROLLING + "-month.pages"),
+    PRINT_OUT_ROLLING_MONTH_SHEETS("print.out." + UserAttrDao.STATS_ROLLING //
+            + "-month.sheets"),
+    /**
+     * Statistic time series. Example:
+     * <p>
+     * {@code 1342562400000,7,16,2,9,16}
+     * </p>
+     */
+    PRINT_OUT_ROLLING_MONTH_ESU("print.out." + UserAttrDao.STATS_ROLLING //
+            + "-month.esu"),
 
     /**
      * Statistic time series. Example:
@@ -216,7 +213,68 @@ public enum UserAttrEnum {
      * {@code 1342562400000,70033,163344,22335511,9999332,16345}
      * </p>
      */
-    PDF_OUT_ROLLING_MONTH_BYTES("pdf.out." + UserAttrDao.STATS_ROLLING + "-month.bytes");
+    PRINT_OUT_ROLLING_MONTH_BYTES("print.out." + UserAttrDao.STATS_ROLLING //
+            + "-month.bytes"),
+
+    /**
+     * Statistic time series. Example:
+     * <p>
+     * {@code 1342562400000,7,16,2,9,16}
+     * </p>
+     */
+    PDF_OUT_ROLLING_WEEK_PAGES("pdf.out." + UserAttrDao.STATS_ROLLING //
+            + "-week.pages"),
+
+    /**
+     * Statistic time series. Example:
+     * <p>
+     * {@code 1342562400000,70033,163344,22335511,9999332,16345}
+     * </p>
+     */
+    PDF_OUT_ROLLING_WEEK_BYTES("pdf.out." + UserAttrDao.STATS_ROLLING //
+            + "-week.bytes"),
+
+    /**
+     * Statistic time series. Example:
+     * <p>
+     * {@code 1342562400000,7,16,2,9,16}
+     * </p>
+     */
+    PDF_OUT_ROLLING_MONTH_PAGES("pdf.out." + UserAttrDao.STATS_ROLLING //
+            + "-month.pages"),
+
+    /**
+     * Statistic time series. Example:
+     * <p>
+     * {@code 1342562400000,70033,163344,22335511,9999332,16345}
+     * </p>
+     */
+    PDF_OUT_ROLLING_MONTH_BYTES("pdf.out." + UserAttrDao.STATS_ROLLING //
+            + "-month.bytes"),
+
+    /**
+     * JSON set of preferred Shared Account IDs for delegated proxy print.
+     */
+    PROXY_PRINT_DELEGATE_ACCOUNTS_PREFERRED(//
+            "proxy-print.delegate.accounts.preferred"),
+
+    /**
+     * Boolean: "true" when user selected preferred search scope.
+     */
+    PROXY_PRINT_DELEGATE_ACCOUNTS_PREFERRED_SELECT(//
+            "proxy-print.delegate.accounts.preferred.select"),
+
+    /**
+     * JSON set of preferred UserGroup IDs for delegated proxy print.
+     */
+    PROXY_PRINT_DELEGATE_GROUPS_PREFERRED(//
+            "proxy-print.delegate.groups.preferred"),
+
+    /**
+     * Boolean: "true" when user selected preferred search scope.
+     */
+    PROXY_PRINT_DELEGATE_GROUPS_PREFERRED_SELECT(//
+            "proxy-print.delegate.groups.preferred.select");
 
     /**
      * Lookup {@link UserAttrEnum} by database name.
@@ -232,7 +290,7 @@ public enum UserAttrEnum {
         /**
          *
          */
-        public Lookup() {
+        Lookup() {
             for (UserAttrEnum value : UserAttrEnum.values()) {
                 enumLookup.put(value.name, value);
             }
@@ -258,6 +316,7 @@ public enum UserAttrEnum {
      * Ensure one-time initialization on class loading.
      */
     private static class LookupHolder {
+        /** */
         public static final Lookup INSTANCE = new Lookup();
     }
 
@@ -276,7 +335,7 @@ public enum UserAttrEnum {
      * @param name
      *            The database name.
      */
-    private UserAttrEnum(final String name) {
+    UserAttrEnum(final String name) {
         this.name = name;
     }
 
@@ -304,4 +363,16 @@ public enum UserAttrEnum {
         throw new SpException(
                 String.format("No role found for %s.", oid.toString()));
     }
+
+    /**
+     * Gets database key for PGP public key ring entry.
+     *
+     * @param keyId
+     *            The PGP Key ID.
+     * @return The database key.
+     */
+    public static String getPgpPubRingDbKey(final PGPKeyID keyId) {
+        return PFX_PGP_PUBRING_KEY_ID.getName().concat(keyId.toHex());
+    }
+
 }

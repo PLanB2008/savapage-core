@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,6 +22,7 @@
 package org.savapage.core.template;
 
 import java.io.File;
+import java.util.Date;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -30,7 +31,9 @@ import java.util.ResourceBundle;
 import org.savapage.core.template.dto.TemplateAppDto;
 import org.savapage.core.template.dto.TemplateDto;
 import org.savapage.core.util.Messages;
+import org.stringtemplate.v4.DateRenderer;
 import org.stringtemplate.v4.ST;
+import org.stringtemplate.v4.StringRenderer;
 
 /**
  * Base class for all templates.
@@ -39,6 +42,32 @@ import org.stringtemplate.v4.ST;
  *
  */
 public abstract class TemplateMixin {
+
+    /**
+     * Date Renderer with our own locale (ignoring default locale).
+     */
+    private static class SpDateRenderer extends DateRenderer {
+
+        /** */
+        private final Locale myLocale;
+
+        /**
+         * Initialize with our own locale.
+         *
+         * @param locale
+         *            The locale.
+         */
+        SpDateRenderer(final Locale locale) {
+            this.myLocale = locale;
+        }
+
+        @Override
+        public String toString(final Object o, final String formatString,
+                final Locale locale) {
+            // Ignore (default) locale parameter, use our own.
+            return super.toString(o, formatString, this.myLocale);
+        }
+    }
 
     /**
      * Delimiter start character for placeholder.
@@ -130,7 +159,6 @@ public abstract class TemplateMixin {
     }
 
     /**
-     *
      * Renders a template.
      *
      * @param rcBundle
@@ -148,6 +176,20 @@ public abstract class TemplateMixin {
 
         final ST tpl = new ST(template, ST_DELIMITER_CHAR_START,
                 ST_DELIMITER_CHAR_STOP);
+
+        /*
+         * The StringRenderer knows to perform a few format operations on String
+         * objects: upper, lower, cap, url-encode and xml-encode.
+         */
+        tpl.groupThatCreatedThisInstance.registerRenderer(String.class,
+                new StringRenderer());
+
+        /*
+         * The DateRenderer knows to perform a few format operations on Date
+         * objects.
+         */
+        tpl.groupThatCreatedThisInstance.registerRenderer(Date.class,
+                new SpDateRenderer(locale));
 
         final Map<String, TemplateDto> mapBean = this.onRender(locale);
 

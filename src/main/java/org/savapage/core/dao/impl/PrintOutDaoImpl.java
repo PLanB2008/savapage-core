@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,12 +26,22 @@ import java.util.Map;
 
 import javax.persistence.NoResultException;
 import javax.persistence.Query;
+import javax.persistence.criteria.CriteriaBuilder;
+import javax.persistence.criteria.CriteriaQuery;
+import javax.persistence.criteria.Join;
+import javax.persistence.criteria.Predicate;
+import javax.persistence.criteria.Root;
 
 import org.savapage.core.dao.PrintOutDao;
+import org.savapage.core.dao.enums.ExternalSupplierEnum;
+import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.dao.helpers.ProxyPrinterName;
 import org.savapage.core.ipp.IppJobStateEnum;
+import org.savapage.core.jpa.DocLog;
+import org.savapage.core.jpa.DocOut;
 import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.jpa.Printer;
+import org.savapage.core.jpa.User;
 import org.savapage.core.print.proxy.JsonProxyPrintJob;
 import org.savapage.core.util.JsonHelper;
 
@@ -49,12 +59,45 @@ public final class PrintOutDaoImpl extends GenericDaoImpl<PrintOut>
     }
 
     @Override
-    public PrintOut findCupsJob(final String jobPrinterName,
+    public PrintOut findActiveCupsJob(final String jobPrinterName,
             final Integer jobId) {
 
-        final String jpql = "SELECT O FROM PrintOut O JOIN O.printer P "
-                + "WHERE O.cupsJobId = :jobId "
-                + "AND P.printerName = :printerName";
+        final String jpql = "SELECT O FROM PrintOut O WHERE O.id = "
+                + "(SELECT MAX(M.id) FROM PrintOut M JOIN M.printer P "
+                + "WHERE M.cupsJobId = :jobId "
+                + "AND P.printerName = :printerName "
+                + "AND (M.cupsCompletedTime IS NULL"
+                + " OR M.cupsCompletedTime = 0)"
+                + "AND M.cupsJobState < :stateFinished)";
+
+        final Query query = getEntityManager().createQuery(jpql);
+
+        query.setParameter("jobId", jobId);
+        query.setParameter("printerName",
+                ProxyPrinterName.getDaoName(jobPrinterName));
+        query.setParameter("stateFinished",
+                IppJobStateEnum.getFirstAbsentOnQueueOrdinal().asInteger());
+
+        PrintOut printOut;
+
+        try {
+            printOut = (PrintOut) query.getSingleResult();
+        } catch (NoResultException e) {
+            printOut = null;
+        }
+
+        return printOut;
+    }
+
+    @Override
+    public PrintOut findEndOfStateCupsJob(final String jobPrinterName,
+            final Integer jobId) {
+
+        final String jpql = "SELECT O FROM PrintOut O WHERE O.id = "
+                + "(SELECT MAX(M.id) FROM PrintOut M JOIN M.printer P "
+                + "WHERE M.cupsJobId = :jobId "
+                + "AND P.printerName = :printerName "
+                + "AND M.cupsCompletedTime > 0)";
 
         final Query query = getEntityManager().createQuery(jpql);
 
@@ -74,21 +117,123 @@ public final class PrintOutDaoImpl extends GenericDaoImpl<PrintOut>
     }
 
     @Override
-    public List<PrintOut> findActiveCupsJobs() {
+    public List<PrintOut> getActiveCupsJobsChunk(final Integer maxResults) {
 
-        final String jpql = "SELECT O FROM PrintOut O JOIN O.printer P "
+        final String jpql = "SELECT O FROM PrintOut O " //
                 + "WHERE O.cupsJobId > 0 "
                 + "AND O.cupsJobState < :cupsJobState "
-                + "ORDER BY P.printerName, O.cupsJobId";
+                + "AND (O.cupsCompletedTime IS NULL"
+                + " OR O.cupsCompletedTime = 0) "
+                + "ORDER BY O.cupsJobId, O.id DESC";
 
         final Query query = getEntityManager().createQuery(jpql);
+
         query.setParameter("cupsJobState",
                 IppJobStateEnum.getFirstAbsentOnQueueOrdinal().asInteger());
+
+        if (maxResults != null) {
+            query.setMaxResults(maxResults);
+        }
 
         @SuppressWarnings("unchecked")
         final List<PrintOut> jobs = query.getResultList();
 
         return jobs;
+    }
+
+    /**
+     * @param countUsers
+     *            If {@code true}, distinct users are counted.
+     * @return Number of distinct users or CUPS jobs.
+     */
+    private long countActiveCupsJobs(final boolean countUsers) {
+
+        final CriteriaBuilder cb = getEntityManager().getCriteriaBuilder();
+        final CriteriaQuery<Long> cq = cb.createQuery(Long.class);
+
+        final Root<PrintOut> root = cq.from(PrintOut.class);
+
+        final Predicate prd1 =
+                cb.greaterThan(root.get("cupsJobId"), Integer.valueOf(0));
+
+        final Predicate prd2 = cb.lessThan(root.get("cupsJobState"),
+                IppJobStateEnum.getFirstAbsentOnQueueOrdinal().asInteger());
+
+        final Predicate prd3a = cb.isNull(root.get("cupsCompletedTime"));
+        final Predicate prd3b =
+                cb.equal(root.get("cupsCompletedTime"), Integer.valueOf(0));
+
+        cq.where(cb.and(prd1, prd2), cb.and(cb.or(prd3a, prd3b)));
+
+        if (countUsers) {
+            final Join<PrintOut, DocOut> joinDocOut = root.join("docOut");
+            final Join<DocOut, DocLog> joinDocLog = joinDocOut.join("docLog");
+            final Join<DocLog, User> joinUser = joinDocLog.join("user");
+            cq.select(cb.countDistinct(joinUser.get("id")));
+        } else {
+            cq.select(cb.count(root.get("id")));
+        }
+
+        return getEntityManager().createQuery(cq).getSingleResult().longValue();
+    }
+
+    @Override
+    public long countActiveCupsJobs() {
+        return this.countActiveCupsJobs(false);
+    }
+
+    @Override
+    public long countActiveCupsJobUsers() {
+        return this.countActiveCupsJobs(true);
+    }
+
+    /**
+     * @param suppl
+     *            External supplier.
+     * @param stat
+     *            External status.
+     * @param countUsers
+     *            If {@code true}, distinct users are counted.
+     * @return Number of distinct users or jobs.
+     */
+    private long countExtSupplierJobs(final ExternalSupplierEnum suppl,
+            final ExternalSupplierStatusEnum stat, final boolean countUsers) {
+
+        final CriteriaBuilder cb = getEntityManager().getCriteriaBuilder();
+        final CriteriaQuery<Long> cq = cb.createQuery(Long.class);
+
+        final Root<PrintOut> root = cq.from(PrintOut.class);
+        final Join<PrintOut, DocOut> joinDocOut = root.join("docOut");
+        final Join<DocOut, DocLog> joinDocLog = joinDocOut.join("docLog");
+
+        final Predicate prd1 =
+                cb.equal(joinDocLog.get("externalSupplier"), suppl.toString());
+
+        final Predicate prd2 =
+                cb.equal(joinDocLog.get("externalStatus"), stat.toString());
+
+        cq.where(cb.and(prd1, prd2));
+
+        if (countUsers) {
+            final Join<DocLog, User> joinUser = joinDocLog.join("user");
+            cq.select(cb.countDistinct(joinUser.get("id")));
+        } else {
+            cq.select(cb.count(root.get("id")));
+        }
+
+        return getEntityManager().createQuery(cq).getSingleResult().longValue();
+    }
+
+    @Override
+    public long countExtSupplierJobs(final ExternalSupplierEnum suppl,
+            final ExternalSupplierStatusEnum stat) {
+        return countExtSupplierJobs(suppl, stat, false);
+    }
+
+    @Override
+    public long countExtSupplierJobUsers(final ExternalSupplierEnum suppl,
+            final ExternalSupplierStatusEnum stat) {
+        return countExtSupplierJobs(suppl, stat, true);
     }
 
     @Override

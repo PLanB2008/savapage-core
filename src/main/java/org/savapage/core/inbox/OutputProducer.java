@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,11 +26,11 @@ import java.io.IOException;
 import java.util.Date;
 import java.util.LinkedHashMap;
 
-import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.LetterheadNotFoundException;
 import org.savapage.core.PostScriptDrmException;
 import org.savapage.core.SpException;
 import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.UserHomePathEnum;
 import org.savapage.core.doc.DocContent;
 import org.savapage.core.imaging.EcoPrintPdfTask;
 import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
@@ -64,11 +64,6 @@ public final class OutputProducer {
      */
     private static final InboxService INBOX_SERVICE =
             ServiceContext.getServiceFactory().getInboxService();
-
-    /**
-     *
-     */
-    private static final String USER_LETTERHEADS_DIR_NAME = "letterheads";
 
     /**
      * The logger.
@@ -159,9 +154,7 @@ public final class OutputProducer {
             if (isLetterheadPublic) {
                 jobHomeDir = ConfigManager.getLetterheadDir();
             } else {
-                jobHomeDir = String.format("%s%c%s",
-                        ConfigManager.getUserHomeDir(user), File.separatorChar,
-                        USER_LETTERHEADS_DIR_NAME);
+                jobHomeDir = UserHomePathEnum.LETTERHEADS.getFullPath(user);
             }
 
             pageImageInfo = new InboxPageImageInfo();
@@ -182,9 +175,9 @@ public final class OutputProducer {
                         Integer.parseInt(pageIn));
 
                 if (pageImageInfo == null) {
-                    throw new InboxPageNotFoundException(
-                            String.format("Page image [%s] for user [%s] inbox"
-                                    + " not available.", pageIn, user));
+                    throw new InboxPageNotFoundException(String.format(
+                            "Inbox page [%s] of user [%s] not present.", pageIn,
+                            user));
                 }
 
                 pageInJobFile = String.valueOf(pageImageInfo.getPageInFile());
@@ -196,8 +189,8 @@ public final class OutputProducer {
 
                 if (pageImageInfo == null) {
                     throw new InboxPageNotFoundException(String.format(
-                            "Page image [%s] for user [%s]"
-                                    + " document [%s] not available.",
+                            "Page image [%s] of user [%s] from document [%s]"
+                                    + " not present.",
                             pageIn, user, jobName));
                 }
 
@@ -247,6 +240,12 @@ public final class OutputProducer {
          * Create image.
          */
         final File srcFile = new File(srcFileBuilder.toString());
+
+        if (!srcFile.exists()) {
+            throw new InboxPageNotFoundException(String
+                    .format("Inbox document of user [%s] not present.", user));
+        }
+
         final File imgFile = new File(imgFileBuilder.toString());
 
         final int imgWidth;
@@ -270,7 +269,7 @@ public final class OutputProducer {
         try {
             if (exec.executeCommand() != 0) {
                 LOGGER.error(command);
-                LOGGER.error(exec.getStandardErrorFromCommand().toString());
+                LOGGER.error(exec.getStandardError());
                 throw new SpException(
                         "image [" + imgFileBuilder + "] could not be created.");
             }
@@ -367,7 +366,7 @@ public final class OutputProducer {
         pdfRequest.setApplyLetterhead(false);
         pdfRequest.setForPrinting(false);
 
-        return generatePdf(pdfRequest, null, null).getPdfFile();
+        return this.generatePdf(pdfRequest, null, null).getPdfFile();
     }
 
     /**
@@ -411,69 +410,34 @@ public final class OutputProducer {
      *
      * @see {@link #generatePdf(String, String)}
      *
-     * @param propPdf
-     *            PDF properties to apply.
-     * @param user
-     *            The requesting user.
-     * @param pdfFile
-     *            The name of the PDF file to generate.
-     * @param documentPageRangeFilter
-     *            The page range filter. For example: '1,2,5-6'. The page
-     *            numbers in page range filter refer to one-based page numbers
-     *            of the integrated {@link InboxInfoDto} document. When
-     *            {@code null}, then the full page range is applied.
-     * @param removeGraphics
-     *            If <code>true</code> graphics are removed (minified to
-     *            one-pixel).
-     * @param ecoPdf
-     *            <code>true</code> if Eco PDF is to be generated.
-     * @param grayscale
-     *            <code>true</code> if Grayscale PDF is to be generated.
+     * @param pdfRequest
+     *            The request.
      * @param docLog
      *            The document log to update.
      * @return File object with generated PDF.
+     * @throws IOException
+     *             When IO error.
      * @throws PostScriptDrmException
+     *             When DRM exception.
      * @throws LetterheadNotFoundException
+     *             When letterhead not found.
      * @throws EcoPrintPdfTaskPendingException
      *             When {@link EcoPrintPdfTask} objects needed for this PDF are
      *             pending.
      */
-    public File generatePdfForExport(final User user, final String pdfFile,
-            final String documentPageRangeFilter, final boolean removeGraphics,
-            final boolean ecoPdf, final boolean grayscale, final DocLog docLog)
+    public File generatePdfForExport(final PdfCreateRequest pdfRequest,
+            final DocLog docLog)
             throws IOException, LetterheadNotFoundException,
             PostScriptDrmException, EcoPrintPdfTaskPendingException {
 
         final LinkedHashMap<String, Integer> uuidPageCount =
                 new LinkedHashMap<>();
 
-        /*
-         * Get the (filtered) jobs.
-         */
-        InboxInfoDto inboxInfo = INBOX_SERVICE.getInboxInfo(user.getUserId());
-
-        if (StringUtils.isNotBlank(documentPageRangeFilter)) {
-            inboxInfo = INBOX_SERVICE.filterInboxInfoPages(inboxInfo,
-                    documentPageRangeFilter);
-        }
-
-        final PdfCreateRequest pdfRequest = new PdfCreateRequest();
-
-        pdfRequest.setUserObj(user);
-        pdfRequest.setPdfFile(pdfFile);
-        pdfRequest.setInboxInfo(inboxInfo);
-        pdfRequest.setRemoveGraphics(removeGraphics);
-        pdfRequest.setApplyPdfProps(true);
-        pdfRequest.setApplyLetterhead(true);
-        pdfRequest.setForPrinting(false);
-        pdfRequest.setEcoPdfShadow(ecoPdf);
-        pdfRequest.setGrayscale(grayscale);
-
         final PdfCreateInfo createInfo =
-                generatePdf(pdfRequest, uuidPageCount, docLog);
+                this.generatePdf(pdfRequest, uuidPageCount, docLog);
 
-        DOCLOG_SERVICE.collectData4DocOut(user, docLog, createInfo,
-                uuidPageCount);
+        DOCLOG_SERVICE.collectData4DocOut(pdfRequest.getUserObj(), docLog,
+                createInfo, uuidPageCount);
 
         return createInfo.getPdfFile();
     }

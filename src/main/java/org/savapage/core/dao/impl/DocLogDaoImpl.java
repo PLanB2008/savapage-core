@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -33,7 +33,6 @@ import javax.persistence.criteria.Path;
 import javax.persistence.criteria.Predicate;
 import javax.persistence.criteria.Root;
 
-import org.savapage.core.SpInfo;
 import org.savapage.core.dao.DocLogDao;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
@@ -53,16 +52,14 @@ import org.slf4j.LoggerFactory;
 public final class DocLogDaoImpl extends GenericDaoImpl<DocLog>
         implements DocLogDao {
 
+    /** */
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(DocLogDaoImpl.class);
+
     @Override
     protected String getCountQuery() {
         return "SELECT COUNT(T.id) FROM DocLog T";
     }
-
-    /**
-     * .
-     */
-    private static final Logger LOGGER =
-            LoggerFactory.getLogger(DocLogDaoImpl.class);
 
     @Override
     public DocLog findByUuid(final Long userId, final String uuid) {
@@ -74,6 +71,27 @@ public final class DocLogDaoImpl extends GenericDaoImpl<DocLog>
 
         query.setParameter("userId", userId);
         query.setParameter("uuid", uuid);
+
+        DocLog docLog = null;
+
+        try {
+            docLog = (DocLog) query.getSingleResult();
+        } catch (NoResultException e) {
+            docLog = null;
+        }
+
+        return docLog;
+    }
+
+    @Override
+    public DocLog findByExtId(final String externalId) {
+
+        final String jpql =
+                "SELECT D FROM DocLog D WHERE D.externalId = :extId";
+
+        final Query query = getEntityManager().createQuery(jpql);
+
+        query.setParameter("extId", externalId);
 
         DocLog docLog = null;
 
@@ -198,14 +216,13 @@ public final class DocLogDaoImpl extends GenericDaoImpl<DocLog>
 
                 i++;
 
-                SpInfo.instance().log(String
-                        .format("|               step %d: %d ...", i, count));
+                LOGGER.trace("|               step {}: {} ...", i, count);
 
                 batchCommitter.increment();
                 batchCommitter.commit();
 
-                SpInfo.instance().log(String.format(
-                        "|                    %d: %d committed.", i, count));
+                LOGGER.trace("|                    {}: {} committed.", i,
+                        count);
             }
         }
         return nDeleted;
@@ -288,14 +305,13 @@ public final class DocLogDaoImpl extends GenericDaoImpl<DocLog>
 
                 i++;
 
-                SpInfo.instance().log(String
-                        .format("|               step %d: %d ...", i, count));
+                LOGGER.trace("|               step {}: {} ...", i, count);
 
                 batchCommitter.increment();
                 batchCommitter.commit();
 
-                SpInfo.instance().log(String.format(
-                        "|                    %d: %d committed.", i, count));
+                LOGGER.trace("|                    {}: {} committed.", i,
+                        count);
             }
         }
 
@@ -329,14 +345,12 @@ public final class DocLogDaoImpl extends GenericDaoImpl<DocLog>
                 nDeleted = count;
             }
 
-            SpInfo.instance().log(
-                    String.format("|          step %d: %d ...", i + 1, count));
+            LOGGER.trace("|          step {}: {} ...", i + 1, count);
 
             batchCommitter.increment();
             batchCommitter.commit();
 
-            SpInfo.instance().log(String
-                    .format("|               %d: %d committed.", i + 1, count));
+            LOGGER.trace("|               {}: {} committed.", i + 1, count);
         }
         return nDeleted;
     }

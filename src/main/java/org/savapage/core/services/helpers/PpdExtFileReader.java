@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -32,13 +32,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
-import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.ServerPathEnum;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.ipp.rules.IppRuleConstraint;
@@ -61,7 +62,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Reader of file with SavaPage PPD extensions from
- * {@link ConfigManager#SERVER_REL_PATH_CUSTOM_CUPS}.
+ * {@link ServerPathEnum#CUSTOM_CUPS}.
  *
  * @author Rijk Ravestein
  *
@@ -100,6 +101,13 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
      */
     private static final String PPD_ATTR_LANDSCAPE_ORIENTATION =
             PPD_OPTION_PFX_CHAR + "LandscapeOrientation:";
+
+    /**
+     * PPD attribute: {@code } if booklet page ordering is performed client-side
+     * (locally).
+     */
+    private static final String PPD_ATTR_SP_LOCAL_BOOKLET =
+            PPD_OPTION_PFX_CHAR + "SPLocalBooklet:";
 
     /**
      * PPD attribute value.
@@ -315,6 +323,11 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
     private Boolean ppdLandscapeMinus90;
 
     /**
+    *
+    */
+    private Boolean localBooklet;
+
+    /**
      *
      * @param cupsOptionsLookup
      *            IPP printer options as retrieved from CUPS.
@@ -358,20 +371,19 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
      *
      * @param map
      *            The map to lazy add on.
-     * @param ippMediaAttr
+     * @param ippAttr
      *            The IPP attribute name.
      * @return The {@link JsonProxyPrinterOpt}.
      */
     private static JsonProxyPrinterOpt lazyCreateMapping(
-            final Map<String, JsonProxyPrinterOpt> map,
-            final String ippMediaAttr) {
+            final Map<String, JsonProxyPrinterOpt> map, final String ippAttr) {
 
-        JsonProxyPrinterOpt opt = map.get(ippMediaAttr);
+        JsonProxyPrinterOpt opt = map.get(ippAttr);
 
         if (opt == null) {
             opt = new JsonProxyPrinterOpt();
-            opt.setKeyword(ippMediaAttr);
-            map.put(ippMediaAttr, opt);
+            opt.setKeyword(ippAttr);
+            map.put(ippAttr, opt);
         }
         return opt;
     }
@@ -410,6 +422,7 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
         this.rulesSubst = new ArrayList<>();
 
         this.ppdLandscapeMinus90 = null;
+        this.localBooklet = Boolean.FALSE;
     }
 
     /**
@@ -1173,14 +1186,32 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
             final String value) {
 
         if (value.equalsIgnoreCase(PPD_ATTR_LANDSCAPE_ORIENTATION_MINUS90)) {
-            ppdLandscapeMinus90 = Boolean.TRUE;
+            this.ppdLandscapeMinus90 = Boolean.TRUE;
         } else if (value
                 .equalsIgnoreCase(PPD_ATTR_LANDSCAPE_ORIENTATION_PLUS90)) {
-            ppdLandscapeMinus90 = Boolean.FALSE;
+            this.ppdLandscapeMinus90 = Boolean.FALSE;
         } else {
             logSyntaxError(lineNr, value);
         }
+    }
 
+    /**
+     * Notifies {@link #PPD_ATTR_SP_LOCAL_BOOKLET} attribute.
+     *
+     * @param lineNr
+     *            The 1-based line number.
+     * @param value
+     *            Attribute value.
+     */
+    private void onAttrSPLocalBooklet(final int lineNr, final String value) {
+
+        if (value.equalsIgnoreCase(Boolean.TRUE.toString())) {
+            this.localBooklet = Boolean.TRUE;
+        } else if (value.equalsIgnoreCase(Boolean.FALSE.toString())) {
+            this.localBooklet = Boolean.FALSE;
+        } else {
+            logSyntaxError(lineNr, value);
+        }
     }
 
     /**
@@ -1226,16 +1257,25 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
     private void onOptionChoiceMapping(final String ppdOption,
             final String ppdChoice, final String ippChoice) {
 
+        final boolean extendedChoice =
+                ippChoice.startsWith(SP_JOBTICKET_OPTION_CHOICE_EXTENDED);
+
+        final String ippChoiceVanilla = StringUtils.stripStart(ippChoice,
+                SP_JOBTICKET_OPTION_CHOICE_EXTENDED);
+
         final JsonProxyPrinterOpt opt =
                 this.lazyCreatePpdOptionMapping(ppdOption);
 
         final JsonProxyPrinterOptChoice choice =
-                opt.addChoice(ippChoice, ippChoice);
+                opt.addChoice(ippChoiceVanilla, ippChoiceVanilla);
 
         if (ppdChoice.startsWith(PPD_CHOICE_DEFAULT_PFX)) {
-            opt.setDefchoice(ippChoice);
-            opt.setDefchoiceIpp(ippChoice);
+            opt.setDefchoice(ippChoiceVanilla);
+            opt.setDefchoiceIpp(ippChoiceVanilla);
+        } else {
+            choice.setExtended(extendedChoice);
         }
+
         choice.setChoicePpd(
                 StringUtils.stripStart(ppdChoice, PPD_CHOICE_DEFAULT_PFX));
     }
@@ -1267,6 +1307,15 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
         if (firstWord.equalsIgnoreCase(PPD_ATTR_LANDSCAPE_ORIENTATION)) {
             if (words.length == 2) {
                 this.onAttrLandscapeOrientation(lineNr, words[1]);
+            } else {
+                logSyntaxError(lineNr, firstWord);
+            }
+            return;
+        }
+
+        if (firstWord.equalsIgnoreCase(PPD_ATTR_SP_LOCAL_BOOKLET)) {
+            if (words.length == 2) {
+                this.onAttrSPLocalBooklet(lineNr, words[1]);
             } else {
                 logSyntaxError(lineNr, firstWord);
             }
@@ -1337,6 +1386,75 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
     }
 
     /**
+     * Injects IPP options into the {@link ProxyPrinterOptGroupEnum#PAGE_SETUP}
+     * group of a proxy printer.
+     *
+     * @param proxyPrinter
+     *            The printer in which to inject the IPP options.
+     * @param optToInject
+     *            The IPP options.
+     */
+    private static void injectPageSetupOptions(
+            final JsonProxyPrinter proxyPrinter,
+            final ArrayList<JsonProxyPrinterOpt> optToInject) {
+
+        if (optToInject.isEmpty()) {
+            return;
+        }
+
+        final JsonProxyPrinterOptGroup optGroup = lazyCreateOptGroup(
+                ProxyPrinterOptGroupEnum.PAGE_SETUP, proxyPrinter.getGroups());
+
+        final String[] optOrder = IppDictJobTemplateAttr.ATTR_SET_UI_PAGE_SETUP;
+
+        final ArrayList<JsonProxyPrinterOpt> optCurrent = optGroup.getOptions();
+
+        // Enforce the right merge order with TreeMap.
+        final TreeMap<Integer, JsonProxyPrinterOpt> mergeMap = new TreeMap<>();
+
+        // A safe enough offset for options that are not found.
+        final int maxOptions =
+                optOrder.length + optCurrent.size() + optToInject.size();
+
+        final int[] aNotFound = new int[2];
+        final ArrayList<JsonProxyPrinterOpt>[] aOptionLists = new ArrayList[2];
+
+        // Current options that are not found in the preferred order, are
+        // prepended.
+        aNotFound[0] = -maxOptions;
+        aOptionLists[0] = optCurrent;
+
+        // Options to inject that are not found in the preferred order, are
+        // appended.
+        aNotFound[1] = maxOptions;
+        aOptionLists[1] = optToInject;
+
+        for (int j = 0; j < aOptionLists.length; j++) {
+
+            int iNotFound = aNotFound[j];
+
+            for (final JsonProxyPrinterOpt optC : aOptionLists[j]) {
+                boolean found = false;
+                for (int i = 0; i < optOrder.length; i++) {
+                    if (optC.getKeyword().equals(optOrder[i])) {
+                        mergeMap.put(i, optC);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    mergeMap.put(iNotFound++, optC);
+                }
+            }
+        }
+
+        final ArrayList<JsonProxyPrinterOpt> optMerged = new ArrayList<>();
+        optMerged.addAll(mergeMap.values());
+
+        optGroup.setOptions(optMerged);
+    }
+
+    /**
      * Injects the SavaPage PPD extensions defined in {@link File} into the IPP
      * options of a proxy printer.
      *
@@ -1359,9 +1477,10 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
         final IppDictJobTemplateAttr ippDict =
                 IppDictJobTemplateAttr.instance();
 
-        boolean printScalingExt = false;
-
         // The mapped PPD options
+        final ArrayList<JsonProxyPrinterOpt> optToInjectPageSetup =
+                new ArrayList<>();
+
         for (final JsonProxyPrinterOpt opt : reader.ppdOptionMap.values()) {
 
             final String keywordIpp = opt.getKeyword();
@@ -1385,8 +1504,33 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
                 continue;
             }
 
-            if (keywordIpp.equals(IppDictJobTemplateAttr.ATTR_PRINT_SCALING)) {
-                printScalingExt = true;
+            // Correct for missing default choice
+            if (opt.getDefchoiceIpp() == null && opt.getChoices() != null
+                    && !opt.getChoices().isEmpty()) {
+
+                for (final JsonProxyPrinterOptChoice wlk : opt.getChoices()) {
+                    if (!wlk.isExtended()) {
+                        opt.setDefchoice(wlk.getChoice());
+                        opt.setDefchoiceIpp(wlk.getChoice());
+                        break;
+                    }
+                }
+            }
+            //
+            if (keywordIpp.equals(IppDictJobTemplateAttr.ATTR_MEDIA_SOURCE)) {
+                proxyPrinter.setManualMediaSource(Boolean.valueOf(
+                        opt.getChoice(IppKeyword.MEDIA_SOURCE_MANUAL) != null));
+            }
+
+            if (keywordIpp
+                    .equals(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE)) {
+                proxyPrinter.setColorDevice(Boolean.valueOf(opt
+                        .getChoice(IppKeyword.PRINT_COLOR_MODE_COLOR) != null));
+            }
+            if (keywordIpp.equals(IppDictJobTemplateAttr.ATTR_SIDES)) {
+                proxyPrinter.setDuplexDevice(Boolean.valueOf(opt.getChoices()
+                        .size() > 1
+                        || opt.getChoice(IppKeyword.SIDES_ONE_SIDED) == null));
             }
 
             if (keywordIpp.equals(IppDictJobTemplateAttr.ATTR_SHEET_COLLATE)) {
@@ -1406,11 +1550,18 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
                 continue;
             }
 
-            final JsonProxyPrinterOptGroup optGroupInject =
-                    lazyCreateOptGroup(optGroupEnum, proxyPrinter.getGroups());
-
-            optGroupInject.getOptions().add(opt);
+            if (ProxyPrinterOptGroupEnum.PAGE_SETUP == optGroupEnum) {
+                optToInjectPageSetup.add(opt);
+            } else {
+                final JsonProxyPrinterOptGroup optGroupInject =
+                        lazyCreateOptGroup(optGroupEnum,
+                                proxyPrinter.getGroups());
+                optGroupInject.getOptions().add(opt);
+            }
         }
+
+        // Inject page setup options in the right order.
+        injectPageSetupOptions(proxyPrinter, optToInjectPageSetup);
 
         // SpJobTicket Set/Copy/Sheet/Media options.
         final JsonProxyPrinterOptGroup optGroupJobTicket = lazyCreateOptGroup(
@@ -1452,10 +1603,9 @@ public final class PpdExtFileReader extends AbstractConfigFileReader {
             proxyPrinter.setPpdLandscapeMinus90(
                     reader.ppdLandscapeMinus90.booleanValue());
         }
-
+        proxyPrinter.setBookletClientSide(reader.localBooklet.booleanValue());
         //
         proxyPrinter.setInjectPpdExt(true);
-        proxyPrinter.setPrintScalingExt(printScalingExt);
     }
 
     /**

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,13 +29,13 @@ import java.util.Map;
 import java.util.Map.Entry;
 
 import org.savapage.core.dao.UserGroupMemberDao;
+import org.savapage.core.dao.enums.ACLRoleEnum;
 import org.savapage.core.dao.helpers.JsonPrintDelegation;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
 import org.savapage.core.jpa.UserGroup;
-import org.savapage.core.jpa.UserGroupMember;
 import org.savapage.core.services.PrintDelegationService;
 import org.savapage.core.services.helpers.AccountTrxInfo;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
@@ -52,19 +52,26 @@ public final class PrintDelegationServiceImpl extends AbstractService
      * Creates an {@link AccountTrxInfo}.
      *
      * @param account
+     *            The account.
      * @param weight
+     *            The transaction weight.
+     * @param weightUnit
+     *            The transaction weight unit.
      * @param groupName
      *            The name of the group the user was selected by, or
      *            {@code null} when selected as single user.
-     * @return
+     * @return The account info.
      */
     private static AccountTrxInfo createAccountTrxInfo(final Account account,
-            final Integer weight, final String groupName) {
+            final Integer weight, final int weightUnit,
+            final String groupName) {
 
         final AccountTrxInfo trx = new AccountTrxInfo();
 
-        trx.setWeight(weight);
         trx.setAccount(account);
+
+        trx.setWeight(weight);
+        trx.setWeightUnit(Integer.valueOf(weightUnit));
 
         /*
          * Use free format external details to set the group name.
@@ -83,6 +90,8 @@ public final class PrintDelegationServiceImpl extends AbstractService
      *            The {@link User}.
      * @param weight
      *            The transaction weight.
+     * @param weightUnit
+     *            The transaction weight unit.
      * @param groupName
      *            The name of the group the user was selected by, or
      *            {@code null} when a single user.
@@ -91,13 +100,14 @@ public final class PrintDelegationServiceImpl extends AbstractService
      */
     private static int addUserAccountToTrxList(
             final List<AccountTrxInfo> targetList, final User user,
-            final Integer weight, final String groupName) {
+            final Integer weight, final int weightUnit,
+            final String groupName) {
 
         final UserAccount userAccount = accountingService()
                 .lazyGetUserAccount(user, AccountTypeEnum.USER);
 
         targetList.add(createAccountTrxInfo(userAccount.getAccount(), weight,
-                groupName));
+                weightUnit, groupName));
 
         return weight.intValue();
     }
@@ -108,9 +118,10 @@ public final class PrintDelegationServiceImpl extends AbstractService
 
         final List<AccountTrxInfo> targetList = new ArrayList<>();
 
-        final Map<Long, Integer> sharedAccountWeights = new HashMap<>();
+        final Map<Long, Integer> sharedAccountCopies = new HashMap<>();
 
         int weightTotal = 0;
+        int copiesTotal = 0;
 
         /*
          * Settle with Users.
@@ -126,15 +137,12 @@ public final class PrintDelegationServiceImpl extends AbstractService
                 continue;
             }
 
-            weightTotal += addUserAccountToTrxList(targetList, user,
-                    idUser.getValue(), null);
+            final int copiesWlk = addUserAccountToTrxList(targetList, user,
+                    idUser.getValue(), 1, null);
+
+            weightTotal += copiesWlk;
+            copiesTotal += copiesWlk;
         }
-
-        // Filter for users in group.
-        final UserGroupMemberDao.GroupFilter userGroupFilter =
-                new UserGroupMemberDao.GroupFilter();
-
-        userGroupFilter.setDisabledPrintOut(Boolean.FALSE);
 
         /*
          * Groups: settle with GROUP account.
@@ -150,35 +158,62 @@ public final class PrintDelegationServiceImpl extends AbstractService
                 continue;
             }
 
-            userGroupFilter.setGroupId(idGroup.getKey());
+            final int copiesWlk = idGroup.getValue().intValue();
 
-            final int weightWlk = idGroup.getValue().intValue()
-                    * (int) userGroupMemberDAO().getUserCount(userGroupFilter);
-
-            if (weightWlk == 0) {
+            if (copiesWlk == 0) {
                 continue;
             }
 
             final Account groupAccount =
                     accountingService().lazyGetUserGroupAccount(userGroup);
 
-            targetList.add(createAccountTrxInfo(groupAccount, weightWlk, null));
+            targetList.add(
+                    createAccountTrxInfo(groupAccount, copiesWlk, 1, null));
 
-            weightTotal += weightWlk;
+            weightTotal += copiesWlk;
+            copiesTotal += copiesWlk;
         }
 
         /*
          * Groups: settle with USER accounts.
          */
+        final UserGroupMemberDao.GroupFilter groupMemberFilterWlk =
+                new UserGroupMemberDao.GroupFilter();
+
+        groupMemberFilterWlk.setAclRoleNotFalse(ACLRoleEnum.PRINT_DELEGATOR);
+        groupMemberFilterWlk.setDisabledPrintOut(Boolean.FALSE);
+
         for (final Entry<Long, Integer> idGroup : source.getGroupsAccountUser()
                 .entrySet()) {
 
-            int weightGroup = 0;
+            final int copiesGroupWlk = idGroup.getValue().intValue();
 
-            for (final UserGroupMember member : userGroupMemberDAO()
-                    .getGroupMembers(idGroup.getKey())) {
+            weightTotal += copiesGroupWlk;
+            copiesTotal += copiesGroupWlk;
 
-                final User user = member.getUser();
+            groupMemberFilterWlk.setGroupId(idGroup.getKey());
+
+            final List<User> groupMembers = userGroupMemberDAO().getUserChunk(
+                    groupMemberFilterWlk, null, null,
+                    UserGroupMemberDao.UserField.USER_NAME, true);
+
+            int weightMemberTotal = 0;
+
+            final int weightMember;
+            final int weightMemberUnit;
+
+            if (copiesGroupWlk % groupMembers.size() == 0) {
+                weightMember = copiesGroupWlk / groupMembers.size();
+                weightMemberUnit = 1;
+            } else {
+                weightMember = copiesGroupWlk;
+                weightMemberUnit = groupMembers.size();
+            }
+
+            final UserGroup userGroup =
+                    userGroupDAO().findById(idGroup.getKey());
+
+            for (final User user : groupMembers) {
 
                 if (user.getDeleted()) {
                     continue;
@@ -188,22 +223,19 @@ public final class PrintDelegationServiceImpl extends AbstractService
                     continue;
                 }
 
-                final int weightWlk = addUserAccountToTrxList(targetList, user,
-                        idGroup.getValue(), member.getGroup().getGroupName());
+                addUserAccountToTrxList(targetList, user, weightMember,
+                        weightMemberUnit, userGroup.getGroupName());
 
-                weightTotal += weightWlk;
-                weightGroup += weightWlk;
+                weightMemberTotal += weightMember;
             }
 
-            if (weightGroup > 0) {
-
-                final UserGroup userGroup =
-                        userGroupDAO().findById(idGroup.getKey());
+            // Extra trx for group.
+            if (weightMemberTotal > 0) {
                 final Account groupAccount =
                         accountingService().lazyGetUserGroupAccount(userGroup);
-
                 targetList.add(createAccountTrxInfo(groupAccount,
-                        Integer.valueOf(weightGroup), null));
+                        Integer.valueOf(weightMemberTotal), weightMemberUnit,
+                        null));
             }
         }
 
@@ -221,25 +253,22 @@ public final class PrintDelegationServiceImpl extends AbstractService
                 continue;
             }
 
-            userGroupFilter.setGroupId(idGroup);
+            final int copiesWlk = entry.getValue().getValue();
 
-            final int weightWlk = entry.getValue().getValue()
-                    * (int) userGroupMemberDAO().getUserCount(userGroupFilter);
-
-            if (weightWlk == 0) {
+            if (copiesWlk == 0) {
                 continue;
             }
 
             final Long idAccount = entry.getValue().getKey();
 
-            Integer sharedWeight = sharedAccountWeights.get(idAccount);
+            Integer sharedCopies = sharedAccountCopies.get(idAccount);
 
-            if (sharedWeight == null) {
-                sharedWeight = new Integer(0);
+            if (sharedCopies == null) {
+                sharedCopies = new Integer(0);
             }
 
-            sharedWeight += weightWlk;
-            sharedAccountWeights.put(idAccount, sharedWeight);
+            sharedCopies += copiesWlk;
+            sharedAccountCopies.put(idAccount, sharedCopies);
         }
 
         /*
@@ -248,28 +277,28 @@ public final class PrintDelegationServiceImpl extends AbstractService
         for (final Entry<Long, Integer> entry : source.getCopiesAccountShared()
                 .entrySet()) {
 
-            final int weightWlk = entry.getValue().intValue();
+            final int copiesWlk = entry.getValue().intValue();
 
-            if (weightWlk == 0) {
+            if (copiesWlk == 0) {
                 continue;
             }
 
             final Long idAccount = entry.getKey();
 
-            Integer sharedWeight = sharedAccountWeights.get(idAccount);
+            Integer copiesShared = sharedAccountCopies.get(idAccount);
 
-            if (sharedWeight == null) {
-                sharedWeight = new Integer(0);
+            if (copiesShared == null) {
+                copiesShared = new Integer(0);
             }
 
-            sharedWeight += weightWlk;
-            sharedAccountWeights.put(idAccount, sharedWeight);
+            copiesShared += copiesWlk;
+            sharedAccountCopies.put(idAccount, copiesShared);
         }
 
         /*
          * Process shared account totals.
          */
-        for (final Entry<Long, Integer> entry : sharedAccountWeights
+        for (final Entry<Long, Integer> entry : sharedAccountCopies
                 .entrySet()) {
 
             final Long idAccount = entry.getKey();
@@ -283,15 +312,20 @@ public final class PrintDelegationServiceImpl extends AbstractService
                 continue;
             }
 
-            final Integer weight = entry.getValue();
-            targetList.add(createAccountTrxInfo(account, weight, null));
-            weightTotal += weight.intValue();
+            final Integer sharedCopies = entry.getValue();
+
+            targetList
+                    .add(createAccountTrxInfo(account, sharedCopies, 1, null));
+
+            weightTotal += sharedCopies.intValue();
+            copiesTotal += sharedCopies.intValue();
         }
 
         /*
          * Wrap-up
          */
-        final AccountTrxInfoSet target = new AccountTrxInfoSet(weightTotal);
+        final AccountTrxInfoSet target =
+                new AccountTrxInfoSet(weightTotal, copiesTotal);
         target.setAccountTrxInfoList(targetList);
         return target;
     }

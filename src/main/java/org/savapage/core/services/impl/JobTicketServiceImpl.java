@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -35,9 +35,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -47,6 +50,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Random;
 import java.util.Set;
+import java.util.SortedSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -54,8 +58,10 @@ import javax.mail.MessagingException;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.time.DateUtils;
+import org.quartz.CronExpression;
 import org.savapage.core.SpException;
 import org.savapage.core.circuitbreaker.CircuitBreakerException;
 import org.savapage.core.config.ConfigManager;
@@ -66,7 +72,14 @@ import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.dao.enums.PrintModeEnum;
 import org.savapage.core.dao.enums.PrinterAttrEnum;
 import org.savapage.core.doc.DocContent;
+import org.savapage.core.doc.PdfToBooklet;
+import org.savapage.core.doc.PdfToGrayscale;
+import org.savapage.core.doc.store.DocStoreException;
+import org.savapage.core.doc.store.DocStoreTypeEnum;
+import org.savapage.core.dto.JobTicketDomainDto;
+import org.savapage.core.dto.JobTicketLabelDto;
 import org.savapage.core.dto.JobTicketTagDto;
+import org.savapage.core.dto.JobTicketUseDto;
 import org.savapage.core.dto.RedirectPrinterDto;
 import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.ipp.IppJobStateEnum;
@@ -74,6 +87,7 @@ import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.ipp.client.IppConnectException;
 import org.savapage.core.ipp.helpers.IppOptionMap;
+import org.savapage.core.ipp.rules.IppRuleValidationException;
 import org.savapage.core.jpa.AccountTrx;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.PrintOut;
@@ -81,6 +95,7 @@ import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.PrinterGroup;
 import org.savapage.core.jpa.PrinterGroupMember;
 import org.savapage.core.jpa.User;
+import org.savapage.core.outbox.OutboxInfoDto.OutboxAccountTrxInfo;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJobBaseDto;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
 import org.savapage.core.pdf.PdfCreateInfo;
@@ -100,12 +115,13 @@ import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.core.services.helpers.JobTicketExecParms;
+import org.savapage.core.services.helpers.JobTicketLabelCache;
 import org.savapage.core.services.helpers.JobTicketQueueInfo;
 import org.savapage.core.services.helpers.JobTicketStats;
-import org.savapage.core.services.helpers.JobTicketSupplierData;
-import org.savapage.core.services.helpers.JobTicketTagCache;
 import org.savapage.core.services.helpers.JobTicketWrapperDto;
+import org.savapage.core.services.helpers.PrintSupplierData;
 import org.savapage.core.services.helpers.PrinterAttrLookup;
+import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ProxyPrintInboxPattern;
 import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.services.helpers.TicketJobSheetPdfCreator;
@@ -118,7 +134,9 @@ import org.savapage.core.template.email.JobTicketEmailTemplate;
 import org.savapage.core.util.DateUtil;
 import org.savapage.core.util.JsonHelper;
 import org.savapage.ext.papercut.PaperCutHelper;
+import org.savapage.ext.papercut.PaperCutIntegrationEnum;
 import org.savapage.ext.smartschool.SmartschoolPrintInData;
+import org.savapage.lib.pgp.PGPBaseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -151,16 +169,22 @@ public final class JobTicketServiceImpl extends AbstractService
     /**
      *
      */
-    private static final int TICKER_NUMBER_CHUNK_WIDTH = 4;
+    private static final int TICKET_NUMBER_CHUNK_WIDTH = 4;
 
     /** */
-    private static final String TICKER_NUMBER_CHUNK_SEPARATOR = "-";
+    private static final String TICKET_NUMBER_CHUNK_SEPARATOR = "-";
 
     /** */
-    private static final String TICKER_NUMBER_PREFIX_TAG_SEPARATOR = "/";
+    private static final String TICKET_NUMBER_PREFIX_LABEL_SEPARATOR = "/";
 
-    /** By UUID */
+    /** */
+    private static final String TICKET_NUMBER_SUFFIX_REOPEN = "+";
+
+    /** By UUID. */
     private ConcurrentHashMap<UUID, OutboxJobDto> jobTicketCache;
+
+    /** By Ticket Number. */
+    private ConcurrentHashMap<String, OutboxJobDto> reopenedTicketCache;
 
     /** */
     private JobTicketQueueInfo jobTicketQueueInfo;
@@ -168,9 +192,14 @@ public final class JobTicketServiceImpl extends AbstractService
     /**
      * Implementation of execution pattern for proxy printing from the user
      * inbox to job ticket.
+     * <p>
+     * <i>Important: all tickets created by this executor have same submit
+     * date.</i>
+     * </p>
      */
     private static final class ProxyPrintInbox extends ProxyPrintInboxPattern {
 
+        /** */
         private final JobTicketServiceImpl serviceImpl;
 
         /**
@@ -184,41 +213,45 @@ public final class JobTicketServiceImpl extends AbstractService
         private final Date deliveryDate;
 
         /**
-         * The tag (to be pre-pended to the generated ticket number). Can be
+         * The label (to be pre-pended to the generated ticket number). Can be
          * {@code null} or empty.
          */
-        private final String tag;
+        private final String label;
 
         /**
          * The job tickets created.
          */
         private final List<OutboxJobDto> ticketsCreated;
 
+        /** */
+        private Set<Long> printerGroupIDs;
+
         /**
-         *
          * @param service
          *            The parent service.
          * @param reqDeliveryDate
          *            The requested date of delivery (can be {@code null}).
-         * @param reqTag
-         *            The tag (to be pre-pended to the generated ticket number).
-         *            Can be {@code null} or empty.
+         * @param reqLabel
+         *            The label (to be pre-pended to the generated ticket
+         *            number). Can be {@code null} or empty.
          *
          */
         ProxyPrintInbox(final JobTicketServiceImpl service,
-                final Date reqDeliveryDate, final String reqTag) {
+                final Date reqDeliveryDate, final String reqLabel) {
 
             this.serviceImpl = service;
             this.submitDate = ServiceContext.getTransactionDate();
             this.deliveryDate = this.serviceImpl
                     .getTicketDeliveryDate(submitDate, reqDeliveryDate);
-            this.tag = reqTag;
+            this.label = reqLabel;
             this.ticketsCreated = new ArrayList<>();
         }
 
         @Override
         protected void onInit(final User lockedUser,
                 final ProxyPrintInboxReq request) {
+            this.printerGroupIDs = this.serviceImpl
+                    .getTicketPrinterGroupIDs(request.getPrinterName());
         }
 
         @Override
@@ -236,17 +269,21 @@ public final class JobTicketServiceImpl extends AbstractService
         @Override
         protected void onPdfGenerated(final User lockedUser,
                 final ProxyPrintInboxReq request,
-                final LinkedHashMap<String, Integer> uuidPageCount,
-                final PdfCreateInfo createInfo) {
+                final PdfCreateInfo createInfo, final int chunkIndex,
+                final int chunkSize) {
 
             final UUID uuid = UUID.fromString(FilenameUtils
                     .getBaseName(createInfo.getPdfFile().getName()));
 
             try {
                 final OutboxJobDto dto = this.serviceImpl.addJobticketToCache(
-                        lockedUser, createInfo, uuid, request, uuidPageCount,
-                        this.submitDate, this.deliveryDate, this.tag);
+                        lockedUser, createInfo, uuid, request, this.submitDate,
+                        this.deliveryDate, this.label, chunkIndex, chunkSize);
+
+                dto.setPrinterGroupIDs(this.printerGroupIDs);
+
                 ticketsCreated.add(dto);
+
             } catch (IOException e) {
                 throw new SpException(e.getMessage(), e);
             }
@@ -258,14 +295,13 @@ public final class JobTicketServiceImpl extends AbstractService
         public List<OutboxJobDto> getTicketsCreated() {
             return ticketsCreated;
         }
-
     }
 
     @Override
     public void proxyPrintPdf(final User lockedUser,
             final ProxyPrintDocReq request, final PdfCreateInfo createInfo,
             final DocContentPrintInInfo printInfo, final Date deliveryDate,
-            final String tag) throws IOException {
+            final JobTicketLabelDto label) throws IOException {
 
         final UUID uuid = UUID.fromString(request.getDocumentUuid());
 
@@ -284,9 +320,11 @@ public final class JobTicketServiceImpl extends AbstractService
                 new LinkedHashMap<>();
         uuidPageCount.put(uuid.toString(), request.getNumberOfPages());
 
+        createInfo.setUuidPageCount(uuidPageCount);
+
         final OutboxJobDto dto = this.addJobticketToCache(lockedUser,
-                createInfo, uuid, request, uuidPageCount,
-                ServiceContext.getTransactionDate(), deliveryDate, tag);
+                createInfo, uuid, request, ServiceContext.getTransactionDate(),
+                deliveryDate, this.createTicketLabel(label), 1, 1);
 
         final String msgKey = "msg-user-print-jobticket-print";
 
@@ -308,73 +346,85 @@ public final class JobTicketServiceImpl extends AbstractService
      *            The Job Ticket {@link UUID}.
      * @param request
      *            The {@link AbstractProxyPrintReq}.
-     * @param uuidPageCount
-     *            Object filled with the number of selected pages per input file
-     *            UUID. Is {@code null} when Copy Job Ticket.
      * @param submitDate
      *            The submit date.
      * @param deliveryDate
      *            The requested date of delivery.
-     * @param tag
-     *            The tag (to be pre-pended to the generated ticket number). Can
-     *            be {@code null} or empty.
+     * @param label
+     *            The label (to be pre-pended to the generated ticket number).
+     *            Can be {@code null} or empty.
+     * @param chunkIndex
+     *            1-based index of chunkSize;
+     * @param chunkSize
+     *            Total number of chunks;
+     *
      * @return The Job Ticket added to the cache.
      * @throws IOException
      *             When file IO error occurs.
      */
     private OutboxJobDto addJobticketToCache(final User user,
             final PdfCreateInfo createInfo, final UUID uuid,
-            final AbstractProxyPrintReq request,
-            final LinkedHashMap<String, Integer> uuidPageCount,
-            final Date submitDate, final Date deliveryDate, final String tag)
-            throws IOException {
+            final AbstractProxyPrintReq request, final Date submitDate,
+            final Date deliveryDate, final String label, final int chunkIndex,
+            final int chunkSize) throws IOException {
 
         final OutboxJobDto dto = outboxService().createOutboxJob(request,
-                submitDate, deliveryDate, createInfo, uuidPageCount);
+                submitDate, deliveryDate, createInfo);
 
         dto.setUserId(user.getId());
+        dto.setChunkIndex(Integer.valueOf(chunkIndex));
+        dto.setChunkSize(Integer.valueOf(chunkSize));
 
         //
         final StringBuilder ticketNumber = new StringBuilder();
 
-        if (tag != null && StringUtils.isNotBlank(tag.trim())) {
-
-            if (StringUtils.contains(tag, TICKER_NUMBER_PREFIX_TAG_SEPARATOR)) {
-                throw new IllegalArgumentException(String.format(
-                        "Job Ticket tag [%s] contains invalid character [%s].",
-                        tag, TICKER_NUMBER_PREFIX_TAG_SEPARATOR));
-            }
-
-            ticketNumber.append(tag.trim())
-                    .append(TICKER_NUMBER_PREFIX_TAG_SEPARATOR);
+        if (label != null && StringUtils.isNotBlank(label.trim())) {
+            ticketNumber.append(label.trim())
+                    .append(TICKET_NUMBER_PREFIX_LABEL_SEPARATOR);
         }
 
         ticketNumber.append(this.createTicketNumber());
         dto.setTicketNumber(ticketNumber.toString());
 
         //
+        this.addJobticketToCache(uuid, createInfo, dto);
+        return dto;
+    }
+
+    /**
+     * Adds job ticket to cache.
+     *
+     * @param uuid
+     *            The Job Ticket {@link UUID}.
+     * @param createInfo
+     *            The {@link PdfCreateInfo} with the PDF file to be printed by
+     *            the Job Ticket. Is {@code null} when Copy Job Ticket.
+     * @param dto
+     *            Job Ticket.
+     * @throws IOException
+     *             If IO error.
+     */
+    private void addJobticketToCache(final UUID uuid,
+            final PdfCreateInfo createInfo, final OutboxJobDto dto)
+            throws IOException {
+
         final File jsonFileTicket = getJobTicketFile(uuid, FILENAME_EXT_JSON);
 
         if (createInfo == null) {
             dto.setFile(jsonFileTicket.getName());
         }
 
-        Writer writer = null;
-        try {
-            writer = new FileWriter(jsonFileTicket);
+        try (Writer writer = new FileWriter(jsonFileTicket);) {
             JsonHelper.write(dto, writer);
-            writer.close();
-        } finally {
-            IOUtils.closeQuietly(writer);
         }
 
-        /*
-         * Add to cache.
-         */
         this.jobTicketCache.put(uuid, dto);
-        incrementStats(dto);
 
-        return dto;
+        if (this.isReopenedTicketNumber(dto.getTicketNumber())) {
+            this.reopenedTicketCache.put(dto.getTicketNumber(), dto);
+        }
+
+        this.incrementStats(dto);
     }
 
     /**
@@ -459,21 +509,27 @@ public final class JobTicketServiceImpl extends AbstractService
     }
 
     /**
-     * Creates a job ticket cache.
+     * Initializes job ticket cache.
      *
+     * @param svc
+     *            This service.
+     * @param jobTicketMap
+     *            Cache on UUID.
+     * @param reopenedTicketCache
+     *            Reopened ticket cache on Ticket number.
      * @param queueInfo
      *            The queue info to update.
-     * @return The cache.
      * @throws IOException
      *             When IO error.
      */
-    private static ConcurrentHashMap<UUID, OutboxJobDto> createTicketCache(
+    private static void initTicketCache(final JobTicketServiceImpl svc,
+            final ConcurrentHashMap<UUID, OutboxJobDto> jobTicketMap,
+            final ConcurrentHashMap<String, OutboxJobDto> reopenedTicketCache,
             final JobTicketQueueInfo queueInfo) throws IOException {
 
-        final ConcurrentHashMap<UUID, OutboxJobDto> jobTicketMap =
-                new ConcurrentHashMap<>();
-
         final Set<UUID> uuidToDelete = new HashSet<>();
+
+        final Map<String, Set<Long>> lookupGroupIDs = new HashMap<>();
 
         final SimpleFileVisitor<Path> visitor = new SimpleFileVisitor<Path>() {
             @Override
@@ -494,12 +550,22 @@ public final class JobTicketServiceImpl extends AbstractService
                     final OutboxJobDto dto =
                             JsonHelper.read(OutboxJobDto.class, file.toFile());
 
+                    final String lookupKey = dto.getPrinter();
+                    if (!lookupGroupIDs.containsKey(lookupKey)) {
+                        lookupGroupIDs.put(lookupKey,
+                                svc.getTicketPrinterGroupIDs(dto.getPrinter()));
+                    }
+                    dto.setPrinterGroupIDs(lookupGroupIDs.get(lookupKey));
+
                     jobTicketMap.put(uuid, dto);
+
+                    if (svc.isReopenedTicket(dto)) {
+                        reopenedTicketCache.put(dto.getTicketNumber(), dto);
+                    }
 
                     incrementStats(queueInfo, dto);
 
                 } catch (JsonMappingException e) {
-
                     /*
                      * There has been a change in layout of the JSON file...
                      */
@@ -527,23 +593,30 @@ public final class JobTicketServiceImpl extends AbstractService
                 }
             }
         }
-
-        return jobTicketMap;
     }
 
     @Override
     public void start() {
 
+        this.jobTicketCache = new ConcurrentHashMap<>();
+        this.reopenedTicketCache = new ConcurrentHashMap<>();
         this.jobTicketQueueInfo = new JobTicketQueueInfo();
 
         try {
-            this.jobTicketCache = createTicketCache(this.jobTicketQueueInfo);
+            initTicketCache(this, this.jobTicketCache, this.reopenedTicketCache,
+                    this.jobTicketQueueInfo);
         } catch (IOException e) {
             throw new SpException(e.getMessage(), e);
         }
 
-        JobTicketTagCache.setTicketTags(JobTicketTagCache.parseTicketTags(
-                ConfigManager.instance().getConfigValue(Key.JOBTICKET_TAGS)));
+        final ConfigManager cm = ConfigManager.instance();
+
+        JobTicketLabelCache
+                .initTicketDomains(cm.getConfigValue(Key.JOBTICKET_DOMAINS));
+        JobTicketLabelCache
+                .initTicketUses(cm.getConfigValue(Key.JOBTICKET_USES));
+        JobTicketLabelCache
+                .initTicketTags(cm.getConfigValue(Key.JOBTICKET_TAGS));
     }
 
     @Override
@@ -569,10 +642,94 @@ public final class JobTicketServiceImpl extends AbstractService
         }
     }
 
+    /**
+     * Gets set with Printer Group IDs a ticket printer is member of.
+     *
+     * @param printerName
+     *            Printer name.
+     * @return Printer Group IDs.
+     */
+    private Set<Long> getTicketPrinterGroupIDs(final String printerName) {
+        final Set<Long> set = new HashSet<>();
+        for (final PrinterGroup group : printerGroupMemberDAO()
+                .getGroups(printerName)) {
+            set.add(group.getId());
+        }
+        return set;
+    }
+
+    /**
+     * Calculates the next Job Ticket delivery date.
+     *
+     * @param offsetDate
+     *            Date offset.
+     * @return Next Job Ticket delivery date.
+     */
+    @Override
+    public Date getDeliveryDateNext(final Date offsetDate) {
+
+        final ConfigManager cm = ConfigManager.instance();
+
+        Date deliveryDateWlk = offsetDate;
+
+        if (cm.isConfigValue(Key.JOBTICKET_DELIVERY_DATETIME_ENABLE)) {
+
+            deliveryDateWlk = DateUtils.addDays(deliveryDateWlk,
+                    cm.getConfigInt(Key.JOBTICKET_DELIVERY_DAYS, 0));
+
+            deliveryDateWlk = this.getDeliveryDaysOfWeekCron()
+                    .getNextValidTimeAfter(deliveryDateWlk);
+
+            deliveryDateWlk = DateUtils.addMinutes(
+                    DateUtils.truncate(deliveryDateWlk, Calendar.DAY_OF_MONTH),
+                    cm.getConfigInt(Key.JOBTICKET_DELIVERY_DAY_MINUTES, 0));
+        }
+        return deliveryDateWlk;
+    }
+
+    /**
+     * Creates a job ticket label from constituents.
+     *
+     * @param domain
+     *            The domain (to be pre-pended to the generated ticket number).
+     *            Can be {@code null} or empty.
+     * @param use
+     *            The use (to be pre-pended to the generated ticket number). Can
+     *            be {@code null} or empty.
+     * @param tag
+     *            The tag (to be pre-pended to the generated ticket number). Can
+     *            be {@code null} or empty.
+     * @return The aggregated label (can be empty)
+     */
+    @Override
+    public String createTicketLabel(final JobTicketLabelDto dto) {
+
+        final StringBuilder label = new StringBuilder();
+
+        if (dto != null) {
+            if (StringUtils.isNotBlank(dto.getDomain())) {
+                label.append(dto.getDomain());
+            }
+            if (StringUtils.isNotBlank(dto.getUse())) {
+                if (label.length() > 0) {
+                    label.append(TICKET_NUMBER_PREFIX_LABEL_SEPARATOR);
+                }
+                label.append(dto.getUse());
+            }
+            if (StringUtils.isNotBlank(dto.getTag())) {
+                if (label.length() > 0) {
+                    label.append(TICKET_NUMBER_PREFIX_LABEL_SEPARATOR);
+                }
+                label.append(dto.getTag());
+            }
+        }
+        return label.toString();
+    }
+
     @Override
     public OutboxJobDto createCopyJob(final User user,
             final ProxyPrintInboxReq request, final Date deliveryDate,
-            final String tag) {
+            final JobTicketLabelDto label) {
 
         final UUID uuid = UUID.randomUUID();
         final Date submitDate = ServiceContext.getTransactionDate();
@@ -580,9 +737,13 @@ public final class JobTicketServiceImpl extends AbstractService
         final OutboxJobDto dto;
 
         try {
-            dto = this.addJobticketToCache(user, null, uuid, request, null,
+            dto = this.addJobticketToCache(user, null, uuid, request,
                     submitDate,
-                    this.getTicketDeliveryDate(submitDate, deliveryDate), tag);
+                    this.getTicketDeliveryDate(submitDate, deliveryDate),
+                    this.createTicketLabel(label), 1, 1);
+
+            dto.setPrinterGroupIDs(
+                    this.getTicketPrinterGroupIDs(request.getPrinterName()));
 
             final String msgKey = "msg-user-print-jobticket-copy";
 
@@ -597,12 +758,97 @@ public final class JobTicketServiceImpl extends AbstractService
     }
 
     @Override
+    public OutboxJobDto reopenTicketForExtraCopies(final DocLog docLog)
+            throws IOException, DocStoreException {
+
+        final PrintOut printOut = docLog.getDocOut().getPrintOut();
+        final PrintModeEnum printMode =
+                PrintModeEnum.valueOf(printOut.getPrintMode());
+        final boolean isCopyTicket = printMode == PrintModeEnum.TICKET_C;
+
+        final String ticketNumberOrg = docLog.getExternalId();
+
+        OutboxJobDto dto;
+        DocStoreTypeEnum docStoreType = null;
+
+        docStoreType = DocStoreTypeEnum.ARCHIVE;
+        try {
+            dto = docStoreService().retrieveJob(docStoreType, docLog);
+        } catch (DocStoreException e) {
+            docStoreType = DocStoreTypeEnum.JOURNAL;
+            dto = docStoreService().retrieveJob(docStoreType, docLog);
+        }
+
+        /*
+         * Reject old store format.
+         */
+        if (dto.getUserId() == null || //
+                StringUtils.isBlank(dto.getPrinter()) || //
+                StringUtils.isBlank(dto.getPrinterRedirect()) || //
+                (!isCopyTicket && dto.getUuidPageCount() == null) || //
+                StringUtils.isBlank(dto.getTicketNumber())) {
+            throw new DocStoreException(
+                    "Legacy print store format not supported.");
+        }
+
+        /*
+         * INVARIANT: ticket printer printer must be present.
+         */
+        if (proxyPrintService().getCachedPrinter(dto.getPrinter()) == null) {
+            throw new DocStoreException(String.format(
+                    "Ticket Printer [%s] not present.", dto.getPrinter()));
+        }
+
+        //
+        dto.setTicketReopen(Boolean.TRUE);
+        dto.setSubmitTime(ServiceContext.getTransactionDate().getTime());
+        dto.setExpiryTime(
+                this.getDeliveryDateNext(ServiceContext.getTransactionDate())
+                        .getTime());
+
+        dto.setTicketNumber(
+                ticketNumberOrg.concat(TICKET_NUMBER_SUFFIX_REOPEN));
+        dto.setPrinterRedirect(null);
+
+        dto.setArchive(Boolean.FALSE);
+        dto.setCopies(0);
+        dto.setSheets(0);
+        dto.setCostResult(new ProxyPrintCostDto());
+
+        if (dto.getAccountTransactions() != null) {
+            dto.getAccountTransactions().setWeightTotal(0);
+            final OutboxAccountTrxInfo trx =
+                    dto.getAccountTransactions().getTransactions().get(0);
+            trx.setWeight(0);
+            trx.setWeightUnit(1);
+        }
+
+        final UUID uuid = UUID.randomUUID();
+        final PdfCreateInfo createInfo;
+        if (isCopyTicket) {
+            createInfo = null;
+        } else {
+            final File pdfFileTicket = getJobTicketFile(uuid, FILENAME_EXT_PDF);
+            dto.setFile(pdfFileTicket.getName());
+            final File pdfFileOriginal =
+                    docStoreService().retrievePdf(docStoreType, docLog);
+            FileUtils.copyFile(pdfFileOriginal, pdfFileTicket);
+            createInfo = new PdfCreateInfo(pdfFileTicket);
+        }
+
+        this.addJobticketToCache(uuid, createInfo, dto);
+
+        return dto;
+    }
+
+    @Override
     public List<OutboxJobDto> proxyPrintInbox(final User lockedUser,
             final ProxyPrintInboxReq request, final Date deliveryDate,
-            final String tag) throws EcoPrintPdfTaskPendingException {
+            final JobTicketLabelDto label)
+            throws EcoPrintPdfTaskPendingException {
 
-        final ProxyPrintInbox executor =
-                new ProxyPrintInbox(this, deliveryDate, tag);
+        final ProxyPrintInbox executor = new ProxyPrintInbox(this, deliveryDate,
+                this.createTicketLabel(label));
 
         executor.print(lockedUser, request);
 
@@ -647,7 +893,8 @@ public final class JobTicketServiceImpl extends AbstractService
 
     @Override
     public List<OutboxJobDto> getTickets(final JobTicketFilter filter) {
-        return filterTickets(filter.getUserId(), filter.getSearchTicketId());
+        return filterTickets(filter.getUserId(), filter.getSearchTicketId(),
+                filter.getPrinterGroupID());
     }
 
     @Override
@@ -668,7 +915,7 @@ public final class JobTicketServiceImpl extends AbstractService
     @Override
     public int cancelTickets(final Long userId) {
         int nRemoved = 0;
-        for (final OutboxJobDto dto : filterTickets(userId, null)) {
+        for (final OutboxJobDto dto : filterTickets(userId, null, null)) {
             if (cancelTicket(dto.getFile()) != null) {
                 nRemoved++;
             }
@@ -720,10 +967,12 @@ public final class JobTicketServiceImpl extends AbstractService
      *            tickets from all users are selected.
      * @param searchTicketId
      *            Part of a ticket id as case-insensitive search argument.
+     * @param printerGroupID
+     *            See {@link PrinterGroup#getId()}.
      * @return The Job Tickets.
      */
     private List<OutboxJobDto> filterTickets(final Long userId,
-            final String searchTicketId) {
+            final String searchTicketId, final Long printerGroupID) {
 
         final List<OutboxJobDto> tickets = new ArrayList<>();
 
@@ -733,14 +982,23 @@ public final class JobTicketServiceImpl extends AbstractService
         for (final Entry<UUID, OutboxJobDto> entry : this.jobTicketCache
                 .entrySet()) {
 
+            // Filter #1
             if (userId != null
                     && !entry.getValue().getUserId().equals(userId)) {
                 continue;
             }
 
+            // Filter #2
             if (!searchSeq.isEmpty() && !StringUtils.contains(
                     entry.getValue().getTicketNumber().toLowerCase(),
                     searchSeq)) {
+                continue;
+            }
+
+            // Filter #3
+            if (printerGroupID != null && printerGroupID.longValue() > 0
+                    && !entry.getValue().getPrinterGroupIDs()
+                            .contains(printerGroupID)) {
                 continue;
             }
 
@@ -788,6 +1046,11 @@ public final class JobTicketServiceImpl extends AbstractService
         getJobTicketFile(uuid, FILENAME_EXT_PDF).delete();
 
         final OutboxJobDto dto = this.jobTicketCache.remove(uuid);
+
+        if (this.isReopenedTicketNumber(dto.getTicketNumber())) {
+            this.reopenedTicketCache.remove(dto.getTicketNumber());
+        }
+
         this.decrementStats(dto);
 
         return dto;
@@ -929,6 +1192,43 @@ public final class JobTicketServiceImpl extends AbstractService
     }
 
     @Override
+    public void updatePrinterGroupIDs() {
+
+        final Map<String, Set<Long>> lookupGroupIDs = new HashMap<>();
+
+        for (final OutboxJobDto dto : this.jobTicketCache.values()) {
+
+            final String lookupKey = dto.getPrinter();
+
+            if (!lookupGroupIDs.containsKey(lookupKey)) {
+                lookupGroupIDs.put(lookupKey,
+                        this.getTicketPrinterGroupIDs(dto.getPrinter()));
+            }
+
+            dto.setPrinterGroupIDs(lookupGroupIDs.get(lookupKey));
+        }
+    }
+
+    @Override
+    public void updatePrinterGroupIDs(final Printer printer) {
+
+        final Set<Long> printerGroupIDs = new HashSet<>();
+
+        for (final PrinterGroupMember member : printer
+                .getPrinterGroupMembers()) {
+            printerGroupIDs.add(member.getGroup().getId());
+        }
+
+        final String printerName = printer.getPrinterName();
+
+        for (final OutboxJobDto dto : this.jobTicketCache.values()) {
+            if (printerName.equalsIgnoreCase(dto.getPrinter())) {
+                dto.setPrinterGroupIDs(printerGroupIDs);
+            }
+        }
+    }
+
+    @Override
     public boolean updateTicket(final JobTicketWrapperDto wrapper)
             throws IOException {
 
@@ -946,17 +1246,16 @@ public final class JobTicketServiceImpl extends AbstractService
             return false;
         }
 
-        final OutboxJobDto dtoPrev = this.jobTicketCache.put(uuid, dto);
+        this.jobTicketCache.put(uuid, dto);
+
+        if (this.isReopenedTicketNumber(dto.getTicketNumber())) {
+            this.reopenedTicketCache.put(dto.getTicketNumber(), dto);
+        }
 
         final File jsonFileTicket = getJobTicketFile(uuid, FILENAME_EXT_JSON);
 
-        Writer writer = null;
-        try {
-            writer = new FileWriter(jsonFileTicket);
+        try (Writer writer = new FileWriter(jsonFileTicket);) {
             JsonHelper.write(dto, writer);
-            writer.close();
-        } finally {
-            IOUtils.closeQuietly(writer);
         }
         return true;
     }
@@ -1022,11 +1321,42 @@ public final class JobTicketServiceImpl extends AbstractService
         try {
             emailService().sendEmail(emailParms);
         } catch (InterruptedException | CircuitBreakerException
-                | MessagingException | IOException e) {
+                | MessagingException | IOException | PGPBaseException e) {
             throw new SpException(e.getMessage());
         }
 
         return emailAddr;
+    }
+
+    /**
+     *
+     * @param dto
+     *            The job.
+     * @param printer
+     *            The redirect printer.
+     * @return {@code true} if client-side grayscale conversion has to be
+     *         applied on PDF before sending it to printer.
+     */
+    private static boolean isClientSideGrayscaleConversion(
+            final OutboxJobDto dto, final Printer printer) {
+        return dto.isMonochromeJob()
+                && proxyPrintService().isColorPrinter(printer.getPrinterName())
+                && printerService().isClientSideMonochrome(printer);
+    }
+
+    /**
+     *
+     * @param dto
+     *            The job.
+     * @param printer
+     *            The redirect printer.
+     * @return {@code true} if client-side booklet page ordering has to be
+     *         applied on PDF before sending it to printer.
+     */
+    private static boolean isClientSideBooklet(final OutboxJobDto dto,
+            final Printer printer) {
+        return dto.isBookletJob()
+                && printerService().isClientSideBooklet(printer);
     }
 
     /**
@@ -1044,13 +1374,16 @@ public final class JobTicketServiceImpl extends AbstractService
      *             When IO error.
      * @throws IppConnectException
      *             When connection to CUPS fails.
+     * @throws IppRuleValidationException
+     *             When IPP constraint violations.
      * @throws IllegalStateException
      *             For a print job (no settlement) with ippMediaSource is
      *             {@code null}: when "media" option is not specified in Job
      *             Ticket, or printer has no "auto" choice for "media-source".
      */
     private OutboxJobDto execTicket(final JobTicketExecParms parms,
-            final boolean settleOnly) throws IOException, IppConnectException {
+            final boolean settleOnly) throws IOException, IppConnectException,
+            IppRuleValidationException {
 
         final UUID uuid = uuidFromFileName(parms.getFileName());
         final OutboxJobDto dto = this.jobTicketCache.get(uuid);
@@ -1066,6 +1399,9 @@ public final class JobTicketServiceImpl extends AbstractService
                     String.format("Ticket %s already has PrintOut history.",
                             dto.getTicketNumber()));
         }
+
+        final ConfigManager cm = ConfigManager.instance();
+
         /*
          * Set redirect printer.
          */
@@ -1076,7 +1412,14 @@ public final class JobTicketServiceImpl extends AbstractService
         final ThirdPartyEnum extPrinterManager;
 
         if (paperCutService().isExtPaperCutPrint(dto.getPrinterRedirect())) {
-            extPrinterManager = ThirdPartyEnum.PAPERCUT;
+
+            if (paperCutService()
+                    .getPrintIntegration() == PaperCutIntegrationEnum.NONE) {
+                extPrinterManager = null;
+            } else {
+                extPrinterManager = ThirdPartyEnum.PAPERCUT;
+            }
+
         } else {
             extPrinterManager = null;
         }
@@ -1088,13 +1431,12 @@ public final class JobTicketServiceImpl extends AbstractService
         if (settleOnly) {
 
             proxyPrintService().settleJobTicket(parms.getOperator(), lockedUser,
-                    dto, getJobTicketFile(uuid, FILENAME_EXT_JSON),
+                    dto, getJobTicketFile(uuid, FILENAME_EXT_PDF),
                     extPrinterManager);
 
             dtoReturn = this.removeTicket(uuid, true);
 
-            if (ConfigManager.instance().isConfigValue(
-                    Key.JOBTICKET_NOTIFY_EMAIL_COMPLETED_ENABLE)) {
+            if (cm.isConfigValue(Key.JOBTICKET_NOTIFY_EMAIL_COMPLETED_ENABLE)) {
                 notifyTicketCompletedByEmail(dto, parms.getOperator(),
                         lockedUser, ConfigManager.getDefaultLocale());
             }
@@ -1110,18 +1452,82 @@ public final class JobTicketServiceImpl extends AbstractService
 
             setRedirectPrinterOptions(dto, parms);
 
-            final PrintOut printOut = proxyPrintService()
-                    .proxyPrintJobTicket(parms.getOperator(), lockedUser, dto,
-                            getJobTicketFile(uuid, FILENAME_EXT_PDF),
-                            extPrinterManager)
-                    .getDocOut().getPrintOut();
+            final List<File> files2Delete = new ArrayList<>();
+            final File pdfFileToPrint = getPdfFileToPrint(dto, printer,
+                    getJobTicketFile(uuid, FILENAME_EXT_PDF), files2Delete);
 
-            dto.setPrintOutId(printOut.getId());
+            try {
+                final PrintOut printOut = proxyPrintService()
+                        .proxyPrintJobTicket(parms.getOperator(), lockedUser,
+                                dto, pdfFileToPrint, extPrinterManager)
+                        .getDocOut().getPrintOut();
+
+                dto.setPrintOutId(printOut.getId());
+
+            } finally {
+                for (final File file : files2Delete) {
+                    file.delete();
+                }
+            }
+
             this.updateTicket(dto);
             dtoReturn = dto;
         }
 
         return dtoReturn;
+    }
+
+    /**
+     * Gets the Job Ticket PDF file to be printed. Note: optional PDF
+     * pre-processing is performed.
+     *
+     * @param dto
+     *            The job.
+     * @param printer
+     *            The printer.
+     * @param orgJobTicketPdf
+     *            The original PDF.
+     * @param files2Delete
+     *            List where files to be deleted are added to.
+     * @return The PDF file to print.
+     * @throws IOException
+     *             When IO errors. Note: temporary files are deleted.
+     */
+    private static File getPdfFileToPrint(final OutboxJobDto dto,
+            final Printer printer, final File orgJobTicketPdf,
+            final List<File> files2Delete) throws IOException {
+
+        File pdfFileToPrint = orgJobTicketPdf;
+        boolean exception = true;
+
+        try {
+            if (isClientSideGrayscaleConversion(dto, printer)) {
+                pdfFileToPrint = new PdfToGrayscale(
+                        new File(ConfigManager.getAppTmpDir()))
+                                .convert(pdfFileToPrint);
+                files2Delete.add(pdfFileToPrint);
+            }
+
+            if (isClientSideBooklet(dto, printer)) {
+                pdfFileToPrint =
+                        new PdfToBooklet(new File(ConfigManager.getAppTmpDir()))
+                                .convert(pdfFileToPrint);
+                files2Delete.add(pdfFileToPrint);
+            }
+
+            exception = false;
+
+        } finally {
+
+            if (exception) {
+                for (final File file : files2Delete) {
+                    file.delete();
+                }
+                files2Delete.clear();
+            }
+        }
+
+        return pdfFileToPrint;
     }
 
     /**
@@ -1140,10 +1546,10 @@ public final class JobTicketServiceImpl extends AbstractService
     private void retryTicketPrintCharge(final DocLog trxDocLog,
             final int printedCopies) {
 
-        final JobTicketSupplierData supplierData = JobTicketSupplierData.create(
-                JobTicketSupplierData.class, trxDocLog.getExternalData());
+        final PrintSupplierData printSupplierData =
+                PrintSupplierData.createFromData(trxDocLog.getExternalData());
 
-        final BigDecimal costTotal = supplierData.getCostTotal();
+        final BigDecimal costTotal = printSupplierData.getCostTotal();
 
         /*
          * Update DoLog with costs.
@@ -1163,11 +1569,10 @@ public final class JobTicketServiceImpl extends AbstractService
 
         for (final AccountTrx trx : trxDocLog.getTransactions()) {
 
-            final int weight = trx.getTransactionWeight().intValue();
-
             final BigDecimal weightedCost =
                     accountingService().calcWeightedAmount(weightTotalCost,
-                            weightTotal, weight, scale);
+                            weightTotal, trx.getTransactionWeight().intValue(),
+                            trx.getTransactionWeightUnit().intValue(), scale);
 
             accountingService().chargeAccountTrxAmount(trx, weightedCost, null);
         }
@@ -1180,13 +1585,15 @@ public final class JobTicketServiceImpl extends AbstractService
      *            The {@link OutboxJobDto}.
      * @param parms
      *            The parameters.
-     * @param ippJogOffset
-     *            IPP value of
-     *            {@link IppDictJobTemplateAttr#ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET}
-     *            .
+     *
+     * @return JsonProxyPrinter The proxy printer.
+     *
+     * @throws IppRuleValidationException
+     *             When IPP constraint violations.
      */
-    private static void setRedirectPrinterOptions(final OutboxJobDto dto,
-            final JobTicketExecParms parms) {
+    private static JsonProxyPrinter setRedirectPrinterOptions(
+            final OutboxJobDto dto, final JobTicketExecParms parms)
+            throws IppRuleValidationException {
 
         // Set printer name.
         dto.setPrinterRedirect(parms.getPrinter().getPrinterName());
@@ -1223,11 +1630,35 @@ public final class JobTicketServiceImpl extends AbstractService
         } else {
             dto.getOptionValues().put(ippKeywordWlk, parms.getIppJogOffset());
         }
+
+        final JsonProxyPrinter jsonPrinter = proxyPrintService()
+                .getCachedPrinter(parms.getPrinter().getPrinterName());
+
+        /*
+         * Validate IPP constraint rules.
+         */
+        final Locale localeWrk;
+
+        if (parms.getLocale() == null) {
+            localeWrk = Locale.getDefault();
+        } else {
+            localeWrk = parms.getLocale();
+        }
+
+        final String msg = proxyPrintService().validateContraintsMsg(
+                jsonPrinter, dto.getOptionValues(), localeWrk);
+
+        if (msg != null) {
+            throw new IppRuleValidationException(msg);
+        }
+
+        return jsonPrinter;
     }
 
     @Override
     public OutboxJobDto retryTicketPrint(final JobTicketExecParms parms)
-            throws IOException, IppConnectException {
+            throws IOException, IppConnectException,
+            IppRuleValidationException {
 
         final OutboxJobDto dto = this.getTicket(parms.getFileName());
 
@@ -1241,161 +1672,175 @@ public final class JobTicketServiceImpl extends AbstractService
         /*
          * Set dto before creating the print request.
          */
-        setRedirectPrinterOptions(dto, parms);
-
-        final JsonProxyPrinter jsonPrinter = proxyPrintService()
-                .getCachedPrinter(parms.getPrinter().getPrinterName());
+        final JsonProxyPrinter jsonPrinter =
+                setRedirectPrinterOptions(dto, parms);
 
         // Create print request
         final AbstractProxyPrintReq request = proxyPrintService()
                 .createProxyPrintDocReq(user, dto, PrintModeEnum.TICKET);
 
         final UUID ticketUuid = uuidFromFileName(parms.getFileName());
-        final PdfCreateInfo createInfo = new PdfCreateInfo(
-                getJobTicketFile(ticketUuid, FILENAME_EXT_PDF));
 
-        createInfo.setBlankFillerPages(dto.getFillerPages());
-
-        // Re-use job name.
+        //
         final PrintOut printOut = printOutDAO().findById(dto.getPrintOutId());
-        final String printJobTitle =
-                printOut.getDocOut().getDocLog().getTitle();
 
-        request.setJobName(printJobTitle);
+        final List<File> files2Delete = new ArrayList<>();
+        final File pdfFileToPrint = getPdfFileToPrint(dto,
+                printOut.getPrinter(),
+                getJobTicketFile(ticketUuid, FILENAME_EXT_PDF), files2Delete);
 
-        /*
-         * Update DocLog External Supplier status?
-         */
-        final DocLog docLog = printOut.getDocOut().getDocLog();
+        try {
 
-        // current
-        final ExternalSupplierEnum extSupplierCurrent =
-                DaoEnumHelper.getExtSupplier(docLog);
+            final PdfCreateInfo createInfo = new PdfCreateInfo(pdfFileToPrint);
+            createInfo.setBlankFillerPages(dto.getFillerPages());
 
-        final ExternalSupplierStatusEnum extSupplierStatusCurrent =
-                DaoEnumHelper.getExtSupplierStatus(docLog);
+            // Re-use job name.
+            final String printJobTitle =
+                    printOut.getDocOut().getDocLog().getTitle();
 
-        // retry
-        final ThirdPartyEnum extPrintManagerRetry = proxyPrintService()
-                .getExtPrinterManager(parms.getPrinter().getPrinterName());
+            request.setJobName(printJobTitle);
 
-        final ExternalSupplierEnum extSupplierRetry;
-        final ExternalSupplierStatusEnum extSupplierStatusRetry;
+            /*
+             * Update DocLog External Supplier status?
+             */
+            final DocLog docLog = printOut.getDocOut().getDocLog();
 
-        final String documentTitleRetry;
+            // current
+            final ExternalSupplierEnum extSupplierCurrent =
+                    DaoEnumHelper.getExtSupplier(docLog);
 
-        if (extPrintManagerRetry == null) {
+            final ExternalSupplierStatusEnum extSupplierStatusCurrent =
+                    DaoEnumHelper.getExtSupplierStatus(docLog);
 
-            documentTitleRetry = null;
+            // retry
+            final ThirdPartyEnum extPrintManagerRetry = proxyPrintService()
+                    .getExtPrinterManager(parms.getPrinter().getPrinterName());
 
-            if (extSupplierCurrent == ExternalSupplierEnum.SAVAPAGE) {
-                extSupplierRetry = null;
-                extSupplierStatusRetry = null;
+            final ExternalSupplierEnum extSupplierRetry;
+            final ExternalSupplierStatusEnum extSupplierStatusRetry;
 
-                retryTicketPrintCharge(docLog, request.getNumberOfCopies());
+            final String documentTitleRetry;
 
-            } else {
-                extSupplierRetry = extSupplierCurrent;
-                extSupplierStatusRetry = ExternalSupplierStatusEnum.PENDING;
-            }
+            if (extPrintManagerRetry == null) {
 
-        } else if (extPrintManagerRetry == ThirdPartyEnum.PAPERCUT) {
+                documentTitleRetry = null;
 
-            final ExternalSupplierInfo supplierInfo;
+                if (extSupplierCurrent == ExternalSupplierEnum.SAVAPAGE) {
+                    extSupplierRetry = null;
+                    extSupplierStatusRetry = null;
 
-            if (extSupplierCurrent == null
-                    || extSupplierCurrent == ExternalSupplierEnum.SAVAPAGE) {
+                    retryTicketPrintCharge(docLog, request.getNumberOfCopies());
 
-                supplierInfo = null;
-                extSupplierRetry = ExternalSupplierEnum.SAVAPAGE;
+                } else {
+                    extSupplierRetry = extSupplierCurrent;
+                    extSupplierStatusRetry = ExternalSupplierStatusEnum.PENDING;
+                }
 
-            } else if (extSupplierCurrent == ExternalSupplierEnum.SMARTSCHOOL) {
+            } else if (extPrintManagerRetry == ThirdPartyEnum.PAPERCUT) {
 
-                supplierInfo = new ExternalSupplierInfo();
-                supplierInfo.setSupplier(extSupplierCurrent);
-                supplierInfo.setId(docLog.getExternalId());
-                supplierInfo.setStatus(docLog.getExternalStatus());
+                final ExternalSupplierInfo supplierInfo;
 
-                final SmartschoolPrintInData extData = SmartschoolPrintInData
-                        .createFromData(docLog.getExternalData());
+                if (extSupplierCurrent == null
+                        || extSupplierCurrent == ExternalSupplierEnum.SAVAPAGE) {
 
-                supplierInfo.setData(extData);
-                supplierInfo.setAccount(extData.getAccount());
+                    supplierInfo = paperCutService()
+                            .createExternalSupplierInfo(request);
+                    extSupplierRetry = ExternalSupplierEnum.SAVAPAGE;
 
-                extSupplierRetry = extSupplierCurrent;
+                } else if (extSupplierCurrent == ExternalSupplierEnum.SMARTSCHOOL) {
+
+                    supplierInfo = new ExternalSupplierInfo();
+                    supplierInfo.setSupplier(extSupplierCurrent);
+                    supplierInfo.setId(docLog.getExternalId());
+                    supplierInfo.setStatus(docLog.getExternalStatus());
+
+                    final SmartschoolPrintInData extData =
+                            SmartschoolPrintInData
+                                    .createFromData(docLog.getExternalData());
+
+                    supplierInfo.setData(extData);
+                    supplierInfo.setAccount(extData.getAccount());
+
+                    extSupplierRetry = extSupplierCurrent;
+
+                } else {
+                    throw new IllegalStateException(
+                            String.format("%s [%s] is not handled.",
+                                    extSupplierCurrent.getClass()
+                                            .getSimpleName(),
+                                    extSupplierCurrent.toString()));
+                }
+
+                /*
+                 * Prepare for PaperCut in retry mode.
+                 */
+                paperCutService().prepareForExtPaperCutRetry(request,
+                        supplierInfo, PrintModeEnum.PUSH);
+
+                documentTitleRetry = request.getJobName();
+                extSupplierStatusRetry =
+                        PaperCutHelper.getInitialPendingJobStatus();
 
             } else {
                 throw new IllegalStateException(
                         String.format("%s [%s] is not handled.",
-                                extSupplierCurrent.getClass().getSimpleName(),
-                                extSupplierCurrent.toString()));
+                                extPrintManagerRetry.getClass().getSimpleName(),
+                                extPrintManagerRetry.toString()));
             }
 
             /*
-             * Prepare for PaperCut in retry mode.
+             * Update any changes.
              */
-            paperCutService().prepareForExtPaperCutRetry(request, supplierInfo,
-                    null);
+            if (documentTitleRetry != null
+                    || extSupplierCurrent != extSupplierRetry
+                    || extSupplierStatusCurrent != extSupplierStatusRetry) {
 
-            documentTitleRetry = request.getJobName();
-            extSupplierStatusRetry =
-                    PaperCutHelper.getInitialPendingJobStatus();
+                docLogDAO().updateExtSupplier(docLog.getId(), extSupplierRetry,
+                        extSupplierStatusRetry, documentTitleRetry);
+            }
 
-        } else {
-            throw new IllegalStateException(
-                    String.format("%s [%s] is not handled.",
-                            extPrintManagerRetry.getClass().getSimpleName(),
-                            extPrintManagerRetry.toString()));
+            /*
+             * CUPS Print.
+             */
+            final JsonProxyPrintJob printJob =
+                    proxyPrintService().proxyPrintJobTicketResend(request, dto,
+                            jsonPrinter, user.getUserId(), createInfo);
+            /*
+             * Update PrintOut with new Printer and CUPS job data.
+             */
+            printOutDAO().updateCupsJobPrinter(dto.getPrintOutId(),
+                    parms.getPrinter(), printJob, request.getOptionValues());
+
+            ServiceContext.getDaoContext().commit();
+
+            // Notify the CUPS job status monitor of this new PrintOut.
+            ProxyPrintJobStatusMonitor.notifyPrintOut(
+                    parms.getPrinter().getPrinterName(), printJob);
+
+            // Update the ticket.
+            this.updateTicket(dto);
+
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug(String.format(
+                        "retryTicketPrint: COMMIT PrintOut ID [%d] "
+                                + "printer [%s] " + "job [%d] status [%s]",
+                        dto.getPrintOutId().longValue(),
+                        parms.getPrinter().getPrinterName(),
+                        printJob.getJobId().intValue(),
+                        IppJobStateEnum.asEnum(printJob.getJobState())));
+            }
+        } finally {
+            for (final File file : files2Delete) {
+                file.delete();
+            }
         }
-
-        /*
-         * Update any changes.
-         */
-        if (documentTitleRetry != null || extSupplierCurrent != extSupplierRetry
-                || extSupplierStatusCurrent != extSupplierStatusRetry) {
-
-            docLogDAO().updateExtSupplier(docLog.getId(), extSupplierRetry,
-                    extSupplierStatusRetry, documentTitleRetry);
-        }
-
-        /*
-         * CUPS Print.
-         */
-        final JsonProxyPrintJob printJob =
-                proxyPrintService().proxyPrintJobTicketResend(request, dto,
-                        jsonPrinter, user.getUserId(), createInfo);
-
-        /*
-         * Update PrintOut with new Printer and CUPS job data.
-         */
-        printOutDAO().updateCupsJobPrinter(dto.getPrintOutId(),
-                parms.getPrinter(), printJob, request.getOptionValues());
-
-        ServiceContext.getDaoContext().commit();
-
-        // Notify the CUPS job status monitor of this new PrintOut.
-        ProxyPrintJobStatusMonitor
-                .notifyPrintOut(parms.getPrinter().getPrinterName(), printJob);
-
-        // Update the ticket.
-        this.updateTicket(dto);
-
-        if (LOGGER.isDebugEnabled()) {
-            LOGGER.debug(String.format(
-                    "retryTicketPrint: COMMIT PrintOut ID [%d] printer [%s] "
-                            + "job [%d] status [%s]",
-                    dto.getPrintOutId().longValue(),
-                    parms.getPrinter().getPrinterName(),
-                    printJob.getJobId().intValue(),
-                    IppJobStateEnum.asEnum(printJob.getJobState())));
-        }
-
         return dto;
     }
 
     @Override
     public OutboxJobDto printTicket(final JobTicketExecParms parms)
-            throws IOException, IppConnectException {
+            throws IOException, IppConnectException,
+            IppRuleValidationException {
 
         return execTicket(parms, false);
     }
@@ -1412,8 +1857,9 @@ public final class JobTicketServiceImpl extends AbstractService
 
         try {
             return execTicket(parms, true);
-        } catch (IppConnectException e) {
-            // This is not supposed to happen, because no proxy print is done.
+        } catch (IppConnectException | IppRuleValidationException e) {
+            // This is not supposed to happen, because no proxy print is done,
+            // and rule validation is irrelevant.
             throw new IllegalStateException(e.getMessage());
         }
     }
@@ -1616,18 +2062,18 @@ public final class JobTicketServiceImpl extends AbstractService
 
             if (mediaTypeOptChoice != null) {
                 redirectPrinter.setMediaTypeOptChoice(mediaTypeOptChoice);
-                // proxyPrintService().localizePrinterOptValue(locale,
-                // IppDictJobTemplateAttr.ATTR_MEDIA_TYPE,
-                // requestedMediaTypeForJob));
             }
 
             final PrinterAttrLookup printerAttrLookup =
                     new PrinterAttrLookup(printer);
 
+            redirectPrinter.setMediaSourceMediaMap(printerService()
+                    .getMediaSourceMediaMap(printerAttrLookup, mediaSource));
+
             // Main job.
             redirectPrinter.setMediaSourceOptChoice(
                     printerService().findMediaSourceForMedia(printerAttrLookup,
-                            mediaSource, requestedMediaForJob));
+                            mediaSource, requestedMediaForJob, null));
 
             // Job Sheet.
             final TicketJobSheetDto jobSheetDto =
@@ -1636,7 +2082,8 @@ public final class JobTicketServiceImpl extends AbstractService
             if (jobSheetDto.isEnabled()) {
                 redirectPrinter.setMediaSourceJobSheetOptChoice(printerService()
                         .findMediaSourceForMedia(printerAttrLookup, mediaSource,
-                                jobSheetDto.getMediaOption()));
+                                jobSheetDto.getMediaOption(), printerService()
+                                        .getJobSheetsMediaSources(printer)));
             }
 
             // Find the output-bin
@@ -1650,10 +2097,10 @@ public final class JobTicketServiceImpl extends AbstractService
                 redirectPrinter.setOutputBinOptChoice(
                         this.getPrinterOptChoiceDefault(outputBin));
 
-                final JsonProxyPrinterOpt jogOffset =
-                        this.localizePrinterOpt(printerOptionlookup,
-                                IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET,
-                                locale);
+                final JsonProxyPrinterOpt jogOffset = this.localizePrinterOpt(
+                        printerOptionlookup,
+                        IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET,
+                        locale);
 
                 if (jogOffset != null) {
                     redirectPrinter.setJogOffsetOpt(jogOffset);
@@ -1757,7 +2204,7 @@ public final class JobTicketServiceImpl extends AbstractService
     public String createTicketNumber() {
         return chunkFormatted(
                 shuffle(Long.toHexString(DateUtil.uniqueCurrentTime())),
-                TICKER_NUMBER_CHUNK_WIDTH, TICKER_NUMBER_CHUNK_SEPARATOR)
+                TICKET_NUMBER_CHUNK_WIDTH, TICKET_NUMBER_CHUNK_SEPARATOR)
                         .toUpperCase();
     }
 
@@ -1867,18 +2314,62 @@ public final class JobTicketServiceImpl extends AbstractService
     }
 
     @Override
-    public Collection<JobTicketTagDto> getTicketTagsByWord() {
-        return JobTicketTagCache.getTicketTagsByWord();
+    public Collection<JobTicketDomainDto> getTicketDomainsByName() {
+        return JobTicketLabelCache.getTicketDomainsByName();
     }
 
     @Override
-    public JobTicketTagDto getTicketNumberTag(final String ticketNumber) {
-        final String[] words = StringUtils.split(ticketNumber,
-                TICKER_NUMBER_PREFIX_TAG_SEPARATOR);
-        if (words.length == 2) {
-            return JobTicketTagCache.getTicketTag(words[0]);
+    public Collection<JobTicketUseDto> getTicketUsesByName() {
+        return JobTicketLabelCache.getTicketUsesByName();
+    }
+
+    @Override
+    public Collection<JobTicketTagDto> getTicketTagsByName() {
+        return JobTicketLabelCache.getTicketTagsByName();
+    }
+
+    @Override
+    public String getTicketNumberLabel(final String ticketNumber) {
+        if (ticketNumber.indexOf(TICKET_NUMBER_PREFIX_LABEL_SEPARATOR) < 0) {
+            return null;
         }
-        return null;
+        return StringUtils.substringBeforeLast(ticketNumber,
+                TICKET_NUMBER_PREFIX_LABEL_SEPARATOR);
+    }
+
+    @Override
+    public SortedSet<Integer> getDeliveryDaysOfWeek() {
+        return DateUtil.getWeekDayOrdinals(this.getDeliveryDaysOfWeekCron());
+    }
+
+    /**
+     * @return CRON expression of valid Job Ticket delivery days.
+     */
+    private CronExpression getDeliveryDaysOfWeekCron() {
+        try {
+            return new CronExpression(String.format("0 0 0 ? * %s",
+                    ConfigManager.instance().getConfigValue(
+                            Key.JOBTICKET_DELIVERY_DAYS_OF_WEEK)));
+        } catch (ParseException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
+    }
+
+    @Override
+    public boolean isReopenedTicket(final OutboxJobDto job) {
+        return BooleanUtils.isTrue(job.getTicketReopen());
+    }
+
+    @Override
+    public boolean isReopenedTicketNumber(final String ticketNumber) {
+        return ticketNumber != null
+                && ticketNumber.endsWith(TICKET_NUMBER_SUFFIX_REOPEN);
+    }
+
+    @Override
+    public boolean isTicketReopened(final String ticketNumber) {
+        return this.reopenedTicketCache
+                .containsKey(ticketNumber.concat(TICKET_NUMBER_SUFFIX_REOPEN));
     }
 
 }

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,13 +27,21 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Set;
 
+import org.savapage.core.config.IConfigProp;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.PrintModeEnum;
+import org.savapage.core.jpa.DocLog;
+import org.savapage.core.jpa.DocOut;
+import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.print.proxy.AbstractProxyPrintReq;
+import org.savapage.core.services.StatefulService;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.ext.papercut.DelegatedPrintPeriodDto;
+import org.savapage.ext.papercut.PaperCutAccountTrx;
+import org.savapage.ext.papercut.PaperCutDb;
 import org.savapage.ext.papercut.PaperCutDbProxy;
 import org.savapage.ext.papercut.PaperCutException;
+import org.savapage.ext.papercut.PaperCutIntegrationEnum;
 import org.savapage.ext.papercut.PaperCutPrinterUsageLog;
 import org.savapage.ext.papercut.PaperCutServerProxy;
 import org.savapage.ext.papercut.PaperCutUser;
@@ -48,57 +56,96 @@ import org.savapage.ext.papercut.PaperCutUser;
  * @author Rijk Ravestein
  *
  */
-public interface PaperCutService {
+public interface PaperCutService extends StatefulService {
+
+    /**
+     * Checks if PaperCut Delegated or Personal Print is enabled (or none).
+     *
+     * @return {@link PaperCutIntegrationEnum}.
+     */
+    PaperCutIntegrationEnum getPrintIntegration();
 
     /**
      * Checks if PaperCut integration for Printer is applicable.
      *
      * @param printerName
      *            The CUPS printer name.
-     * @return {@code true} is applicable.
+     * @return {@code false}, if PaperCut integration is disabled or printer is
+     *         not managed by PaperCut.
      */
     boolean isExtPaperCutPrint(String printerName);
 
     /**
-     * Prepares the {@link AbstractProxyPrintReq} for External PaperCut Print
-     * Status monitoring and notification to an external supplier.
+     * Checks if a {@link PrintOut} refund must be propagated to PaperCut.
+     *
+     * @param docLog
+     *            The {@link DocLog} with the original {@link DocOut} and
+     *            {@link PrintOut}.
+     * @return {@code true} when refund must be propagated to PaperCut.
+     */
+    boolean isExtPaperCutPrintRefund(DocLog docLog);
+
+    /**
+     * Checks if the status of a print job must be monitored in PaperCut.
+     *
+     * @param printerName
+     *            The CUPS printer name.
+     * @param isNonPersonalPrint
+     *            If {@code true}, cost of print job is not charged on personal
+     *            account, but on delegator account(s), and/or shared
+     *            account(s).
+     * @return {@code true} when print status must be monitored in PaperCut.
+     */
+    boolean isMonitorPaperCutPrintStatus(String printerName,
+            boolean isNonPersonalPrint);
+
+    /**
+     * Creates {@link ExternalSupplierEnum#SAVAPAGE} info for PaperCut Print
+     * Status monitoring.
+     *
+     * @param printReq
+     *            The {@link AbstractProxyPrintReq}.
+     * @return {@link ExternalSupplierInfo}.
+     */
+    ExternalSupplierInfo
+            createExternalSupplierInfo(AbstractProxyPrintReq printReq);
+
+    /**
+     * Prepares the {@link AbstractProxyPrintReq} and
+     * {@link ExternalSupplierInfo} for External PaperCut Print Status
+     * monitoring and notification to an external supplier.
      * <p>
      * Note: all cost is set to zero, since cost is applied after PaperCut
      * reports that jobs are printed successfully.
      * </p>
      *
      * @param printReq
-     *            The {@link AbstractProxyPrintReq}.
+     *            {@link AbstractProxyPrintReq}.
      * @param supplierInfo
-     *            The {@link ExternalSupplierInfo}: when {@code null},
-     *            {@link ExternalSupplierEnum#SAVAPAGE} is assumed.
+     *            {@link ExternalSupplierInfo}.
      * @param printMode
-     *            when {@code null}, {@link PrintModeEnum#PUSH} is assumed.
+     *            {@link PrintModeEnum}.
      */
     void prepareForExtPaperCut(AbstractProxyPrintReq printReq,
             ExternalSupplierInfo supplierInfo, PrintModeEnum printMode);
 
     /**
-     * Prepares a {@link AbstractProxyPrintReq} for <i>retrying</i> with
-     * External PaperCut Print Status monitoring and notification to an external
-     * supplier.
+     * Prepares a {@link AbstractProxyPrintReq} and {@link ExternalSupplierInfo}
+     * for <i>retrying</i> with External PaperCut Print Status monitoring and
+     * notification to an external supplier.
      * <p>
      * Note: any cost is preserved.
      * </p>
      *
      * @param printReq
-     *            The {@link AbstractProxyPrintReq}.
+     *            {@link AbstractProxyPrintReq}.
      * @param supplierInfo
-     *            The {@link ExternalSupplierInfo}: when {@code null},
-     *            {@link ExternalSupplierEnum#SAVAPAGE} is assumed.
+     *            {@link ExternalSupplierInfo}.
      * @param printMode
-     *            when {@code null}, {@link PrintModeEnum#PUSH} is assumed.
-     * @return The {@link ExternalSupplierInfo} input, or when input
-     *         {@code null}, the newly created instance.
+     *            {@link PrintModeEnum}.
      */
-    ExternalSupplierInfo prepareForExtPaperCutRetry(
-            AbstractProxyPrintReq printReq, ExternalSupplierInfo supplierInfo,
-            PrintModeEnum printMode);
+    void prepareForExtPaperCutRetry(AbstractProxyPrintReq printReq,
+            ExternalSupplierInfo supplierInfo, PrintModeEnum printMode);
 
     /**
      * Finds a PaperCut user.
@@ -170,21 +217,19 @@ public interface PaperCutService {
     /**
      * Gets the {@link PaperCutPrinterUsageLog} for unique document names.
      *
-     * @param papercut
+     * @param papercutDb
      *            The {@link PaperCutDbProxy}.
      * @param uniqueDocNames
      *            A set with document names.
      * @return A list with an {@link PaperCutPrinterUsageLog} object for each
      *         title in the input set.
      */
-    List<PaperCutPrinterUsageLog> getPrinterUsageLog(PaperCutDbProxy papercut,
+    List<PaperCutPrinterUsageLog> getPrinterUsageLog(PaperCutDbProxy papercutDb,
             Set<String> uniqueDocNames);
 
     /**
      * Creates a CSV file with Delegator Print costs.
      *
-     * @param papercut
-     *            The {@link PaperCutDbProxy}.
      * @param file
      *            The CSV file to create.
      * @param dto
@@ -192,6 +237,42 @@ public interface PaperCutService {
      * @throws IOException
      *             When IO errors occur while writing the file.
      */
-    void createDelegatorPrintCostCsv(final PaperCutDbProxy papercut, File file,
-            DelegatedPrintPeriodDto dto) throws IOException;
+    void createDelegatorPrintCostCsv(File file, DelegatedPrintPeriodDto dto)
+            throws IOException;
+
+    /**
+     * Gets the total number of user transactions.
+     *
+     * @param filter
+     *            The transaction filter.
+     * @return Number of transactions.
+     */
+    long getAccountTrxCount(PaperCutDb.TrxFilter filter);
+
+    /**
+     * Gets PaperCut personal account transactions.
+     *
+     * @param filter
+     *            The transaction filter.
+     * @param startPosition
+     *            Zero-based start position of the chunk in total set. If
+     *            {@code null}, start zero (0) is assumed.
+     * @param maxResults
+     *            Max chuck size. If {@code null}, size is unlimited.
+     * @param orderBy
+     *            The order-by field.
+     * @param sortAscending
+     *            If {@code true}, the list is sorted ascending on order-by
+     *            field.
+     * @return The list.
+     */
+    List<PaperCutAccountTrx> getAccountTrxListChunk(PaperCutDb.TrxFilter filter,
+            Integer startPosition, Integer maxResults, PaperCutDb.Field orderBy,
+            boolean sortAscending);
+
+    /**
+     * Recreates or closes PaperCut database connection pool depending on actual
+     * {@link IConfigProp.Key} parameters.
+     */
+    void resetDbConnectionPool();
 }

@@ -1,6 +1,6 @@
 /*
  * This file is part+of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,6 +29,8 @@ import org.savapage.core.services.AtomFeedService;
 import org.savapage.core.services.ConfigPropertyService;
 import org.savapage.core.services.DeviceService;
 import org.savapage.core.services.DocLogService;
+import org.savapage.core.services.DocStoreService;
+import org.savapage.core.services.DownloadService;
 import org.savapage.core.services.EcoPrintPdfTaskService;
 import org.savapage.core.services.EmailService;
 import org.savapage.core.services.InboxService;
@@ -40,6 +42,7 @@ import org.savapage.core.services.PrinterGroupService;
 import org.savapage.core.services.PrinterService;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.QueueService;
+import org.savapage.core.services.RestClientService;
 import org.savapage.core.services.RfIdReaderService;
 import org.savapage.core.services.SOfficeService;
 import org.savapage.core.services.ServiceFactory;
@@ -108,6 +111,14 @@ public final class ServiceFactoryImpl implements ServiceFactory {
         public static final DocLogService SERVICE = new DocLogServiceImpl();
     }
 
+    private static class DocStoreServiceHolder {
+        public static final DocStoreService SERVICE = new DocStoreServiceImpl();
+    }
+
+    private static class DownloadServiceHolder {
+        public static final DownloadService SERVICE = new DownloadServiceImpl();
+    }
+
     private static class EcoPrintPdfTaskServiceHolder {
         public static final EcoPrintPdfTaskService SERVICE =
                 new EcoPrintPdfTaskServiceImpl();
@@ -128,6 +139,11 @@ public final class ServiceFactoryImpl implements ServiceFactory {
 
     private static class OutboxServiceHolder {
         public static final OutboxService SERVICE = new OutboxServiceImpl();
+    }
+
+    private static class RestClientServiceHolder {
+        public static final RestClientService SERVICE =
+                new RestClientServiceImpl();
     }
 
     private static class PaperCutServiceHolder {
@@ -199,10 +215,13 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     private final static StatefulService statefullServices[] =
             new StatefulService[] { //
                     AtomFeedServiceHolder.SERVICE, //
+                    DownloadServiceHolder.SERVICE, //
                     EcoPrintPdfTaskServiceHolder.SERVICE, //
                     JobTicketServiceHolder.SERVICE, //
                     SOfficeServiceHolder.SERVICE, //
                     EmailServiceHolder.SERVICE, //
+                    PaperCutServiceHolder.SERVICE, //
+                    RestClientServiceHolder.SERVICE, //
                     SnmpRetrieveServiceHolder.SERVICE //
             };
 
@@ -244,6 +263,16 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     @Override
     public DocLogService getDocLogService() {
         return DocLogServiceHolder.SERVICE;
+    }
+
+    @Override
+    public DocStoreService getDocStoreService() {
+        return DocStoreServiceHolder.SERVICE;
+    }
+
+    @Override
+    public DownloadService getDownloadService() {
+        return DownloadServiceHolder.SERVICE;
     }
 
     @Override
@@ -319,6 +348,11 @@ public final class ServiceFactoryImpl implements ServiceFactory {
     @Override
     public QueueService getQueueService() {
         return QueueServiceHolder.SERVICE;
+    }
+
+    @Override
+    public RestClientService getRestClientService() {
+        return RestClientServiceHolder.SERVICE;
     }
 
     @Override

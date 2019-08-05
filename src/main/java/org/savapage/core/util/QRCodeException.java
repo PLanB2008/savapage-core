@@ -19,34 +19,50 @@
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
-package org.savapage.core.config;
+package org.savapage.core.util;
 
 /**
- * The Application run-mode.
+ * DRM-restricted PostScript protected by Digital Copyright Act of 1998.
  *
  * @author Datraverse B.V.
- *
  */
-public enum RunMode {
+public class QRCodeException extends Exception {
 
     /**
-     * Fully initialized as a runnable core library in a Web Server context.
-     * <p>
-     * The job scheduler is NOT initialized, this should be done by the (server)
-     * application.
-     * </p>
+     *
      */
-    SERVER,
+    private static final long serialVersionUID = 1L;
+
     /**
-     * Initialized as a runnable core library (with a fully functional
-     * database), so basic operations can be performed. Followship operations
-     * are not allowed.
+     * Constructs a new {@link QRCodeException}.
+     *
+     * @param cause
+     *            The cause.
      */
-    LIB,
+    public QRCodeException(final Throwable cause) {
+        super(cause);
+    }
+
     /**
-     * Initialized to a core library, without a fully functional database, so
-     * basic operations can be performed. Followship operations are not allowed.
+     * Constructs a new {@link QRCodeException}.
+     *
+     * @param message
+     *            The detail message.
      */
-    CORE
+    public QRCodeException(final String message) {
+        super(message);
+    }
+
+    /**
+     * Constructs a new {@link QRCodeException}.
+     *
+     * @param message
+     *            The detail message.
+     * @param cause
+     *            The cause.
+     */
+    public QRCodeException(final String message, final Throwable cause) {
+        super(message, cause);
+    }
 
 }

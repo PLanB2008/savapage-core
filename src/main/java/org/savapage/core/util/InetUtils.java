@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,11 +27,19 @@ import java.net.NetworkInterface;
 import java.net.Socket;
 import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.security.KeyManagementException;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
 import java.util.Enumeration;
 
-import org.apache.commons.io.IOUtils;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.net.util.SubnetUtils;
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
+import org.apache.http.conn.ssl.TrustSelfSignedStrategy;
+import org.apache.http.ssl.SSLContextBuilder;
 import org.savapage.core.SpException;
 
 /**
@@ -54,10 +62,15 @@ public final class InetUtils {
     private static final String IP_LOOP_BACK_ADDR = "127.0.0.1";
 
     /** */
-    private static final String LOCAL_HOST = "localhost";
+    public static final String LOCAL_HOST = "localhost";
 
     /** */
     private static final String LOCAL_SUFFIX = ".local";
+
+    /** */
+    public static final String URL_PROTOCOL_HTTP = "http";
+    /** */
+    public static final String URL_PROTOCOL_HTTPS = "https";
 
     /**
      * No public instantiation.
@@ -72,15 +85,12 @@ public final class InetUtils {
      *            The IP port.
      * @return {@code true} when in us.
      */
-    public static boolean isPortInUse(int port) {
-        boolean inUse = true;
-        Socket socket = null;
-        try {
-            socket = new Socket(IP_LOOP_BACK_ADDR, port);
+    public static boolean isPortInUse(final int port) {
+        boolean inUse;
+        try (Socket socket = new Socket(IP_LOOP_BACK_ADDR, port);) {
+            inUse = true;
         } catch (Exception e) {
             inUse = false;
-        } finally {
-            IOUtils.closeQuietly(socket);
         }
         return inUse;
     }
@@ -179,8 +189,8 @@ public final class InetUtils {
     public static boolean isIp4AddrInCidrRanges(final String cidrRanges,
             final String ipAddr) {
 
-        boolean inrange =
-                StringUtils.isBlank(cidrRanges) || ipAddr.equals("127.0.0.1");
+        boolean inrange = StringUtils.isBlank(cidrRanges)
+                || ipAddr.equals(IP_LOOP_BACK_ADDR);
 
         if (!inrange) {
 
@@ -207,19 +217,19 @@ public final class InetUtils {
     }
 
     /**
-     * Checks if an IPv4 address is a public (global) IP address.
+     * Checks if an IP address is a public (global) IP address.
      *
      * @param ip
-     *            The IPv4 address.
+     *            The IPv4 or IPv6 address.
      * @return {@code true} if address is a public.
      */
     public static boolean isPublicAddress(final String ip) {
 
-        final Inet4Address address;
+        final InetAddress address;
 
         try {
 
-            address = (Inet4Address) InetAddress.getByName(ip);
+            address = InetAddress.getByName(ip);
 
         } catch (UnknownHostException exception) {
             return false;
@@ -249,6 +259,34 @@ public final class InetUtils {
         } catch (UnknownHostException e) {
             return false;
         }
+    }
+
+    /**
+     * Creates an {@link SSLContext} that trusts self-signed SSL certificates.
+     *
+     * @return The SSLContext.
+     */
+    public static SSLContext createSslContextTrustSelfSigned() {
+
+        final SSLContextBuilder builder = new SSLContextBuilder();
+
+        try {
+            return builder
+                    .loadTrustMaterial(null, TrustSelfSignedStrategy.INSTANCE)
+                    .build();
+        } catch (NoSuchAlgorithmException | KeyStoreException
+                | KeyManagementException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
+    }
+
+    /**
+     * Gets HostnameVerifier that turns hostname verification off.
+     *
+     * @return The verifier.
+     */
+    public static HostnameVerifier getHostnameVerifierTrustAll() {
+        return NoopHostnameVerifier.INSTANCE;
     }
 
 }

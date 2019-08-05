@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,13 +21,15 @@
  */
 package org.savapage.core.pdf;
 
+import org.savapage.core.i18n.PhraseEnum;
+
 /**
- * An exception to report an encrypted or password protected PDF document.
+ * An exception to report an encrypted PDF document.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public class PdfSecurityException extends Exception {
+public final class PdfSecurityException extends PdfAbstractException {
 
     /**
      *
@@ -35,29 +37,31 @@ public class PdfSecurityException extends Exception {
     private static final long serialVersionUID = 1L;
 
     /**
-     *
-     * @param ex
-     *            The exception.
+     * {@code true} if printing is allowed.
      */
-    public PdfSecurityException(final Exception ex) {
-        super(ex);
-    }
+    private final boolean printingAllowed;
 
     /**
      *
      * @param message
+     *            Message.
+     * @param phrase
+     *            Message for logging.
+     * @param printAllowed
+     *            {@code true} if printing is allowed.
      */
-    public PdfSecurityException(final String message) {
-        super(message);
+    public PdfSecurityException(final String message, final PhraseEnum phrase,
+            final boolean printAllowed) {
+        super(message, phrase);
+        this.printingAllowed = printAllowed;
     }
 
     /**
      *
-     * @param message
-     * @param cause
+     * @return {@code true} if printing is allowed.
      */
-    public PdfSecurityException(final String message, final Throwable cause) {
-        super(message, cause);
+    public boolean isPrintingAllowed() {
+        return printingAllowed;
     }
 
 }

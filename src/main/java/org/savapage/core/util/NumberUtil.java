@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,6 +21,8 @@
  */
 package org.savapage.core.util;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.Random;
 
 /**
@@ -29,6 +31,10 @@ import java.util.Random;
  *
  */
 public final class NumberUtil {
+
+    /**  */
+    public static final int RADIX_10 = 10;
+
 
     /**  */
     public static final int INT_HUNDRED = 100;
@@ -46,6 +52,21 @@ public final class NumberUtil {
      *
      */
     private NumberUtil() {
+    }
+
+    /**
+     * Converts a BigDecimal to a BigInteger.
+     *
+     * @param bd
+     *            The {@link BigDecimal}.
+     * @return {@code null} if this BigDecimal has a nonzero fractional part.
+     */
+    public static BigInteger toBigIntegerExact(final BigDecimal bd) {
+        try {
+            return bd.toBigIntegerExact();
+        } catch (ArithmeticException ex) {
+            return null;
+        }
     }
 
     /**

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -30,12 +30,15 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.savapage.core.SpException;
+import org.savapage.core.dao.PrinterAttrDao;
 import org.savapage.core.dao.PrinterDao;
 import org.savapage.core.dao.enums.AccessControlScopeEnum;
 import org.savapage.core.dao.enums.DeviceTypeEnum;
@@ -44,6 +47,7 @@ import org.savapage.core.dao.enums.ProxyPrintAuthModeEnum;
 import org.savapage.core.dao.enums.ProxyPrinterSuppliesEnum;
 import org.savapage.core.dao.helpers.JsonUserGroupAccess;
 import org.savapage.core.dao.helpers.ProxyPrinterSnmpInfoDto;
+import org.savapage.core.doc.store.DocStoreTypeEnum;
 import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.dto.PrinterSnmpDto;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
@@ -74,6 +78,8 @@ import org.savapage.core.snmp.SnmpPrtMarkerSuppliesEntry;
 import org.savapage.core.snmp.SnmpPrtMarkerSuppliesTypeEnum;
 import org.savapage.core.util.JsonHelper;
 import org.savapage.core.util.NumberUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -83,6 +89,12 @@ import org.savapage.core.util.NumberUtil;
 public final class PrinterServiceImpl extends AbstractService
         implements PrinterService {
 
+    /**
+     * The logger.
+     */
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(PrinterServiceImpl.class);
+
     /** */
     private static final boolean ACCESS_ALLOWED = true;
 
@@ -90,18 +102,64 @@ public final class PrinterServiceImpl extends AbstractService
     private static final boolean ACCESS_DENIED = !ACCESS_ALLOWED;
 
     @Override
-    public boolean isInternalPrinter(final Printer printer) {
+    public boolean isInternalPrinter(final Long id) {
 
-        final PrinterAttr attr = printerAttrDAO().findByName(printer.getId(),
+        final PrinterAttr attr = printerAttrDAO().findByName(id,
                 PrinterAttrEnum.ACCESS_INTERNAL);
         return printerAttrDAO().getBooleanValue(attr);
     }
 
+    /**
+     *
+     * @param store
+     *            The document store.
+     * @return The {@link PrinterAttrEnum} to disable document store for a
+     *         printer.
+     */
+    private static PrinterAttrEnum
+            getDisabledAttr(final DocStoreTypeEnum store) {
+        switch (store) {
+        case ARCHIVE:
+            return PrinterAttrEnum.ARCHIVE_DISABLE;
+        case JOURNAL:
+            return PrinterAttrEnum.JOURNAL_DISABLE;
+        default:
+            throw new UnknownError(store.toString());
+        }
+    }
+
     @Override
-    public boolean isJobTicketPrinter(final Printer printer) {
-        final PrinterAttr attr = printerAttrDAO().findByName(printer.getId(),
+    public boolean isDocStoreDisabled(final DocStoreTypeEnum store,
+            final Long id) {
+        final PrinterAttr attr =
+                printerAttrDAO().findByName(id, getDisabledAttr(store));
+        return printerAttrDAO().getBooleanValue(attr);
+    }
+
+    @Override
+    public boolean isDocStoreDisabled(final DocStoreTypeEnum store,
+            final Printer printer) {
+        return isPrinterAttr(printer, getDisabledAttr(store), false);
+    }
+
+    @Override
+    public boolean isJobTicketPrinter(final Long id) {
+        final PrinterAttr attr = printerAttrDAO().findByName(id,
                 PrinterAttrEnum.JOBTICKET_ENABLE);
         return printerAttrDAO().getBooleanValue(attr);
+    }
+
+    @Override
+    public boolean isJobTicketLabelsEnabled(final Long id) {
+        final PrinterAttr attr = printerAttrDAO().findByName(id,
+                PrinterAttrEnum.JOBTICKET_LABELS_ENABLE);
+        return printerAttrDAO().getBooleanValue(attr);
+    }
+
+    @Override
+    public boolean isJobTicketLabelsEnabled(final Printer printer) {
+        return isPrinterAttr(printer, PrinterAttrEnum.JOBTICKET_LABELS_ENABLE,
+                false);
     }
 
     @Override
@@ -334,6 +392,41 @@ public final class PrinterServiceImpl extends AbstractService
     }
 
     @Override
+    public Set<String> getJobSheetsMediaSources(final Printer printer) {
+
+        final PrinterAttrEnum name = PrinterAttrEnum.JOB_SHEETS_MEDIA_SOURCES;
+
+        try {
+            final String jsonJobSheetSources =
+                    this.getAttributeValue(printer, name);
+
+            if (StringUtils.isNotBlank(jsonJobSheetSources)) {
+                return JsonHelper.createStringSet(jsonJobSheetSources);
+            }
+
+        } catch (IOException e) {
+            LOGGER.warn("Printer [{}] attribute [{}] : {}",
+                    printer.getPrinterName(), name.getDbName(), e.getMessage());
+        }
+        return null;
+    }
+
+    @Override
+    public String getPrintColorModeDefault(final Long id) {
+
+        final PrinterDao.IppKeywordAttr ippKeyword =
+                new PrinterDao.IppKeywordAttr(
+                        IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE_DFLT);
+
+        final PrinterAttr attr = printerAttrDAO().findByName(id, ippKeyword);
+
+        if (attr == null) {
+            return null;
+        }
+        return attr.getValue();
+    }
+
+    @Override
     public String getPrintColorModeDefault(final Printer printer) {
 
         final List<PrinterAttr> attributes = printer.getAttributes();
@@ -355,23 +448,51 @@ public final class PrinterServiceImpl extends AbstractService
 
     @Override
     public boolean isClientSideMonochrome(final Printer printer) {
+        return isPrinterAttr(printer, PrinterAttrEnum.CLIENT_SIDE_MONOCHROME,
+                false);
+    }
+
+    @Override
+    public String getPrinterAttrValue(final Printer printer,
+            final PrinterAttrEnum attr) {
 
         final List<PrinterAttr> attributes = printer.getAttributes();
 
         if (attributes != null) {
-
-            final String targetName =
-                    PrinterAttrEnum.CLIENT_SIDE_MONOCHROME.getDbName();
-
+            final String targetName = attr.getDbName();
             for (final PrinterAttr printerAttr : attributes) {
-
                 if (printerAttr.getName().equals(targetName)) {
-                    return printerAttr.getValue()
-                            .equals(Boolean.TRUE.toString());
+                    return printerAttr.getValue();
                 }
             }
         }
-        return false;
+        return null;
+    }
+
+    /**
+     * Checks boolean value of printer attribute.
+     *
+     * @param printer
+     *            The printer.
+     * @param attr
+     *            The attribute.
+     * @param defaultValue
+     *            The default value when printer attribute is not present.
+     * @return Printer attribute value.
+     */
+    private boolean isPrinterAttr(final Printer printer,
+            final PrinterAttrEnum attr, final boolean defaultValue) {
+        final String value = this.getPrinterAttrValue(printer, attr);
+        if (value != null) {
+            return value.equals(PrinterAttrDao.V_YES);
+        }
+        return defaultValue;
+    }
+
+    @Override
+    public boolean isClientSideBooklet(final Printer printer) {
+        return proxyPrintService().getCachedPrinter(printer.getPrinterName())
+                .isBookletClientSide();
     }
 
     @Override
@@ -387,7 +508,6 @@ public final class PrinterServiceImpl extends AbstractService
         printer.setTotalBytes(printer.getTotalBytes().longValue() + jobBytes);
 
         printer.setLastUsageDate(jobDate);
-
     }
 
     @Override
@@ -900,8 +1020,10 @@ public final class PrinterServiceImpl extends AbstractService
     @Override
     public JsonProxyPrinterOptChoice findMediaSourceForMedia(
             final PrinterAttrLookup printerAttrLookup,
-            final JsonProxyPrinterOpt mediaSource,
-            final String requestedMedia) {
+            final JsonProxyPrinterOpt mediaSource, final String requestedMedia,
+            final Set<String> preferredMediaSources) {
+
+        JsonProxyPrinterOptChoice firstFound = null;
 
         for (final JsonProxyPrinterOptChoice optChoice : mediaSource
                 .getChoices()) {
@@ -912,10 +1034,45 @@ public final class PrinterServiceImpl extends AbstractService
             if (assignedMediaSource != null && requestedMedia != null
                     && requestedMedia.equals(
                             assignedMediaSource.getMedia().getMedia())) {
-                return optChoice;
+
+                if (preferredMediaSources == null) {
+                    if (BooleanUtils
+                            .isTrue(assignedMediaSource.getPreferred())) {
+                        return optChoice;
+                    }
+                } else {
+                    if (preferredMediaSources.contains(optChoice.getChoice())) {
+                        return optChoice;
+                    }
+                }
+
+                if (firstFound == null) {
+                    firstFound = optChoice;
+                }
             }
         }
-        return null;
+        return firstFound;
+    }
+
+    @Override
+    public Map<String, String> getMediaSourceMediaMap(
+            final PrinterAttrLookup printerAttrLookup,
+            final JsonProxyPrinterOpt mediaSource) {
+
+        final Map<String, String> map = new HashMap<>();
+
+        for (final JsonProxyPrinterOptChoice optChoice : mediaSource
+                .getChoices()) {
+
+            final IppMediaSourceCostDto assignedMediaSource = printerAttrLookup
+                    .get(new PrinterDao.MediaSourceAttr(optChoice.getChoice()));
+
+            if (assignedMediaSource != null) {
+                map.put(optChoice.getChoice(),
+                        assignedMediaSource.getMedia().getMedia());
+            }
+        }
+        return map;
     }
 
     @Override
@@ -1004,6 +1161,9 @@ public final class PrinterServiceImpl extends AbstractService
             case INK:
                 obj.setSupplies(ProxyPrinterSuppliesEnum.INK);
                 break;
+            case UNDEFINED: // Make an assumption.
+                obj.setSupplies(ProxyPrinterSuppliesEnum.TONER);
+                break;
             default:
                 continue;
             }
@@ -1013,17 +1173,17 @@ public final class PrinterServiceImpl extends AbstractService
 
             for (final SnmpPrtMarkerSuppliesEntry supplies : entry.getValue()) {
 
-                if (supplies
-                        .getSuppliesClass() != SnmpPrtMarkerSuppliesClassEnum.CONSUMED) {
+                final SnmpPrtMarkerSuppliesClassEnum suppliesClass =
+                        supplies.getSuppliesClass();
+
+                // Handle UNDEFINED as CONSUMED.
+                if (suppliesClass != SnmpPrtMarkerSuppliesClassEnum.CONSUMED
+                        && suppliesClass != SnmpPrtMarkerSuppliesClassEnum.UNDEFINED) {
                     continue;
                 }
 
                 final SnmpPrtMarkerColorantEntry colorantEntry =
                         supplies.getColorantEntry();
-
-                if (colorantEntry == null) {
-                    continue;
-                }
 
                 final int perc;
                 if (supplies.getLevel() == 0
@@ -1036,22 +1196,28 @@ public final class PrinterServiceImpl extends AbstractService
 
                 final SnmpPrtMarkerColorantValueEnum color;
 
-                switch (colorantEntry.getValue()) {
-                case UNKNOWN:
-                case OTHER:
-                    if (StringUtils.containsIgnoreCase(
-                            supplies.getDescription(), "black")) {
-                        color = SnmpPrtMarkerColorantValueEnum.BLACK;
-                        break;
-                    } else if (StringUtils.containsIgnoreCase(
-                            supplies.getDescription(), "tri-color")) {
-                        color = SnmpPrtMarkerColorantValueEnum.OTHER;
+                if (colorantEntry == null) {
+                    // Make an assumption.
+                    color = SnmpPrtMarkerColorantValueEnum.BLACK;
+                } else {
+
+                    switch (colorantEntry.getValue()) {
+                    case UNKNOWN:
+                    case OTHER:
+                        if (StringUtils.containsIgnoreCase(
+                                supplies.getDescription(), "black")) {
+                            color = SnmpPrtMarkerColorantValueEnum.BLACK;
+                            break;
+                        } else if (StringUtils.containsIgnoreCase(
+                                supplies.getDescription(), "tri-color")) {
+                            color = SnmpPrtMarkerColorantValueEnum.OTHER;
+                            break;
+                        }
+
+                    default:
+                        color = colorantEntry.getValue();
                         break;
                     }
-
-                default:
-                    color = colorantEntry.getValue();
-                    break;
                 }
 
                 colorants.put(color, Integer.valueOf(perc));

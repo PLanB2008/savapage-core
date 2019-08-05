@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -23,6 +23,7 @@ package org.savapage.core.pdf;
 
 import org.savapage.core.inbox.InboxInfoDto;
 import org.savapage.core.jpa.User;
+import org.savapage.lib.pgp.pdf.PdfPgpVerifyUrl;
 
 /**
  * A request to create a PDF file.
@@ -93,6 +94,15 @@ public final class PdfCreateRequest {
      * {@code true} if grayscale PDF is to be created.
      */
     private boolean grayscale;
+
+    /** */
+    private PdfPgpVerifyUrl verifyUrl;
+
+    /**
+     * {@code true} if PDF with page porder for 2-up duplex booklet is to be
+     * created.
+     */
+    private boolean bookletPageOrder;
 
     public User getUserObj() {
         return userObj;
@@ -203,6 +213,23 @@ public final class PdfCreateRequest {
     }
 
     /**
+     * @return {@code true} if PDF with page porder for 2-up duplex booklet is
+     *         to be created.
+     */
+    public boolean isBookletPageOrder() {
+        return bookletPageOrder;
+    }
+
+    /**
+     * @param bookletPageOrder
+     *            {@code true} if PDF with page porder for 2-up duplex booklet
+     *            is to be created.
+     */
+    public void setBookletPageOrder(boolean bookletPageOrder) {
+        this.bookletPageOrder = bookletPageOrder;
+    }
+
+    /**
      *
      * @return {@code true} when duplex (printing only).
      */
@@ -234,6 +261,14 @@ public final class PdfCreateRequest {
      */
     public void setPrintNup(int printNup) {
         this.printNup = printNup;
+    }
+
+    public PdfPgpVerifyUrl getVerifyUrl() {
+        return verifyUrl;
+    }
+
+    public void setVerifyUrl(PdfPgpVerifyUrl verifyUrl) {
+        this.verifyUrl = verifyUrl;
     }
 
 }

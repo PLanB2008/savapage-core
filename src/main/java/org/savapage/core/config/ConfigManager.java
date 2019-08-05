@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -48,7 +48,6 @@ import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
-import java.text.MessageFormat;
 import java.util.Currency;
 import java.util.Date;
 import java.util.EnumSet;
@@ -56,6 +55,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
 
@@ -71,7 +71,6 @@ import javax.persistence.EntityManagerFactory;
 import javax.persistence.Persistence;
 
 import org.apache.commons.codec.digest.DigestUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -97,7 +96,9 @@ import org.savapage.core.crypto.CryptoApp;
 import org.savapage.core.crypto.CryptoUser;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.impl.DaoContextImpl;
+import org.savapage.core.doc.store.DocStoreTypeEnum;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
+import org.savapage.core.i18n.SystemModeEnum;
 import org.savapage.core.ipp.client.IppClient;
 import org.savapage.core.jmx.CoreConfig;
 import org.savapage.core.job.SpJobScheduler;
@@ -108,6 +109,8 @@ import org.savapage.core.jpa.PrinterGroup;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.tools.DatabaseTypeEnum;
 import org.savapage.core.jpa.tools.DbConfig;
+import org.savapage.core.jpa.tools.DbConnectionPoolEnum;
+import org.savapage.core.jpa.tools.DbTools;
 import org.savapage.core.jpa.tools.DbUpgManager;
 import org.savapage.core.jpa.tools.DbVersionInfo;
 import org.savapage.core.print.proxy.ProxyPrintJobStatusMonitor;
@@ -128,9 +131,11 @@ import org.savapage.core.util.FileSystemHelper;
 import org.savapage.core.util.InetUtils;
 import org.savapage.lib.pgp.PGPBaseException;
 import org.savapage.lib.pgp.PGPHelper;
+import org.savapage.lib.pgp.PGPPublicKeyInfo;
 import org.savapage.lib.pgp.PGPSecretKeyInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.bridge.SLF4JBridgeHandler;
 
 /**
  *
@@ -139,100 +144,19 @@ import org.slf4j.LoggerFactory;
  */
 public final class ConfigManager {
 
-    /**
-     * .
-     */
+    /** */
     private static final Logger LOGGER =
             LoggerFactory.getLogger(ConfigManager.class);
 
-    /**
-     * .
-     */
+    /** */
     private static boolean shutdownInProgress = false;
 
-    /**
-     *
-     */
-    private RunMode runMode = null;
+    /** */
+    private RunModeEnum runMode = null;
 
-    /**
-     * The relative path of the custom template files (relative to the
-     * {@code server} directory).
-     */
-    public static final String SERVER_REL_PATH_CUSTOM_TEMPLATE =
-            "custom/template";
-
-    /**
-     * The relative path of the CUPS custom properties files (relative to the
-     * {@code server} directory).
-     */
-    public static final String SERVER_REL_PATH_CUSTOM_CUPS = "custom/cups";
-
-    /**
-     * The relative path of the custom i18n properties files (relative to the
-     * {@code server} directory).
-     */
-    public static final String SERVER_REL_PATH_CUSTOM_I18N = "custom/i18n";
-
-    /**
-     * The relative path of the CUPS custom i18n XML files (relative to the
-     * {@code server} directory).
-     */
-    public static final String SERVER_REL_PATH_CUSTOM_CUPS_I18N =
-            SERVER_REL_PATH_CUSTOM_CUPS + "/i18n";
-
-    /**
-     * The relative path of the HTML injectable files (relative to the
-     * {@code server} directory).
-     */
-    public static final String SERVER_REL_PATH_CUSTOM_HTML = "custom/html";
-
-    /**
-     * The relative path of the email outbox folder (relative to the
-     * {@code server} directory).
-     */
-    private static final String SERVER_REL_PATH_EMAIL_OUTBOX =
-            "data/email-outbox";
-
-    /**
-     * The relative path of the default SafePages folder (relative to the
-     * {@code server} directory).
-     */
-    private static final String SERVER_REL_PATH_SAFEPAGES_DEFAULT =
-            "data/internal/safepages";
-
-    /**
-     * The relative path of the print-jobtickets folder (relative to the
-     * {@code server} directory).
-     */
-    private static final String SERVER_REL_PATH_PRINT_JOBTICKETS =
-            "data/print-jobtickets";
-
-    /**
-     * The relative path of the Atom Feeds folder (relative to the
-     * {@code server} directory).
-     */
-    private static final String SERVER_REL_PATH_FEEDS =
-            "data/feed";
-
-    /**
-     * .
-     */
-    private static final String SERVER_REL_PATH_USERNAME_ALIASES_TXT =
-            "data/conf/username-aliases.txt";
-
-    /**
-     * .
-     */
-    public static final String SERVER_REL_PATH_INTERNAL_GROUPS_TXT =
-            "data/conf/internal-groups.txt";
-
-    /**
-     * The relative path of the encryption.properties file (relative to the
-     * {@code server} directory).
-     */
-    public static final String SERVER_REL_PATH_ENCRYPTION_PROPERTIES =
-            "data/encryption.properties";
+    /** */
+    private static final String SERVER_DATA_CONF_USERNAME_ALIASES_TXT =
+            "username-aliases.txt";
 
     /**
      * Path of SAVAPAGE.ppd (case sensitive!) relative to
@@ -253,6 +177,9 @@ public final class ConfigManager {
      * The default SSL port of the Web server.
      */
     private static String theDefaultServerSslPort;
+
+    /** */
+    private static SslCertInfo sslCertInfo;
 
     /**
      *
@@ -290,7 +217,7 @@ public final class ConfigManager {
     private static final String FILENAME_SERVER_PROPERTIES =
             "server.properties";
 
-    private static Properties theServerProps = null;
+    private static volatile Properties theServerProps = null;
 
     public static final String SERVER_PROP_APP_DIR_TMP = "app.dir.tmp";
     public static final String SERVER_PROP_APP_DIR_SAFEPAGES =
@@ -302,10 +229,16 @@ public final class ConfigManager {
             "smartschool.print";
 
     private static final String SERVER_PROP_DB_TYPE = "database.type";
+
     /**
      * The JDBC driver, like "org.postgresql.Driver".
      */
     private static final String SERVER_PROP_DB_DRIVER = "database.driver";
+    /**
+     * The hibernate dialect: e.g.
+     */
+    private static final String SERVER_PROP_DB_HIBERNATE_DIALECT =
+            "database.hibernate.dialect";
     private static final String SERVER_PROP_DB_URL = "database.url";
     private static final String SERVER_PROP_DB_USER = "database.user";
     private static final String SERVER_PROP_DB_PASS = "database.password";
@@ -329,7 +262,7 @@ public final class ConfigManager {
     private static final String SERVER_PROP_CUPS_SERVER_PORT =
             "cups.server.port";
 
-    private static final String DEFAULT_CUPS_HOST = "localhost";
+    private static final String DEFAULT_CUPS_HOST = InetUtils.LOCAL_HOST;
     private static final String DEFAULT_CUPS_PORT = "631";
 
     public static final String SERVER_PROP_PRINTER_RAW_PORT =
@@ -339,34 +272,16 @@ public final class ConfigManager {
     private static final String SERVER_PROP_IPP_PRINTER_UUID =
             "ipp.printer-uuid";
 
-    private static final String SERVER_PROP_PGP_SECRETKEY_FILE =
+    private static final String SERVER_PROP_OPENPGP_PUBLICKEY_FILE =
+            "pgp.publickey.file";
+
+    private static final String SERVER_PROP_OPENPGP_SECRETKEY_FILE =
             "pgp.secretkey.file";
 
-    private static final String SERVER_PROP_PGP_SECRETKEY_PASSPHRASE =
+    private static final String SERVER_PROP_OPENPGP_SECRETKEY_PASSPHRASE =
             "pgp.secretkey.passphrase";
 
-    /**
-     * URL of the PGP Public Key Server: to search for a key.
-     */
-    private static final String SERVER_PROP_PGP_PUBLICKEY_SERVER_URL =
-            "pgp.publickey.server.url";
-    /**
-     * An URL to preview the content of PGP Public Key as template: {0} is to be
-     * replaced without hexKeyID, with "0x" prefix.
-     */
-    private static final String SERVER_PROP_PGP_PUBLICKEY_SERVER_URL_VINDEX =
-            "pgp.publickey.server.url.vindex";
-
-    /**
-     * An URL template to get (download) the PGP Public Key: {0} is to be
-     * replaced without hexKeyID, with "0x" prefix.
-     */
-    private static final String SERVER_PROP_PGP_PUBLICKEY_SERVER_URL_GET =
-            "pgp.publickey.server.url.get";
-
-    /**
-     *
-     */
+    /** */
     private static final String SERVER_PROP_START_CLEANUP_DOCLOG =
             "start.cleanup-doclog";
 
@@ -376,24 +291,30 @@ public final class ConfigManager {
 
     // ========================================================================
 
-    /**
-     * .
-     */
+    /** */
+    public static final String SYS_PROP_JAVA_IO_TMPDIR = "java.io.tmpdir";
+
+    /** */
     public static final String SYS_PROP_SERVER_HOME = "server.home";
 
-    /**
-     * .
-     */
+    /** */
     public static final String SYS_PROP_CLIENT_HOME = "client.home";
 
+    /** */
     private static final String APP_OWNER =
             CommunityDictEnum.DATRAVERSE_BV.getWord();
 
+    /** */
     private final CryptoApp myCipher = new CryptoApp();
 
+    /** */
     private ProxyPrintService myPrintProxy;
 
+    /** */
     private DatabaseTypeEnum myDatabaseType;
+
+    /** */
+    private Map<DbConnectionPoolEnum, String> dbConnectionPoolProps;
 
     /**
      * For convenience we use ConfigPropImp instead of ConfigProp (because of
@@ -401,19 +322,13 @@ public final class ConfigManager {
      */
     private final ConfigPropImpl myConfigProp = new ConfigPropImpl();
 
-    /**
-     *
-     */
+    /** */
     private Properties myPropsAdmin = null;
 
-    /**
-     *
-     */
+    /** */
     private EntityManagerFactory myEmf = null;
 
-    /**
-     *
-     */
+    /** */
     private final CircuitBreakerRegistry circuitBreakerRegistry =
             new CircuitBreakerRegistry();
 
@@ -421,11 +336,35 @@ public final class ConfigManager {
     private DbVersionInfo myDbVersionInfo = null;
 
     /** */
+    private final Object myDbVersionInfoMutex = new Object();
+
+    /** */
+    private final Object createJobTicketsHomeMutex = new Object();
+
+    /** */
     private PGPSecretKeyInfo pgpSecretKeyInfo;
+
+    /** */
+    private PGPPublicKeyInfo pgpPublicKeyInfo;
+
+    /** */
+    private final DbConfig.JdbcInfo jdbcInfo = new DbConfig.JdbcInfo();
+
+    /** */
+    private final DbConfig.HibernateInfo hibernateInfo =
+            new DbConfig.HibernateInfo();
 
     /** */
     private ConfigManager() {
         runMode = null;
+    }
+
+    /**
+     * Redirects Java Logging to Log4j.
+     */
+    public static void initJavaUtilLogging() {
+        java.util.logging.LogManager.getLogManager().reset();
+        SLF4JBridgeHandler.install();
     }
 
     /**
@@ -446,6 +385,24 @@ public final class ConfigManager {
      */
     public static void setDefaultServerSslPort(final String port) {
         theDefaultServerSslPort = port;
+    }
+
+    /**
+     *
+     * @param info
+     *            The SSL certificate info.
+     */
+    public static void setSslCertInfo(final SslCertInfo info) {
+        sslCertInfo = info;
+    }
+
+    /**
+     *
+     * @return The {@link SslCertInfo}, or {@code null}. when alias is not
+     *         found.
+     */
+    public static SslCertInfo getSslCertInfo() {
+        return sslCertInfo;
     }
 
     /**
@@ -477,6 +434,20 @@ public final class ConfigManager {
     }
 
     /**
+     * @return JDBC info.
+     */
+    public DbConfig.JdbcInfo getJdbcInfo() {
+        return this.jdbcInfo;
+    }
+
+    /**
+     * @return Hibernate info.
+     */
+    public DbConfig.HibernateInfo getHibernateInfo() {
+        return this.hibernateInfo;
+    }
+
+    /**
      *
      * @return
      */
@@ -489,6 +460,20 @@ public final class ConfigManager {
      */
     public PGPSecretKeyInfo getPGPSecretKeyInfo() {
         return this.pgpSecretKeyInfo;
+    }
+
+    /**
+     * @return {@code null} when not (properly) configured.
+     */
+    public PGPPublicKeyInfo getPGPPublicKeyInfo() {
+        return this.pgpPublicKeyInfo;
+    }
+
+    /**
+     * @return {@code true} when OpenPGP Key Pair is present.
+     */
+    public boolean hasOpenPGP() {
+        return this.pgpPublicKeyInfo != null && this.pgpSecretKeyInfo != null;
     }
 
     /**
@@ -733,15 +718,6 @@ public final class ConfigManager {
     }
 
     /**
-     *
-     * @return The relative path of the email outbox folder (relative to the
-     *         {@code server} directory).
-     */
-    public static String getServerRelativeEmailOutboxPath() {
-        return SERVER_REL_PATH_EMAIL_OUTBOX;
-    }
-
-    /**
      * @return The SafePages home path.
      */
     public static String getSafePagesHomeDir() {
@@ -750,8 +726,9 @@ public final class ConfigManager {
                 theServerProps.getProperty(SERVER_PROP_APP_DIR_SAFEPAGES);
 
         if (homeSafePages == null) {
-            homeSafePages = String.format("%s%c%s", getServerHome(),
-                    File.separatorChar, SERVER_REL_PATH_SAFEPAGES_DEFAULT);
+            homeSafePages =
+                    String.format("%s%c%s", getServerHome(), File.separatorChar,
+                            ServerPathEnum.SAFEPAGES_DEFAULT.getPath());
         }
 
         return homeSafePages;
@@ -806,11 +783,18 @@ public final class ConfigManager {
      * @return
      */
     public static boolean isCleanUpDocLogAtStart() {
-        return theServerProps != null && BooleanUtils
-                .toBooleanObject(theServerProps.getProperty(
-                        SERVER_PROP_START_CLEANUP_DOCLOG,
+        return theServerProps != null && BooleanUtils.toBooleanObject(
+                theServerProps.getProperty(SERVER_PROP_START_CLEANUP_DOCLOG,
                         Boolean.TRUE.toString()))
                 .booleanValue();
+    }
+
+    /**
+     *
+     * @return
+     */
+    public static boolean isCleanUpDocStoreAtStart() {
+        return isCleanUpDocLogAtStart();
     }
 
     /**
@@ -855,22 +839,15 @@ public final class ConfigManager {
 
         Properties serverProps = null;
 
-        FileInputStream fis = null;
+        final String path = ConfigManager.getServerHome() + "/"
+                + FILENAME_SERVER_PROPERTIES;
 
-        try {
-
-            final String path = ConfigManager.getServerHome() + "/"
-                    + FILENAME_SERVER_PROPERTIES;
-
-            fis = new FileInputStream(path);
+        try (FileInputStream fis = new FileInputStream(path);) {
 
             serverProps = new Properties();
             serverProps.load(fis);
 
             return serverProps;
-
-        } finally {
-            IOUtils.closeQuietly(fis);
         }
     }
 
@@ -883,12 +860,11 @@ public final class ConfigManager {
     }
 
     /**
-     * TODO: now it is fixed Derby, should be dependent on db type.
-     *
      * @return
      */
-    public static String getDbScriptDir() {
-        return ConfigManager.getServerHome() + "/lib/sql/Derby";
+    public static File getDbScriptDir() {
+        return Paths.get(ConfigManager.getServerHome(), "lib", "sql",
+                instance().myDatabaseType.getScriptSubdir()).toFile();
     }
 
     /**
@@ -911,7 +887,26 @@ public final class ConfigManager {
      * @return The directory path with the print jobtickets.
      */
     public static Path getJobTicketsHome() {
-        return Paths.get(getServerHome(), SERVER_REL_PATH_PRINT_JOBTICKETS);
+        return Paths.get(getServerHome(),
+                ServerPathEnum.PRINT_JOBTICKETS.getPath());
+    }
+
+    /**
+     * @param store
+     *            The store.
+     * @return The directory path of the document store.
+     */
+    public static Path getDocStoreHome(final DocStoreTypeEnum store) {
+        switch (store) {
+        case ARCHIVE:
+            return Paths.get(getServerHome(),
+                    ServerPathEnum.DOC_ARCHIVE.getPath());
+        case JOURNAL:
+            return Paths.get(getServerHome(),
+                    ServerPathEnum.DOC_JOURNAL.getPath());
+        default:
+            throw new UnknownError(store.toString());
+        }
     }
 
     /**
@@ -919,22 +914,25 @@ public final class ConfigManager {
      * @return The directory path with the Admin Atom Feeds.
      */
     public static Path getAtomFeedsHome() {
-        return Paths.get(getServerHome(), SERVER_REL_PATH_FEEDS);
+        return Paths.get(getServerHome(), ServerPathEnum.FEEDS.getPath());
     }
 
     /**
      *
      * @throws IOException
      */
-    private synchronized void lazyCreateJobTicketsHome() throws IOException {
+    private void lazyCreateJobTicketsHome() throws IOException {
 
-        final Set<PosixFilePermission> permissions =
-                EnumSet.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE);
+        synchronized (this.createJobTicketsHomeMutex) {
 
-        final FileAttribute<Set<PosixFilePermission>> fileAttributes =
-                PosixFilePermissions.asFileAttribute(permissions);
+            final Set<PosixFilePermission> permissions =
+                    EnumSet.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE);
 
-        Files.createDirectories(getJobTicketsHome(), fileAttributes);
+            final FileAttribute<Set<PosixFilePermission>> fileAttributes =
+                    PosixFilePermissions.asFileAttribute(permissions);
+
+            Files.createDirectories(getJobTicketsHome(), fileAttributes);
+        }
     }
 
     /**
@@ -950,7 +948,7 @@ public final class ConfigManager {
      */
     public static File getServerCustomTemplateHome() {
         return new File(String.format("%s%c%s", getServerHome(),
-                File.separatorChar, SERVER_REL_PATH_CUSTOM_TEMPLATE));
+                File.separatorChar, ServerPathEnum.CUSTOM_TEMPLATE.getPath()));
     }
 
     /**
@@ -979,16 +977,16 @@ public final class ConfigManager {
      * @return The directory with the custom CUPS files.
      */
     public static File getServerCustomCupsHome() {
-        return new File(String.format("%s/%s", getServerHome(),
-                SERVER_REL_PATH_CUSTOM_CUPS));
+        return new File(String.format("%s%c%s", getServerHome(),
+                File.separatorChar, ServerPathEnum.CUSTOM_CUPS.getPath()));
     }
 
     /**
      * @return The directory with the custom CUPS i18n files.
      */
     public static File getServerCustomCupsI18nHome() {
-        return new File(String.format("%s/%s", getServerHome(),
-                SERVER_REL_PATH_CUSTOM_CUPS_I18N));
+        return new File(String.format("%s%c%s", getServerHome(),
+                File.separatorChar, ServerPathEnum.CUSTOM_CUPS_I18N.getPath()));
     }
 
     /**
@@ -1000,9 +998,9 @@ public final class ConfigManager {
      */
     public static File getServerCustomI18nHome(final Class<?> clazz) {
 
-        return Paths.get(getServerHome(),
-                SERVER_REL_PATH_CUSTOM_I18N, StringUtils.replace(
-                        clazz.getPackage().getName(), ".", File.separator))
+        return Paths.get(getServerHome(), ServerPathEnum.CUSTOM_I18N.getPath(),
+                StringUtils.replace(clazz.getPackage().getName(), ".",
+                        File.separator))
                 .toFile();
     }
 
@@ -1011,7 +1009,7 @@ public final class ConfigManager {
      */
     public static File getServerCustomHtmlHome() {
         return new File(String.format("%s%c%s", getServerHome(),
-                File.separatorChar, SERVER_REL_PATH_CUSTOM_HTML));
+                File.separatorChar, ServerPathEnum.CUSTOM_HTML.getPath()));
     }
 
     /**
@@ -1149,18 +1147,52 @@ public final class ConfigManager {
     /**
      * Calculates the runnable status of the configuration.
      *
-     * @return <code>true</code if runnable.
+     * @return {@code true} if runnable.
      */
     public boolean calcRunnable() {
         return myConfigProp.calcRunnable();
     }
 
     /**
-     *
-     * @return
+     * @param props
+     *            Server properties.
      */
     public static void setServerProps(final Properties props) {
         theServerProps = props;
+    }
+
+    /**
+     *
+     * @param info
+     *            JDBC information.
+     */
+    public static void putServerProps(final DbConfig.JdbcInfo info) {
+
+        if (theServerProps == null) {
+            theServerProps = new Properties();
+        }
+        if (info.getDriver() != null) {
+            theServerProps.put(SERVER_PROP_DB_DRIVER, info.getDriver());
+        }
+        if (info.getUrl() != null) {
+            theServerProps.put(SERVER_PROP_DB_URL, info.getUrl());
+        }
+    }
+
+    /**
+     *
+     * @param info
+     *            JDBC information.
+     */
+    public static void putServerProps(final DbConfig.HibernateInfo info) {
+
+        if (theServerProps == null) {
+            theServerProps = new Properties();
+        }
+        if (info.getDialect() != null) {
+            theServerProps.put(SERVER_PROP_DB_HIBERNATE_DIALECT,
+                    info.getDialect());
+        }
     }
 
     /**
@@ -1276,7 +1308,7 @@ public final class ConfigManager {
     }
 
     /**
-     * Initializes the core application depending on the {@link RunMode}.
+     * Initializes the core application depending on the {@link RunModeEnum}.
      * <p>
      * Additional initialization methods like {@link #initScheduler()} can be
      * called. The generic {@link #exit()} method takes care of closing down the
@@ -1292,7 +1324,7 @@ public final class ConfigManager {
      *            The default database type.
      * @throws Exception
      */
-    public synchronized void init(final RunMode mode,
+    public synchronized void init(final RunModeEnum mode,
             final DatabaseTypeEnum databaseTypeDefault) throws Exception {
 
         if (runMode != null) {
@@ -1304,6 +1336,7 @@ public final class ConfigManager {
         switch (mode) {
         case SERVER:
             initAsServer(new Properties());
+            initOpenPGP();
             break;
         case LIB:
             initAsRunnableCoreLibrary(new Properties());
@@ -1315,133 +1348,92 @@ public final class ConfigManager {
             throw new SpException("mode [" + mode + "] is not supported");
         }
 
-        initPGP();
-
         runMode = mode;
     }
 
     /**
      * Initializes the PGP secret key.
      */
-    private void initPGP() {
+    private void initOpenPGP() {
 
         if (theServerProps == null) {
             return;
         }
 
-        final String secretFile =
-                theServerProps.getProperty(SERVER_PROP_PGP_SECRETKEY_FILE);
+        final String secretFileName =
+                theServerProps.getProperty(SERVER_PROP_OPENPGP_SECRETKEY_FILE);
 
-        if (secretFile == null) {
+        if (secretFileName == null) {
             return;
         }
+
+        final String publicFileName =
+                theServerProps.getProperty(SERVER_PROP_OPENPGP_PUBLICKEY_FILE);
+
+        if (publicFileName == null) {
+            LOGGER.warn("OpenPGP public key file not configured.");
+            return;
+        }
+
+        final File secretFile = Paths.get(getServerHome(),
+                ServerPathEnum.DATA.getPath(), secretFileName).toFile();
+
+        final File publicFile = Paths.get(getServerHome(),
+                ServerPathEnum.DATA.getPath(), publicFileName).toFile();
 
         final PGPHelper helper = PGPHelper.instance();
 
         try {
-            this.pgpSecretKeyInfo = helper.readSecretKey(
-                    new FileInputStream(
-                            Paths.get(getServerHome(), secretFile).toFile()),
-                    theServerProps
-                            .getProperty(SERVER_PROP_PGP_SECRETKEY_PASSPHRASE));
 
-            SpInfo.instance().log(String.format("PGP Key ID [%s]",
+            this.pgpPublicKeyInfo =
+                    helper.readPublicKey(new FileInputStream(publicFile));
+
+            this.pgpSecretKeyInfo = helper.readSecretKey(
+                    new FileInputStream(secretFile), theServerProps.getProperty(
+                            SERVER_PROP_OPENPGP_SECRETKEY_PASSPHRASE));
+
+            SpInfo.instance().log(String.format("OpenPGP Key ID [%s]",
                     this.pgpSecretKeyInfo.formattedKeyID()));
 
             for (final InternetAddress addr : this.pgpSecretKeyInfo.getUids()) {
-                SpInfo.instance()
-                        .log(String.format("PGP UID [%s]", addr.toString()));
+                SpInfo.instance().log(
+                        String.format("OpenPGP UID [%s]", addr.toString()));
             }
 
-            SpInfo.instance().log(String.format("PGP Fingerprint [%s]",
+            SpInfo.instance().log(String.format("OpenPGP Fingerprint [%s]",
                     this.pgpSecretKeyInfo.formattedFingerPrint()));
 
-            // Elicit an exception when one of the URLs is wrong.
-            this.getPGPPublicKeySearchUrl();
-            this.getPGPPublicKeyDownloadUrl("TEST");
-            this.getPGPPublicKeyPreviewUrl("TEST");
+        } catch (FileNotFoundException e) {
+            LOGGER.error("{}: {} not found.",
+                    SERVER_PROP_OPENPGP_SECRETKEY_FILE,
+                    secretFile.getAbsolutePath());
+        } catch (PGPBaseException e) {
+            LOGGER.error("{} is invalid.",
+                    SERVER_PROP_OPENPGP_SECRETKEY_PASSPHRASE);
+        }
 
-        } catch (FileNotFoundException | PGPBaseException
-                | MalformedURLException e) {
+        try {
+            // Elicit an exception when URLs is wrong.
+            this.getPGPPublicKeyServerUrl();
+        } catch (MalformedURLException e) {
             LOGGER.error(e.getMessage());
         }
     }
 
     /**
-     * Gets the URL of Web Page where PGP Public Key can be searched.
+     * Gets the URL of PGP Public Key Server.
      *
-     * @return The URL to search for a key, or {@code null} when unknown.
+     * @return The URL, or {@code null} when unknown.
      * @throws MalformedURLException
      *             If URL template is ill-formed.
      */
-    public URL getPGPPublicKeySearchUrl() throws MalformedURLException {
+    public URL getPGPPublicKeyServerUrl() throws MalformedURLException {
 
-        final String value = theServerProps
-                .getProperty(SERVER_PROP_PGP_PUBLICKEY_SERVER_URL);
+        final String value = this.getConfigValue(Key.PGP_PKS_URL);
         if (StringUtils.isBlank(value)) {
             return null;
         }
         return new URL(value);
-    }
-
-    /**
-     * Gets the URL to download the PGP Public Key.
-     *
-     * @param hexKeyID
-     *            Hexadecimal KeyID, without "0x" prefix.
-     * @return The URL to download the public ASCII armored key, or {@code null}
-     *         when unknown.
-     * @throws MalformedURLException
-     *             If URL template is ill-formed.
-     */
-    public URL getPGPPublicKeyDownloadUrl(final String hexKeyID)
-            throws MalformedURLException {
-
-        final String value = theServerProps
-                .getProperty(SERVER_PROP_PGP_PUBLICKEY_SERVER_URL_GET);
-        if (StringUtils.isBlank(value)) {
-            return null;
-        }
-        return new URL(MessageFormat.format(value, hexKeyID));
-    }
-
-    /**
-     * Gets the URL of Web Page to preview the content of the PGP Public Key.
-     *
-     * @param hexKeyID
-     *            Hexadecimal KeyID, without "0x" prefix.
-     * @return The URL to preview the public key, or {@code null} when unknown.
-     * @throws MalformedURLException
-     *             If URL template is ill-formed.
-     */
-    public URL getPGPPublicKeyPreviewUrl(final String hexKeyID)
-            throws MalformedURLException {
-
-        final String value = this.getPGPPublicKeyPreviewUrlTemplate();
-        if (value == null) {
-            return null;
-        }
-        return new URL(MessageFormat.format(value, hexKeyID));
-    }
-
-    /**
-     * Gets the URL template of Web Page to preview the content of the PGP
-     * Public Key.
-     * <p>
-     * Placeholder <tt>{0}</tt> is to be replaced by the Hexadecimal KeyID,
-     * without "0x" prefix.
-     * </p>
-     *
-     * @return The template string, or {@code null} when unknown.
-     */
-    public String getPGPPublicKeyPreviewUrlTemplate() {
-
-        final String value = theServerProps
-                .getProperty(SERVER_PROP_PGP_PUBLICKEY_SERVER_URL_VINDEX);
-        if (StringUtils.isBlank(value)) {
-            return null;
-        }
-        return value;
     }
 
     /**
@@ -1662,6 +1654,16 @@ public final class ConfigManager {
              */
         }
 
+        // Logging only.
+        if (this.dbConnectionPoolProps != null) {
+            for (final Entry<DbConnectionPoolEnum, String> entry : //
+            this.dbConnectionPoolProps.entrySet()) {
+                final DbConnectionPoolEnum key = entry.getKey();
+                SpInfo.instance()
+                        .log(String.format("%s > %s [%s]", key.getConfigKey(),
+                                key.getC3p0Key(), entry.getValue()));
+            }
+        }
         //
         ServiceContext.getServiceFactory().start();
 
@@ -1669,6 +1671,8 @@ public final class ConfigManager {
                 .start(new SOfficeConfigProps());
 
         ProxyPrintJobStatusMonitor.init();
+
+        DbTools.checkSequences();
     }
 
     /**
@@ -1833,8 +1837,11 @@ public final class ConfigManager {
      *             When IO errors reading the list.
      */
     private int initUserAliasList() throws IOException {
-        return UserAliasList.instance().load(new File(
-                getServerHome() + "/" + SERVER_REL_PATH_USERNAME_ALIASES_TXT));
+        return UserAliasList.instance()
+                .load(new File(String.format("%s%c%s%c%s", getServerHome(),
+                        File.separatorChar, ServerPathEnum.DATA_CONF.getPath(),
+                        File.separatorChar,
+                        SERVER_DATA_CONF_USERNAME_ALIASES_TXT)));
     }
 
     /**
@@ -2024,8 +2031,10 @@ public final class ConfigManager {
     public boolean isUserEncrypted(final IConfigProp.Key key) {
         return key == Key.AUTH_LDAP_ADMIN_PASSWORD
                 || key == Key.API_JSONRPC_SECRET_KEY
+                || key == Key.API_RESTFUL_AUTH_PASSWORD
                 || key == Key.CLIAPP_AUTH_ADMIN_PASSKEY
                 || key == Key.FEED_ATOM_ADMIN_PASSWORD
+                || key == Key.EXT_PAPERCUT_USER_SYNC_PASSWORD
                 || key == Key.MAIL_SMTP_PASSWORD
                 || key == Key.PAPERCUT_DB_PASSWORD
                 || key == Key.PAPERCUT_SERVER_AUTH_TOKEN
@@ -2357,7 +2366,7 @@ public final class ConfigManager {
     }
 
     /**
-     * @return
+     * @return {@code true} if PaperCut integration is enabled.
      */
     public static boolean isPaperCutPrintEnabled() {
         return instance().isConfigValue(Key.PAPERCUT_ENABLE);
@@ -2402,11 +2411,24 @@ public final class ConfigManager {
     }
 
     /**
-     *
-     * @return {@code true} is Eco Print is enabled
+     * @return {@code true} is Eco Print is enabled.
      */
     public static boolean isEcoPrintEnabled() {
         return instance().isConfigValue(Key.ECO_PRINT_ENABLE);
+    }
+
+    /**
+     * @return {@code true} is PDF/PDF verification is enabled.
+     */
+    public static boolean isPdfPgpEnabled() {
+        return instance().isConfigValue(Key.PDFPGP_VERIFICATION_ENABLE);
+    }
+
+    /**
+     * @return {@code true} is PDF/PDF verification is available.
+     */
+    public static boolean isPdfPgpAvailable() {
+        return instance().hasOpenPGP() && isPdfPgpEnabled();
     }
 
     /**
@@ -2459,6 +2481,16 @@ public final class ConfigManager {
     }
 
     /**
+     * @return The {@link SystemModeEnum}.
+     */
+    public static SystemModeEnum getSystemMode() {
+        if (ConfigManager.isSysMaintenance()) {
+            return SystemModeEnum.MAINTENANCE;
+        }
+        return SystemModeEnum.PRODUCTION;
+    }
+
+    /**
      * .
      */
     private static void setShutdownInProgress() {
@@ -2474,17 +2506,20 @@ public final class ConfigManager {
     }
 
     /**
-     * Shuts down the initialized components. See {@link #init(RunMode)}.
+     * Shuts down the initialized components. See {@link #init(RunModeEnum)}.
+     * <p>
+     * Method is idempotent: calling it a second time has no effect.
+     * </p>
      *
      * @throws Exception
-     *             When things wnet wrong.
+     *             When things went wrong.
      */
     public synchronized void exit() throws Exception {
 
         setShutdownInProgress();
 
         final boolean isServerRunMode =
-                runMode != null && runMode == RunMode.SERVER;
+                runMode != null && runMode == RunModeEnum.SERVER;
 
         if (isServerRunMode) {
 
@@ -2495,16 +2530,20 @@ public final class ConfigManager {
              */
             ReadWriteLockEnum.DATABASE_READONLY.setWriteLock(true);
 
-            /*
-             * IppClient need to know about the shutdown, since CUPS might
-             * already be shut down. See Mantis #374.
-             */
-            IppClient.instance().setShutdownRequested(true);
+            try {
+                /*
+                 * IppClient need to know about the shutdown, since CUPS might
+                 * already be shut down. See Mantis #374.
+                 */
+                IppClient.instance().setShutdownRequested(true);
 
-            myPrintProxy.exit();
+                myPrintProxy.exit();
 
-            ProxyPrintJobStatusMonitor.exit();
+                ProxyPrintJobStatusMonitor.exit();
 
+            } finally {
+                ReadWriteLockEnum.DATABASE_READONLY.setWriteLock(false);
+            }
         }
 
         exitScheduler();
@@ -2528,10 +2567,6 @@ public final class ConfigManager {
         }
 
         runMode = null;
-
-        if (isServerRunMode) {
-            ReadWriteLockEnum.DATABASE_READONLY.setWriteLock(false);
-        }
     }
 
     /**
@@ -2624,7 +2659,8 @@ public final class ConfigManager {
      *
      * @return The value of the server properties
      *         {@link #SERVER_PROP_APP_DIR_TMP} (when present) or the System
-     *         property {@code java.io.tmpdir} appended with {@code /savapage}.
+     *         property {@link #SYS_PROP_JAVA_IO_TMPDIR} appended with
+     *         {@code /savapage}.
      */
     public static String getAppTmpDir() {
 
@@ -2640,8 +2676,9 @@ public final class ConfigManager {
             return homeTmp;
         }
 
-        return String.format("%s%c%s", System.getProperty("java.io.tmpdir"),
-                File.separatorChar, "savapage");
+        return String.format("%s%c%s",
+                System.getProperty(SYS_PROP_JAVA_IO_TMPDIR), File.separatorChar,
+                "savapage");
     }
 
     /**
@@ -2754,10 +2791,10 @@ public final class ConfigManager {
         }
 
         config.put(DbConfig.JPA_JDBC_DRIVER,
-                "org.apache.derby.jdbc.EmbeddedDriver");
+                org.apache.derby.jdbc.EmbeddedDriver.class.getName());
 
         config.put(DbConfig.HIBERNATE_DIALECT,
-                "org.hibernate.dialect.DerbyTenSevenDialect");
+                org.hibernate.dialect.DerbyTenSevenDialect.class.getName());
     }
 
     /**
@@ -2765,30 +2802,70 @@ public final class ConfigManager {
      *
      * @param config
      *            The configuration map.
+     * @return {@code true} if JDBC user is configured.
      */
-    private void initHibernatePostgreSQL(final Map<String, Object> config) {
+    private boolean initHibernatePostgreSQL(final Map<String, Object> config) {
+
+        final String jdbcUser;
 
         if (theServerProps != null) {
 
-            DbConfig.configHibernatePostgreSQL(config,
-                    theServerProps.getProperty(SERVER_PROP_DB_USER),
+            jdbcUser = theServerProps.getProperty(SERVER_PROP_DB_USER);
+
+            DbConfig.configHibernatePostgreSQL(config, jdbcUser,
                     getDbUserPassword(),
                     theServerProps.getProperty(SERVER_PROP_DB_URL),
                     theServerProps.getProperty(SERVER_PROP_DB_DRIVER));
 
         } else {
+            jdbcUser = null;
             DbConfig.configHibernatePostgreSQL(config);
         }
+        return jdbcUser != null;
     }
 
     /**
-     * @return The JDBC user of the PostgreSQL database.
+     * Sets the Hibernate configuration for External database.
+     *
+     * @param config
+     *            The configuration map.
+     * @return {@code true} if JDBC user is configured.
      */
-    public static String getPostgreSQLUser() {
+    private boolean initHibernateExternal(final Map<String, Object> config) {
+
+        if (theServerProps == null) {
+            throw new IllegalArgumentException(
+                    "Server properties are missing.");
+        }
+
+        final String jdbcUser = theServerProps.getProperty(SERVER_PROP_DB_USER);
+
+        DbConfig.configHibernateExternal(config, jdbcUser, getDbUserPassword(),
+                theServerProps.getProperty(SERVER_PROP_DB_URL),
+                theServerProps.getProperty(SERVER_PROP_DB_DRIVER),
+                theServerProps.getProperty(SERVER_PROP_DB_HIBERNATE_DIALECT));
+
+        return jdbcUser != null;
+    }
+
+    /**
+     * @return The JDBC user of the external database.
+     */
+    public static String getExternalDbUser() {
         if (theServerProps == null) {
             return null;
         }
         return theServerProps.getProperty(SERVER_PROP_DB_USER);
+    }
+
+    /**
+     * @return The JDBC user password of the external database.
+     */
+    public static String getExternalDbPassword() {
+        if (theServerProps == null) {
+            return null;
+        }
+        return theServerProps.getProperty(SERVER_PROP_DB_PASS);
     }
 
     /**
@@ -2847,23 +2924,47 @@ public final class ConfigManager {
          * Mantis #513: PostgreSQL: WebApp very slow.
          */
         if (useHibernateC3p0Parms) {
-            DbConfig.configHibernateC3p0(configOverrides);
+            this.dbConnectionPoolProps =
+                    DbConnectionPoolEnum.createFromConfig(theServerProps);
+            DbConfig.configHibernateC3p0(this.dbConnectionPoolProps,
+                    configOverrides);
+        } else {
+            this.dbConnectionPoolProps = null;
         }
 
         //
+        final boolean createEmf;
         switch (this.myDatabaseType) {
         case Internal:
             initHibernateDerby(configOverrides);
+            createEmf = true;
             break;
         case PostgreSQL:
-            initHibernatePostgreSQL(configOverrides);
+            createEmf = initHibernatePostgreSQL(configOverrides);
+            break;
+        case External:
+            createEmf = initHibernateExternal(configOverrides);
             break;
         default:
             throw new SpException("Database type [" + this.myDatabaseType
                     + "] is NOT supported");
         }
-
-        this.myEmf = DbConfig.createEntityManagerFactory(configOverrides);
+        //
+        this.jdbcInfo.setDriver(
+                configOverrides.get(DbConfig.JPA_JDBC_DRIVER).toString());
+        //
+        this.hibernateInfo.setDialect(
+                configOverrides.get(DbConfig.HIBERNATE_DIALECT).toString());
+        //
+        if (createEmf) {
+            this.myEmf = DbConfig.createEntityManagerFactory(configOverrides);
+            /*
+             * Get JDBC URL from EntityManagerFactory properties. Derby URL is
+             * implicit and created by EntityManagerFactory as property.
+             */
+            this.jdbcInfo.setUrl(this.myEmf.getProperties()
+                    .get(DbConfig.JPA_JDBC_URL).toString());
+        }
     }
 
     /**
@@ -2902,13 +3003,17 @@ public final class ConfigManager {
     /**
      * Returns a (lazy initialized) database version info object.
      *
-     * @return
+     * @return {@link DbVersionInfo}.
      */
-    synchronized public DbVersionInfo getDbVersionInfo() {
-        if (myDbVersionInfo == null) {
-            myDbVersionInfo = ServiceContext.getDaoContext().getDbVersionInfo();
+    public DbVersionInfo getDbVersionInfo() {
+
+        synchronized (this.myDbVersionInfoMutex) {
+            if (myDbVersionInfo == null) {
+                myDbVersionInfo =
+                        ServiceContext.getDaoContext().getDbVersionInfo();
+            }
+            return myDbVersionInfo;
         }
-        return myDbVersionInfo;
     }
 
 }

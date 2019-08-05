@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,20 +27,27 @@ import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.text.ParseException;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 import javax.print.attribute.standard.MediaSizeName;
 
-import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.dao.AccountDao;
+import org.savapage.core.i18n.AdjectiveEnum;
 import org.savapage.core.i18n.JobTicketNounEnum;
 import org.savapage.core.i18n.NounEnum;
+import org.savapage.core.i18n.PrintOutAdjectiveEnum;
 import org.savapage.core.i18n.PrintOutNounEnum;
+import org.savapage.core.i18n.PrintOutVerbEnum;
 import org.savapage.core.inbox.OutputProducer;
+import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
+import org.savapage.core.ipp.helpers.IppOptionMap;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxAccountTrxInfo;
@@ -48,9 +55,11 @@ import org.savapage.core.outbox.OutboxInfoDto.OutboxAccountTrxInfoSet;
 import org.savapage.core.outbox.OutboxInfoDto.OutboxJobDto;
 import org.savapage.core.pdf.ITextPdfCreator;
 import org.savapage.core.print.proxy.TicketJobSheetDto;
+import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.util.BigDecimalUtil;
 import org.savapage.core.util.DateUtil;
+import org.savapage.core.util.IOHelper;
 import org.savapage.core.util.MediaUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,6 +85,9 @@ public final class TicketJobSheetPdfCreator {
     private static final Logger LOGGER =
             LoggerFactory.getLogger(TicketJobSheetPdfCreator.class);
 
+    /** */
+    private static final ProxyPrintService PROXY_PRINT_SERVICE =
+            ServiceContext.getServiceFactory().getProxyPrintService();
     /**
      * Unicode Character 'REVERSE SOLIDUS' (U+005C).
      */
@@ -174,7 +186,7 @@ public final class TicketJobSheetPdfCreator {
             throw new SpException(e.getMessage(), e);
         } finally {
             document.close();
-            IOUtils.closeQuietly(ostr);
+            IOHelper.closeQuietly(ostr);
         }
 
         return filePdf;
@@ -193,6 +205,9 @@ public final class TicketJobSheetPdfCreator {
         sb.append("\n").append(NounEnum.TITLE.uiText(locale)).append(" : ")
                 .append(job.getJobName());
 
+        sb.append("\n").append(PrintOutNounEnum.PAGE.uiText(locale, true))
+                .append(" : ").append(job.getPages());
+
         sb.append("\n").append(NounEnum.TIME.uiText(locale)).append(" : ")
                 .append(DateUtil.formattedDateTime(new Date()));
 
@@ -210,7 +225,122 @@ public final class TicketJobSheetPdfCreator {
             sb.append(job.getComment());
         }
 
+        final IppOptionMap ippMap = new IppOptionMap(job.getOptionValues());
+
+        // Settings
+        sb.append("\n\n");
+
+        sb.append(getIppValueLocale(ippMap, IppDictJobTemplateAttr.ATTR_MEDIA));
+
+        sb.append(", ");
+        if (ippMap.isLandscapeJob()) {
+            sb.append(PrintOutNounEnum.LANDSCAPE.uiText(locale));
+        } else {
+            sb.append(PrintOutNounEnum.PORTRAIT.uiText(locale));
+        }
+
+        sb.append(", ");
+        if (ippMap.isDuplexJob()) {
+            sb.append(PrintOutNounEnum.DUPLEX.uiText(locale));
+        } else {
+            sb.append(PrintOutNounEnum.SIMPLEX.uiText(locale));
+        }
+
+        sb.append(", ");
+        if (job.isMonochromeJob()) {
+            sb.append(PrintOutNounEnum.GRAYSCALE.uiText(locale));
+        } else {
+            sb.append(PrintOutNounEnum.COLOR.uiText(locale));
+        }
+
+        if (ippMap.getNumberUp() != null
+                && ippMap.getNumberUp().intValue() > 1) {
+            sb.append(", ");
+            sb.append(PrintOutNounEnum.N_UP.uiText(locale,
+                    ippMap.getNumberUp().toString()));
+        }
+
+        if (ippMap.hasPrintScaling()) {
+            sb.append(", ");
+            sb.append(AdjectiveEnum.SCALED.uiText(locale));
+        }
+
+        sb.append(", ");
+        if (job.isCollate()) {
+            sb.append(PrintOutVerbEnum.COLLATE.uiText(locale));
+        } else {
+            sb.append(PrintOutAdjectiveEnum.UNCOLLATED.uiText(locale));
+        }
+
+        if (BooleanUtils.isTrue(job.getArchive())) {
+            sb.append(", ").append(NounEnum.ARCHIVE.uiText(locale));
+        }
+
+        // Finishings
+        final List<String> ippKeywords = new ArrayList<>();
+
+        if (ippMap.hasFinishingPunch()) {
+            ippKeywords.add(
+                    IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_PUNCH);
+        }
+        if (ippMap.hasFinishingStaple()) {
+            ippKeywords.add(
+                    IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_STAPLE);
+        }
+        if (ippMap.hasFinishingFold()) {
+            ippKeywords.add(
+                    IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_FOLD);
+        }
+        if (ippMap.hasFinishingBooklet()) {
+            ippKeywords.add(
+                    IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET);
+        }
+
+        if (!ippKeywords.isEmpty()) {
+            sb.append("\n");
+            addIppAttrValues(sb, ippMap, ippKeywords);
+        }
+
         par.add(new Paragraph(sb.toString(), FONT_NORMAL));
+    }
+
+    /**
+     *
+     * @param ippMap
+     *            IPP attr/value map.
+     * @param ippAttr
+     *            IPP attribute.
+     * @return The localized IPP attribute value.
+     */
+    private String getIppValueLocale(final IppOptionMap ippMap,
+            final String ippAttr) {
+        return PROXY_PRINT_SERVICE.localizePrinterOptValue(locale, ippAttr,
+                ippMap.getOptionValue(ippAttr));
+    }
+
+    /**
+     *
+     * @param sb
+     *            String to append on.
+     * @param ippMap
+     *            IPP attr/value map.
+     * @param ippAttrKeywords
+     *            List of IPP keywords.
+     */
+    private void addIppAttrValues(final StringBuilder sb,
+            final IppOptionMap ippMap, final List<String> ippAttrKeywords) {
+
+        if (ippAttrKeywords.isEmpty()) {
+            sb.append("-");
+        } else {
+            for (int i = 0; i < ippAttrKeywords.size(); i++) {
+                final String ippAttr = ippAttrKeywords.get(i);
+                if (i > 0) {
+                    sb.append(", ");
+                }
+                sb.append(getIppValueLocale(ippMap, ippAttr));
+            }
+        }
     }
 
     /**
@@ -230,13 +360,10 @@ public final class TicketJobSheetPdfCreator {
             return;
         }
 
-        final int copies = trxInfoSet.getWeightTotal();
         int copiesDelegatorsImplicit = 0;
 
         for (final OutboxAccountTrxInfo trxInfo : trxInfoSet
                 .getTransactions()) {
-
-            final int weight = trxInfo.getWeight();
 
             final Account account =
                     ACCOUNT_DAO.findById(trxInfo.getAccountId());
@@ -249,7 +376,17 @@ public final class TicketJobSheetPdfCreator {
                 continue;
             }
 
-            copiesDelegatorsImplicit += weight;
+            final int weightUnit;
+
+            if (trxInfo.getWeightUnit() == null) {
+                weightUnit = 1;
+            } else {
+                weightUnit = trxInfo.getWeightUnit().intValue();
+            }
+
+            final int copiesAccount = trxInfo.getWeight() / weightUnit;
+
+            copiesDelegatorsImplicit += copiesAccount;
 
             final Account accountParent = account.getParent();
 
@@ -261,11 +398,11 @@ public final class TicketJobSheetPdfCreator {
                 sb.append(CHAR_REVERSE_SOLIDUS);
                 sb.append(' ');
             }
-            sb.append(account.getName()).append(" : ").append(weight);
+            sb.append(account.getName()).append(" : ").append(copiesAccount);
         }
 
         final int copiesDelegatorsIndividual =
-                copies - copiesDelegatorsImplicit;
+                job.getCopies() - copiesDelegatorsImplicit;
 
         if (copiesDelegatorsIndividual > 0) {
             sb.append("\n").append(NounEnum.USER.uiText(locale, true))

@@ -1,6 +1,6 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -40,7 +40,6 @@ import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 
-import org.apache.commons.io.IOUtils;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
 import org.apache.http.HttpResponse;
@@ -71,13 +70,14 @@ import org.savapage.core.ipp.encoding.IppEncoder;
 import org.savapage.core.ipp.operation.IppMessageMixin;
 import org.savapage.core.ipp.operation.IppOperationId;
 import org.savapage.core.ipp.operation.IppStatusCode;
+import org.savapage.core.util.IOHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * The IPP client responsible for communication with the IPP server (CUPS).
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class IppClient {
@@ -85,12 +85,10 @@ public final class IppClient {
     /**
      * .
      */
-    private static final Logger LOGGER = LoggerFactory
-            .getLogger(IppClient.class);
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(IppClient.class);
 
-    /**
-     * .
-     */
+    /** */
     private volatile boolean shutdownRequested;
 
     /**
@@ -147,16 +145,22 @@ public final class IppClient {
         public boolean hasException() {
             return (exception != null);
         }
-
     }
 
-    static final int IPP_VERSION_MAJOR = 1;
-    static final int IPP_VERSION_MINOR = 1;
+    /** */
+    private static final int IPP_VERSION_MAJOR = 1;
+    /** */
+    private static final int IPP_VERSION_MINOR = 1;
 
+    /** */
     private int requestIdWlk = 0;
 
+    /** */
     private static final String TRACE_SEP = "+---------------------------"
             + "-------------------------------------------+";
+
+    /** */
+    private PoolingHttpClientConnectionManager connManager = null;
 
     /**
      * The Apache HttpClient is thread safe.
@@ -169,32 +173,35 @@ public final class IppClient {
     private IppClient() {
     }
 
+    /**
+     * @return {@code true} if shutdown is requested.
+     */
     public boolean isShutdownRequested() {
         return shutdownRequested;
     }
 
-    public void setShutdownRequested(boolean shutdownRequested) {
-        this.shutdownRequested = shutdownRequested;
+    /**
+     * @param shutdown
+     *            {@code true} to request shutdown.
+     */
+    public void setShutdownRequested(final boolean shutdown) {
+        this.shutdownRequested = shutdown;
     }
 
     /**
      * The SingletonHolder is loaded on the first execution of
      * {@link IppClient#instance()} or the first access to
      * {@link SingletonHolder#INSTANCE}, not before.
-     * <p>
-     * <a href=
-     * "http://en.wikipedia.org/wiki/Singleton_pattern#The_solution_of_Bill_Pugh"
-     * >The Singleton solution of Bill Pugh</a>
-     * </p>
      */
     private static class SingletonHolder {
+        /** */
         public static final IppClient INSTANCE = new IppClient();
     }
 
     /**
      * Gets the singleton instance.
      *
-     * @return
+     * @return The singleton.
      */
     public static IppClient instance() {
         return SingletonHolder.INSTANCE;
@@ -215,13 +222,10 @@ public final class IppClient {
          *
          * TODO: make a better solution (persistent requestId).
          */
-        this.requestIdWlk =
-                Integer.valueOf(
-                        new SimpleDateFormat("HHmmss'000'").format(new Date()),
-                        10);
+        this.requestIdWlk = Integer.valueOf(
+                new SimpleDateFormat("HHmmss'000'").format(new Date()), 10);
 
-        final PoolingHttpClientConnectionManager connManager =
-                new PoolingHttpClientConnectionManager();
+        this.connManager = new PoolingHttpClientConnectionManager();
 
         /*
          * Max per local and remote connection.
@@ -231,15 +235,15 @@ public final class IppClient {
         final int maxConnections =
                 cm.getConfigInt(Key.CUPS_IPP_MAX_CONNECTIONS);
 
-        connManager.setDefaultMaxPerRoute(maxConnections);
+        this.connManager.setDefaultMaxPerRoute(maxConnections);
 
         /*
          * Total max for a local and remote connection.
          */
-        connManager.setMaxTotal(2 * maxConnections);
+        this.connManager.setMaxTotal(2 * maxConnections);
 
-        final HttpClientBuilder builder =
-                HttpClientBuilder.create().setConnectionManager(connManager);
+        final HttpClientBuilder builder = HttpClientBuilder.create()
+                .setConnectionManager(this.connManager);
 
         /*
          * While HttpClient instances are thread safe and can be shared between
@@ -256,8 +260,8 @@ public final class IppClient {
      *
      * @return The {@link RequestConfig}.
      */
-    private static RequestConfig buildRequestConfig(
-            final boolean isLocalIppServer) {
+    private static RequestConfig
+            buildRequestConfig(final boolean isLocalIppServer) {
 
         final ConfigManager cm = ConfigManager.instance();
 
@@ -265,11 +269,11 @@ public final class IppClient {
         final Key socketTimeout;
 
         if (isLocalIppServer) {
-            connectTimeout = Key.CUPS_IPP_LOCAL_CONNECT_TIMEOUT_MILLIS;
-            socketTimeout = Key.CUPS_IPP_LOCAL_SOCKET_TIMEOUT_MILLIS;
+            connectTimeout = Key.CUPS_IPP_LOCAL_CONNECT_TIMEOUT_MSEC;
+            socketTimeout = Key.CUPS_IPP_LOCAL_SOCKET_TIMEOUT_MSEC;
         } else {
-            connectTimeout = Key.CUPS_IPP_REMOTE_CONNECT_TIMEOUT_MILLIS;
-            socketTimeout = Key.CUPS_IPP_REMOTE_SOCKET_TIMEOUT_MILLIS;
+            connectTimeout = Key.CUPS_IPP_REMOTE_CONNECT_TIMEOUT_MSEC;
+            socketTimeout = Key.CUPS_IPP_REMOTE_SOCKET_TIMEOUT_MSEC;
         }
 
         return RequestConfig.custom()
@@ -283,7 +287,8 @@ public final class IppClient {
      *
      */
     public void shutdown() {
-        IOUtils.closeQuietly(httpclientApache);
+        IOHelper.closeQuietly(this.httpclientApache);
+        IOHelper.closeQuietly(this.connManager);
     }
 
     /**
@@ -319,8 +324,8 @@ public final class IppClient {
     private IppStatusCode send(final URL urlServer,
             final boolean isLocalUrlServer, final IppOperationId operationId,
             final List<IppAttrGroup> request, final File file,
-            final List<IppAttrGroup> response) throws InterruptedException,
-            CircuitBreakerException {
+            final List<IppAttrGroup> response)
+            throws InterruptedException, CircuitBreakerException {
 
         ByteArrayOutputStream ostr = null;
         InputStreamList istr = null;
@@ -400,13 +405,11 @@ public final class IppClient {
         final CircuitBreaker circuitBreaker;
 
         if (isLocalUrlServer) {
-            circuitBreaker =
-                    ConfigManager
-                            .getCircuitBreaker(CircuitBreakerEnum.CUPS_LOCAL_IPP_CONNECTION);
+            circuitBreaker = ConfigManager.getCircuitBreaker(
+                    CircuitBreakerEnum.CUPS_LOCAL_IPP_CONNECTION);
         } else {
-            circuitBreaker =
-                    ConfigManager
-                            .getCircuitBreaker(CircuitBreakerEnum.CUPS_REMOTE_IPP_CONNECTIONS);
+            circuitBreaker = ConfigManager.getCircuitBreaker(
+                    CircuitBreakerEnum.CUPS_REMOTE_IPP_CONNECTIONS);
         }
 
         //
@@ -443,8 +446,8 @@ public final class IppClient {
      */
     private IppStatusCode execute(final CircuitBreaker circuitBreaker,
             final HttpPost httppost, final List<IppAttrGroup> response,
-            final ResponseHandler<byte[]> handler) throws InterruptedException,
-            CircuitBreakerException {
+            final ResponseHandler<byte[]> handler)
+            throws InterruptedException, CircuitBreakerException {
 
         Exception deferredException = null;
         IppStatusCode statusCode = null;
@@ -493,20 +496,21 @@ public final class IppClient {
             httppost.reset();
         }
 
-        circuitBreaker.execute(new DeferredCupsCircuitOperation(
-                deferredException));
+        circuitBreaker
+                .execute(new DeferredCupsCircuitOperation(deferredException));
 
         return statusCode;
     }
 
     /**
      *
-     * @author Datraverse B.V.
+     * @author Rijk Ravestein
      *
      */
-    private static class DeferredCupsCircuitOperation implements
-            CircuitBreakerOperation {
+    private static class DeferredCupsCircuitOperation
+            implements CircuitBreakerOperation {
 
+        /** */
         final Exception sendException;
 
         public DeferredCupsCircuitOperation(final Exception sendException) {
@@ -659,9 +663,8 @@ public final class IppClient {
         IppStatusCode statusCode;
 
         try {
-            statusCode =
-                    send(urlServer, isLocalUrlServer, operationId, request,
-                            file, response);
+            statusCode = send(urlServer, isLocalUrlServer, operationId, request,
+                    file, response);
 
             if (statusCode != IppStatusCode.OK
                     && statusCode != IppStatusCode.CLI_NOTFND) {
@@ -709,8 +712,8 @@ public final class IppClient {
             final List<IppAttrGroup> response) throws IppConnectException {
 
         try {
-            return send(urlServer, isLocalUrlServer, operationId, request,
-                    null, response);
+            return send(urlServer, isLocalUrlServer, operationId, request, null,
+                    response);
         } catch (InterruptedException | CircuitBreakerException e) {
             throw new IppConnectException(e);
         }
@@ -721,6 +724,10 @@ public final class IppClient {
      *
      * @param ostr
      *            The {@link OutputStream}.
+     * @param operationId
+     *            Operation ID.
+     * @param attrGroups
+     *            IPP attribute groups.
      * @throws IOException
      *             When IO erors occur.
      */

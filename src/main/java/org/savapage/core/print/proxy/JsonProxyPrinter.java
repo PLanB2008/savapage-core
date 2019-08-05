@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -131,6 +131,18 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
     @JsonIgnore
     private boolean ppdLandscapeMinus90;
 
+    @JsonIgnore
+    private boolean bookletClientSide;
+
+    @JsonIgnore
+    boolean archiveDisabled;
+
+    @JsonIgnore
+    boolean journalDisabled;
+
+    @JsonIgnore
+    boolean ppdPresent;
+
     /**
      *
      */
@@ -200,17 +212,16 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
     private boolean injectPpdExt = false;
 
     /**
-     * {@code true} when print-scaling was injected from a SavaPage PPD
-     * extension.
-     */
-    @JsonIgnore
-    private boolean printScalingExt = false;
-
-    /**
      * {@code true} when this is a job ticket printer.
      */
     @JsonIgnore
     private Boolean jobTicket = Boolean.FALSE;
+
+    /**
+     * {@code true} when Job Ticket Tags are enabled.
+     */
+    @JsonIgnore
+    private Boolean jobTicketLabelsEnabled = Boolean.FALSE;
 
     /**
      * Gets the corresponding Database Printer Object.
@@ -370,6 +381,22 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
     }
 
     /**
+     * Removes PPDE injection artifacts.
+     */
+    @JsonIgnore
+    public void removeInjectPpdExt() {
+        this.setInjectPpdExt(false);
+        this.setCustomCostRulesCopy(null);
+        this.setCustomCostRulesMedia(null);
+        this.setCustomCostRulesSet(null);
+        this.setCustomCostRulesSheet(null);
+        this.setCustomNumberUpRules(null);
+        this.setCustomRulesConstraint(null);
+        this.setCustomRulesExtra(null);
+        this.setCustomRulesSubst(null);
+    }
+
+    /**
      *
      * @return The {@link State}.
      */
@@ -440,6 +467,51 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
     @JsonIgnore
     public void setPpdLandscapeMinus90(final boolean minus90) {
         this.ppdLandscapeMinus90 = minus90;
+    }
+
+    @JsonIgnore
+    public boolean isBookletClientSide() {
+        return bookletClientSide;
+    }
+
+    @JsonIgnore
+    public void setBookletClientSide(boolean bookletClientSide) {
+        this.bookletClientSide = bookletClientSide;
+    }
+
+    @JsonIgnore
+    public boolean isArchiveDisabled() {
+        return archiveDisabled;
+    }
+
+    @JsonIgnore
+    public void setArchiveDisabled(boolean archiveDisabled) {
+        this.archiveDisabled = archiveDisabled;
+    }
+
+    @JsonIgnore
+    public boolean isJournalDisabled() {
+        return journalDisabled;
+    }
+
+    @JsonIgnore
+    public void setJournalDisabled(boolean journalDisabled) {
+        this.journalDisabled = journalDisabled;
+    }
+
+    /**
+     * @return {@code true} if PPD file is present in CUPS.
+     */
+    public boolean isPpdPresent() {
+        return ppdPresent;
+    }
+
+    /**
+     * @param ppdPresent
+     *            {@code true} if PPD file is present in CUPS.
+     */
+    public void setPpdPresent(boolean ppdPresent) {
+        this.ppdPresent = ppdPresent;
     }
 
     public String getState() {
@@ -688,25 +760,8 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
      *            {@code true} when info was injected from a SavaPage PPD
      *            extension.
      */
-    public void setInjectPpdExt(boolean injectPpdExt) {
+    public void setInjectPpdExt(final boolean injectPpdExt) {
         this.injectPpdExt = injectPpdExt;
-    }
-
-    /**
-     * @return {@code true} when page-scaling was injected from a SavaPage PPD
-     *         extension.
-     */
-    public boolean isPrintScalingExt() {
-        return printScalingExt;
-    }
-
-    /**
-     * @param printScalingExt
-     *            {@code true} when page-scaling was injected from a SavaPage
-     *            PPD extension.
-     */
-    public void setPrintScalingExt(boolean printScalingExt) {
-        this.printScalingExt = printScalingExt;
     }
 
     /**
@@ -717,11 +772,26 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
     }
 
     /**
-     * @param jobTicket
+     * @param ticket
      *            {@code true} when this is a job ticket printer.
      */
-    public void setJobTicket(Boolean jobTicket) {
-        this.jobTicket = jobTicket;
+    public void setJobTicket(final Boolean ticket) {
+        this.jobTicket = ticket;
+    }
+
+    /**
+     * @return {@code true} when Job Ticket Labels are enabled.
+     */
+    public Boolean getJobTicketLabelsEnabled() {
+        return jobTicketLabelsEnabled;
+    }
+
+    /**
+     * @param enabled
+     *            {@code true} when Job Ticket Labels are enabled.
+     */
+    public void setJobTicketLabelsEnabled(final Boolean enabled) {
+        this.jobTicketLabelsEnabled = enabled;
     }
 
     /**
@@ -748,8 +818,10 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
         copy.modelName = this.modelName;
         copy.name = this.name;
         copy.ppd = this.ppd;
+        copy.ppdPresent = this.ppdPresent;
         copy.injectPpdExt = this.injectPpdExt;
         copy.jobTicket = this.jobTicket;
+        copy.jobTicketLabelsEnabled = this.jobTicketLabelsEnabled;
         copy.ppdVersion = this.ppdVersion;
         copy.ppdLandscapeMinus90 = this.ppdLandscapeMinus90;
         copy.printerUri = this.printerUri;
@@ -759,6 +831,9 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
         copy.customCostRulesCopy = this.customCostRulesCopy;
         copy.customCostRulesMedia = this.customCostRulesMedia;
         copy.customCostRulesSheet = this.customCostRulesSheet;
+
+        copy.archiveDisabled = this.archiveDisabled;
+        copy.journalDisabled = this.journalDisabled;
 
         copy.customRulesConstraint = this.customRulesConstraint;
         copy.customRulesExtra = this.customRulesExtra;
@@ -1034,6 +1109,14 @@ public final class JsonProxyPrinter extends JsonAbstractBase {
      */
     public boolean hasCustomCostRulesSheet() {
         final List<IppRuleCost> rules = this.getCustomCostRulesSheet();
+        return rules != null && !rules.isEmpty();
+    }
+
+    /**
+     * @return {@code true} when custom Set cost rules are present.
+     */
+    public boolean hasCustomCostRulesSet() {
+        final List<IppRuleCost> rules = this.getCustomCostRulesSet();
         return rules != null && !rules.isEmpty();
     }
 

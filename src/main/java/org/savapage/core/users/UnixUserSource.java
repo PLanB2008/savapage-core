@@ -88,7 +88,8 @@ public final class UnixUserSource extends AbstractUserSource
      * @return
      */
     private static String getModulePamPath() {
-        return ConfigManager.getServerBinHome() + "/savapage-pam";
+        return String.format("%s%s", ConfigManager.getServerBinHome(),
+                "/savapage-pam");
     }
 
     /**
@@ -96,7 +97,8 @@ public final class UnixUserSource extends AbstractUserSource
      * @return
      */
     private static String getModuleNssPath() {
-        return ConfigManager.getServerBinHome() + "/savapage-nss";
+        return String.format("%s%s", ConfigManager.getServerBinHome(),
+                "/savapage-nss");
     }
 
     @Override
@@ -117,21 +119,21 @@ public final class UnixUserSource extends AbstractUserSource
          * Note: the input on stdin is passed as second argument.
          */
         final ICommandExecutor exec = CommandExecutor.create(getModulePamPath(),
-                uid + "\n" + password);
+                String.format("%s\n%s", uid, password));
 
         try {
             if (exec.executeCommand() != 0) {
-                LOGGER.error(exec.getStandardErrorFromCommand().toString());
+                LOGGER.error(exec.getStandardError());
                 throw new SpException(
                         "user [" + uid + "] could not be validated.");
             }
 
             if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug(exec.getStandardOutputFromCommand().toString());
+                LOGGER.debug(exec.getStandardOutput());
             }
 
-            final PamExecResponse jsonResponse = PamExecResponse
-                    .create(exec.getStandardOutputFromCommand().toString());
+            final PamExecResponse jsonResponse =
+                    PamExecResponse.create(exec.getStandardOutput());
 
             if (jsonResponse.isValid()) {
                 user = new User();
@@ -146,29 +148,29 @@ public final class UnixUserSource extends AbstractUserSource
     }
 
     @Override
-    public SortedSet<String> getGroups() {
+    public SortedSet<CommonUserGroup> getGroups() {
 
-        final SortedSet<String> sset =
-                new TreeSet<>(new IgnoreCaseComparator());
+        final SortedSet<CommonUserGroup> sset =
+                new TreeSet<>(new CommonUserGroupComparator());
 
-        final ICommandExecutor exec =
-                CommandExecutor.create(getModuleNssPath() + " --user-groups");
+        final ICommandExecutor exec = CommandExecutor
+                .create(String.format("%s --user-groups", getModuleNssPath()));
 
         try {
             if (exec.executeCommand() != 0) {
-                LOGGER.error(exec.getStandardErrorFromCommand().toString());
+                LOGGER.error(exec.getStandardError());
                 throw new SpException("groups could not be retrieved");
             }
 
             if (LOGGER.isTraceEnabled()) {
-                LOGGER.trace(exec.getStandardOutputFromCommand().toString());
+                LOGGER.trace(exec.getStandardOutput());
             }
 
-            final StringTokenizer tokenizer = new StringTokenizer(
-                    exec.getStandardOutputFromCommand().toString());
+            final StringTokenizer tokenizer =
+                    new StringTokenizer(exec.getStandardOutput());
 
             while (tokenizer.hasMoreTokens()) {
-                sset.add(tokenizer.nextToken());
+                sset.add(new CommonUserGroup(tokenizer.nextToken()));
             }
 
         } catch (Exception e) {
@@ -210,24 +212,23 @@ public final class UnixUserSource extends AbstractUserSource
         final String args;
 
         if (group == null) {
-            args = " --users";
+            args = "--users";
         } else {
-            args = " --user-group-members " + group;
+            args = String.format("--user-group-members %s", group);
         }
 
-        final ICommandExecutor exec =
-                CommandExecutor.create(getModuleNssPath() + args);
+        final ICommandExecutor exec = CommandExecutor
+                .create(String.format("%s %s", getModuleNssPath(), args));
 
         try {
             if (exec.executeCommand() == 0) {
 
                 if (LOGGER.isTraceEnabled()) {
-                    LOGGER.trace(
-                            exec.getStandardOutputFromCommand().toString());
+                    LOGGER.trace(exec.getStandardOutput());
                 }
 
-                final StringTokenizer lineTokenizer = new StringTokenizer(
-                        exec.getStandardOutputFromCommand().toString(), "\n");
+                final StringTokenizer lineTokenizer =
+                        new StringTokenizer(exec.getStandardOutput(), "\n");
 
                 while (lineTokenizer.hasMoreTokens()) {
                     sset.add(parseUserDetails(lineTokenizer.nextToken()));
@@ -236,7 +237,7 @@ public final class UnixUserSource extends AbstractUserSource
             } else {
 
                 if (group == null) {
-                    LOGGER.error(exec.getStandardErrorFromCommand().toString());
+                    LOGGER.error(exec.getStandardError());
                     throw new SpException("Users could not be retrieved");
                 }
 
@@ -249,7 +250,7 @@ public final class UnixUserSource extends AbstractUserSource
                 if (LOGGER.isInfoEnabled()) {
                     LOGGER.info("Users of UNIX group [" + group
                             + "] could not be retrieved : "
-                            + exec.getStandardErrorFromCommand().toString());
+                            + exec.getStandardError());
                 }
 
             }
@@ -264,7 +265,8 @@ public final class UnixUserSource extends AbstractUserSource
     /**
      *
      * @param line
-     * @return
+     *            The stdout line.
+     * @return The common user.
      */
     private CommonUser parseUserDetails(final String line) {
 
@@ -301,23 +303,22 @@ public final class UnixUserSource extends AbstractUserSource
     @Override
     public boolean isGroupPresent(final String groupName) {
 
-        final String args = " --is-user-group " + groupName;
+        final String args = String.format("--is-user-group \"%s\"", groupName);
 
-        final ICommandExecutor exec =
-                CommandExecutor.create(getModuleNssPath() + args);
+        final ICommandExecutor exec = CommandExecutor
+                .create(String.format("%s %s", getModuleNssPath(), args));
 
         try {
             if (exec.executeCommand() != 0) {
-                LOGGER.error(exec.getStandardErrorFromCommand().toString());
+                LOGGER.error(exec.getStandardError());
                 throw new SpException(args);
             }
 
             if (LOGGER.isTraceEnabled()) {
-                LOGGER.trace(exec.getStandardOutputFromCommand().toString());
+                LOGGER.trace(exec.getStandardOutput());
             }
 
-            return exec.getStandardOutputFromCommand().toString()
-                    .startsWith(STDOUT_TRUE);
+            return exec.getStandardOutput().startsWith(STDOUT_TRUE);
 
         } catch (Exception e) {
             throw new SpException(e);
@@ -327,16 +328,16 @@ public final class UnixUserSource extends AbstractUserSource
     @Override
     public boolean isUserInGroup(final String uid, final String group) {
 
-        final String args = " --is-user-group-member " + group + " " + uid;
+        final String args =
+                String.format("--is-user-group-member %s %s", group, uid);
 
-        final ICommandExecutor exec =
-                CommandExecutor.create(getModuleNssPath() + args);
+        final ICommandExecutor exec = CommandExecutor
+                .create(String.format("%s %s", getModuleNssPath(), args));
 
         try {
-
             if (exec.executeCommand() != 0) {
 
-                LOGGER.error(exec.getStandardErrorFromCommand().toString());
+                LOGGER.error(exec.getStandardError());
 
                 final String msg = "user [" + uid + "] of group [" + group
                         + "] could not be retrieved";
@@ -345,11 +346,10 @@ public final class UnixUserSource extends AbstractUserSource
             }
 
             if (LOGGER.isTraceEnabled()) {
-                LOGGER.trace(exec.getStandardOutputFromCommand().toString());
+                LOGGER.trace(exec.getStandardOutput());
             }
 
-            return exec.getStandardOutputFromCommand().toString()
-                    .startsWith(STDOUT_TRUE);
+            return exec.getStandardOutput().startsWith(STDOUT_TRUE);
 
         } catch (Exception e) {
             throw new SpException(e);
@@ -359,23 +359,23 @@ public final class UnixUserSource extends AbstractUserSource
     @Override
     public CommonUser getUser(final String uid) {
 
-        final String args = " --user-details " + uid;
+        final String args = String.format("--user-details %s", uid);
 
-        final ICommandExecutor exec =
-                CommandExecutor.create(getModuleNssPath() + args);
+        final ICommandExecutor exec = CommandExecutor
+                .create(String.format("%s %s", getModuleNssPath(), args));
 
         try {
 
             if (exec.executeCommand() != 0) {
 
-                LOGGER.error(exec.getStandardErrorFromCommand().toString());
+                LOGGER.error(exec.getStandardError());
 
                 final String msg =
                         "details of user [" + uid + "] could not be retrieved";
                 throw new SpException(msg);
             }
 
-            final String line = exec.getStandardOutputFromCommand().toString();
+            final String line = exec.getStandardOutput();
 
             if (LOGGER.isTraceEnabled()) {
                 LOGGER.trace(line);
@@ -413,6 +413,14 @@ public final class UnixUserSource extends AbstractUserSource
             final boolean indent) {
         final List<String> list = new ArrayList<>();
         return list;
+    }
+
+    @Override
+    public CommonUserGroup getGroup(final String groupName) {
+        if (this.isGroupPresent(groupName)) {
+            return new CommonUserGroup(groupName);
+        }
+        return null;
     }
 
 }

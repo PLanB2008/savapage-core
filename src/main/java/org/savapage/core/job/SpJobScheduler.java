@@ -146,8 +146,8 @@ public final class SpJobScheduler {
             startJobs();
 
             /*
-             * Clean the App Log and Doc Log, and remove PrinterGroup that do
-             * not have members.
+             * Clean the App Log, Doc Log, and Doc Store and remove PrinterGroup
+             * that do not have members.
              */
             scheduleOneShotJob(SpJobType.APP_LOG_CLEAN, 1L);
 
@@ -155,12 +155,17 @@ public final class SpJobScheduler {
                 scheduleOneShotJob(SpJobType.DOC_LOG_CLEAN, 1L);
             }
 
+            if (ConfigManager.isCleanUpDocStoreAtStart()) {
+                scheduleOneShotJob(SpJobType.DOC_STORE_CLEAN, 1L);
+            }
+
             scheduleOneShotJob(SpJobType.PRINTER_GROUP_CLEAN, 1L);
 
             /*
-             * Monitor email outbox unconditionally.
+             * Monitor unconditionally.
              */
             scheduleOneShotEmailOutboxMonitor(1L);
+            scheduleOneShotSystemMonitor(1L);
 
             /*
              * PaperCut Print Monitoring enabled?
@@ -239,6 +244,11 @@ public final class SpJobScheduler {
             LOGGER.debug("shutting down the scheduler...");
 
             try {
+
+                /*
+                 * Wait for SystemMonitor to finish...
+                 */
+                interruptSystemMonitor();
 
                 /*
                  * Wait for EmailOutputMonitor to finish...
@@ -347,6 +357,10 @@ public final class SpJobScheduler {
             jobClass = org.savapage.core.job.DocLogClean.class;
             break;
 
+        case DOC_STORE_CLEAN:
+            jobClass = org.savapage.core.job.DocStoreClean.class;
+            break;
+
         case IPP_GET_NOTIFICATIONS:
             jobClass = org.savapage.core.job.IppGetNotifications.class;
             break;
@@ -405,7 +419,7 @@ public final class SpJobScheduler {
         myWeeklyJobs.add(createJob(SpJobType.DB_BACKUP, JOB_GROUP_SCHEDULED));
 
         for (final SpJobType jobType : EnumSet.of(SpJobType.SYNC_USERS,
-                SpJobType.CHECK_MEMBERSHIP_CARD,
+                SpJobType.DOC_STORE_CLEAN, SpJobType.CHECK_MEMBERSHIP_CARD,
                 SpJobType.PRINTER_GROUP_CLEAN)) {
             myDailyJobs.add(createJob(jobType, JOB_GROUP_SCHEDULED));
         }
@@ -598,13 +612,29 @@ public final class SpJobScheduler {
      *
      * @param milliSecondsFromNow
      */
+    public void scheduleOneShotSystemMonitor(final long milliSecondsFromNow) {
+
+        final JobDataMap data = new JobDataMap();
+
+        final JobDetail job = newJob(org.savapage.core.job.SystemMonitorJob.class)
+                .withIdentity(SpJobType.SYSTEM_MONITOR.toString(),
+                        JOB_GROUP_ONESHOT)
+                .usingJobData(data).build();
+
+        rescheduleOneShotJob(job, milliSecondsFromNow);
+    }
+
+    /**
+     *
+     * @param milliSecondsFromNow
+     */
     public void scheduleOneShotPaperCutPrintMonitor(
             final long milliSecondsFromNow) {
 
         final JobDataMap data = new JobDataMap();
 
-        final JobDetail job =
-                newJob(org.savapage.ext.papercut.job.PaperCutPrintMonitorJob.class)
+        final JobDetail job = newJob(
+                org.savapage.ext.papercut.job.PaperCutPrintMonitorJob.class)
                         .withIdentity(
                                 SpJobType.PAPERCUT_PRINT_MONITOR.toString(),
                                 JOB_GROUP_ONESHOT)
@@ -643,8 +673,8 @@ public final class SpJobScheduler {
         data.put(SmartschoolPrintMonitorJob.ATTR_SIMULATION,
                 Boolean.valueOf(simulate));
 
-        final JobDetail job =
-                newJob(org.savapage.ext.smartschool.job.SmartschoolPrintMonitorJob.class)
+        final JobDetail job = newJob(
+                org.savapage.ext.smartschool.job.SmartschoolPrintMonitorJob.class)
                         .withIdentity(SpJobType.SMARTSCHOOL_PRINT_MONITOR_JOB
                                 .toString(), JOB_GROUP_ONESHOT)
                         .usingJobData(data).build();
@@ -745,13 +775,20 @@ public final class SpJobScheduler {
     }
 
     /**
-     * .
-     *
      * @return {@code true} if at least one instance of the identified job was
      *         found and interrupted.
      */
-    public static boolean interruptEmailOutputMonitor() {
+    private static boolean interruptEmailOutputMonitor() {
         return instance().interruptJob(SpJobType.EMAIL_OUTBOX_MONITOR,
+                JOB_GROUP_ONESHOT);
+    }
+
+    /**
+     * @return {@code true} if at least one instance of the identified job was
+     *         found and interrupted.
+     */
+    private static boolean interruptSystemMonitor() {
+        return instance().interruptJob(SpJobType.SYSTEM_MONITOR,
                 JOB_GROUP_ONESHOT);
     }
 

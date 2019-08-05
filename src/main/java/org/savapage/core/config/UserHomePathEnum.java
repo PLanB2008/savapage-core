@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -19,40 +19,53 @@
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
-package org.savapage.core.doc;
+package org.savapage.core.config;
 
 import java.io.File;
 
-import org.savapage.core.UnavailableException;
-
 /**
- * Converts a file to PDF.
+ * User home paths.
  *
  * @author Rijk Ravestein
  *
  */
-public interface IFileConverter extends IDocConverter {
+public enum UserHomePathEnum {
+
+    /** */
+    LETTERHEADS("letterheads"),
+
+    /** */
+    OUTBOX("outbox"),
+
+    /** */
+    PGP_PUBRING("pgp.pubring");
+
+    /** */
+    private final String path;
 
     /**
-     * Converts a file to PDF. The PDF file is created in the directory of the
-     * input file, and has the same basename.
-     * <p>
-     * NOTE: When a exception is thrown the created PDF (if present) is deleted.
-     * </p>
      *
-     * @param contentType
-     *            The content type of the input stream.
-     * @param file
-     *            The input file.
-     *
-     * @return The PDF output file.
-     *
-     * @throws DocContentToPdfException
-     *             When anything goes wrong.
-     * @throws UnavailableException
-     *             When convert service is (temporary) unavailable.
+     * @param subdir
+     *            Relative path in User SafaPages directory.
      */
-    File convert(DocContentTypeEnum contentType, File file)
-            throws DocContentToPdfException, UnavailableException;
+    UserHomePathEnum(final String subdir) {
+        this.path = subdir;
+    }
 
+    /**
+     * @return Relative path in User SafaPages directory.
+     */
+    public String getPath() {
+        return this.path;
+    }
+
+    /**
+     * @param userid
+     *            User id.
+     * @return Full path of user subdirectory.
+     */
+    public String getFullPath(final String userid) {
+        return String.format("%s%c%s", ConfigManager.getUserHomeDir(userid),
+                File.separatorChar, this.getPath());
+    }
 }

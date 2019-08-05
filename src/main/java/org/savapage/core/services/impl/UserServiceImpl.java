@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -38,6 +38,7 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -50,6 +51,7 @@ import java.util.UUID;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
+import org.savapage.core.OutOfBoundsException;
 import org.savapage.core.PerformanceLogger;
 import org.savapage.core.SpException;
 import org.savapage.core.auth.YubiKeyOTP;
@@ -58,6 +60,7 @@ import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.crypto.CryptoUser;
 import org.savapage.core.dao.DaoContext;
+import org.savapage.core.dao.GenericDao;
 import org.savapage.core.dao.UserAttrDao;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.UserEmailDao;
@@ -65,6 +68,7 @@ import org.savapage.core.dao.UserGroupDao;
 import org.savapage.core.dao.enums.ACLOidEnum;
 import org.savapage.core.dao.enums.ACLRoleEnum;
 import org.savapage.core.dao.enums.UserAttrEnum;
+import org.savapage.core.dao.helpers.PGPPubRingKeyDto;
 import org.savapage.core.dto.UserAccountingDto;
 import org.savapage.core.dto.UserDto;
 import org.savapage.core.dto.UserEmailDto;
@@ -80,6 +84,7 @@ import org.savapage.core.jpa.UserEmail;
 import org.savapage.core.jpa.UserGroup;
 import org.savapage.core.jpa.UserGroupMember;
 import org.savapage.core.jpa.UserNumber;
+import org.savapage.core.json.JobTicketProperties;
 import org.savapage.core.json.JsonRollingTimeSeries;
 import org.savapage.core.json.PdfProperties;
 import org.savapage.core.json.TimeSeriesInterval;
@@ -97,6 +102,9 @@ import org.savapage.core.util.DateUtil;
 import org.savapage.core.util.EmailValidator;
 import org.savapage.core.util.JsonHelper;
 import org.savapage.core.util.NumberUtil;
+import org.savapage.lib.pgp.PGPBaseException;
+import org.savapage.lib.pgp.PGPKeyID;
+import org.savapage.lib.pgp.PGPPublicKeyInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -184,8 +192,7 @@ public final class UserServiceImpl extends AbstractService
 
         } else {
 
-            EmailValidator validator = new EmailValidator();
-            if (!validator.validate(primaryEmail)) {
+            if (!EmailValidator.validate(primaryEmail)) {
                 /*
                  * INVARIANT: Email format MUST be valid.
                  */
@@ -326,31 +333,43 @@ public final class UserServiceImpl extends AbstractService
 
         } else {
 
-            final int lengthMin = ConfigManager.instance()
-                    .getConfigInt(Key.USER_ID_NUMBER_LENGTH_MIN);
+            boolean doUpdate;
 
-            if (idNumber.length() < lengthMin) {
-                /*
-                 * INVARIANT: ID Number format MUST be valid.
-                 */
-                return createError("msg-id-number-length-error",
-                        String.valueOf(lengthMin));
+            if (dto.getKeepId()) {
+                doUpdate = !hasAssocPrimaryNumber(jpaUser);
+            } else {
+                doUpdate = true;
             }
 
-            final User jpaUserDuplicate = this.findUserByNumber(dto.getId());
+            if (doUpdate) {
 
-            if (jpaUserDuplicate != null
-                    && !jpaUserDuplicate.getUserId().equals(userid)) {
+                final int lengthMin = ConfigManager.instance()
+                        .getConfigInt(Key.USER_ID_NUMBER_LENGTH_MIN);
 
-                /*
-                 * INVARIANT: ID Number MUST be unique.
-                 */
-                return createError("msg-user-duplicate-user-id-number",
-                        dto.getId(), jpaUserDuplicate.getUserId());
+                if (idNumber.length() < lengthMin) {
+                    /*
+                     * INVARIANT: ID Number format MUST be valid.
+                     */
+                    return createError("msg-id-number-length-error",
+                            String.valueOf(lengthMin));
+                }
+
+                final User jpaUserDuplicate =
+                        this.findUserByNumber(dto.getId());
+
+                if (jpaUserDuplicate != null
+                        && !jpaUserDuplicate.getUserId().equals(userid)) {
+
+                    /*
+                     * INVARIANT: ID Number MUST be unique.
+                     */
+                    return createError("msg-user-duplicate-user-id-number",
+                            dto.getId(), jpaUserDuplicate.getUserId());
+                }
+
+                this.assocPrimaryIdNumber(jpaUser, idNumber);
+                isUpdated = true;
             }
-
-            this.assocPrimaryIdNumber(jpaUser, idNumber);
-            isUpdated = true;
         }
 
         /*
@@ -550,7 +569,12 @@ public final class UserServiceImpl extends AbstractService
 
         dto.setId(this.getPrimaryIdNumber(user));
         dto.setYubiKeyPubId(this.getYubiKeyPubID(user));
-        dto.setPgpPubKeyId(this.getPGPPubKeyID(user));
+
+        final PGPKeyID pgpKeyID = this.getPGPPubKeyID(user);
+        if (pgpKeyID != null) {
+            dto.setPgpPubKeyId(pgpKeyID.toHex());
+        }
+
         dto.setEmail(this.getPrimaryEmailAddress(user));
         dto.setCard(this.getPrimaryCardNumber(user));
 
@@ -702,18 +726,15 @@ public final class UserServiceImpl extends AbstractService
         /*
          * PGP Public Key ID.
          */
-        String pgpPubKeyId = userDto.getPgpPubKeyId();
-        if (pgpPubKeyId != null) {
-            pgpPubKeyId = pgpPubKeyId.toUpperCase();
-        }
-        final boolean hasPgpPubKeyId = StringUtils.isNotBlank(pgpPubKeyId);
+        final PGPKeyID pgpPubKeyId;
 
-        if (hasPgpPubKeyId) {
-            JsonRpcMethodError error = validatePGPPubKeyID(pgpPubKeyId);
-            if (error != null) {
-                return error;
-            }
+        if (StringUtils.isBlank(userDto.getPgpPubKeyId())) {
+            pgpPubKeyId = null;
+        } else {
+            pgpPubKeyId = new PGPKeyID(userDto.getPgpPubKeyId());
         }
+
+        final boolean hasPgpPubKeyId = pgpPubKeyId != null;
 
         /*
          * PIN
@@ -850,8 +871,7 @@ public final class UserServiceImpl extends AbstractService
          * Primary Email.
          */
         if (StringUtils.isNotBlank(primaryEmail)) {
-            EmailValidator validator = new EmailValidator();
-            if (!validator.validate(primaryEmail)) {
+            if (!EmailValidator.validate(primaryEmail)) {
                 return createError("msg-email-invalid", primaryEmail);
             }
         }
@@ -969,14 +989,31 @@ public final class UserServiceImpl extends AbstractService
                     this.encryptStoreUserAttr(jpaUser, UserAttrEnum.UUID, uuid);
                 }
                 if (hasPgpPubKeyId) {
+
                     this.setUserAttrValue(jpaUser, UserAttrEnum.PGP_PUBKEY_ID,
-                            pgpPubKeyId);
+                            pgpPubKeyId.toHex());
+                    try {
+                        setUserAttrValue(jpaUser, pgpPubKeyId);
+                    } catch (PGPBaseException e) {
+                        throw new IOException(e.getMessage());
+                    }
                 }
 
                 userDAO().update(jpaUser);
             }
 
         } else {
+
+            final String hexIdPriv =
+                    this.getUserAttrValue(jpaUser, UserAttrEnum.PGP_PUBKEY_ID);
+
+            final PGPKeyID keyIdPrev;
+
+            if (hexIdPriv == null) {
+                keyIdPrev = null;
+            } else {
+                keyIdPrev = new PGPKeyID(hexIdPriv);
+            }
 
             if (!hasPIN) {
                 this.removeUserAttr(jpaUser, UserAttrEnum.PIN);
@@ -988,6 +1025,11 @@ public final class UserServiceImpl extends AbstractService
 
             if (!hasPgpPubKeyId) {
                 this.removeUserAttr(jpaUser, UserAttrEnum.PGP_PUBKEY_ID);
+                if (keyIdPrev != null) {
+                    removeUserAttr(jpaUser,
+                            UserAttrEnum.getPgpPubRingDbKey(keyIdPrev));
+                    pgpPublicKeyService().deleteRingEntry(jpaUser, keyIdPrev);
+                }
             }
 
             userDAO().update(jpaUser);
@@ -1005,8 +1047,18 @@ public final class UserServiceImpl extends AbstractService
             }
 
             if (hasPgpPubKeyId) {
+
                 this.setUserAttrValue(jpaUser, UserAttrEnum.PGP_PUBKEY_ID,
-                        pgpPubKeyId);
+                        pgpPubKeyId.toHex());
+
+                if (keyIdPrev == null
+                        || keyIdPrev.getId() != pgpPubKeyId.getId()) {
+                    try {
+                        setUserAttrValue(jpaUser, pgpPubKeyId);
+                    } catch (PGPBaseException e) {
+                        return createErrorMsg(e.getMessage());
+                    }
+                }
             }
         }
 
@@ -1051,6 +1103,29 @@ public final class UserServiceImpl extends AbstractService
         }
 
         return JsonRpcMethodResult.createOkResult();
+    }
+
+    /**
+     * Creates or updates the {@link UserAttrEnum#PFX_PGP_PUBRING_KEY_ID}
+     * attribute value to the database.
+     *
+     * @param user
+     *            User.
+     * @param pubKeyId
+     *            Public Key ID.
+     * @throws PGPBaseException
+     *             If PGP error.
+     * @throws IOException
+     *             If IO error.
+     */
+    private void setUserAttrValue(final User user, PGPKeyID pubKeyId)
+            throws PGPBaseException, IOException {
+
+        final PGPPublicKeyInfo pubKeyInfo =
+                pgpPublicKeyService().lazyAddRingEntry(user, pubKeyId);
+
+        this.setUserAttrValue(user, UserAttrEnum.getPgpPubRingDbKey(pubKeyId),
+                PGPPubRingKeyDto.toDbJson(pubKeyInfo));
     }
 
     /**
@@ -1306,18 +1381,6 @@ public final class UserServiceImpl extends AbstractService
     }
 
     /**
-     * TODO: Checks if PGP Public Key ID is valid.
-     *
-     * @param pubKeyId
-     *            The PGP Public Key ID.
-     * @return {@code null} if valid.
-     */
-    private JsonRpcMethodError validatePGPPubKeyID(final String pubKeyId) {
-        // TODO
-        return null;
-    }
-
-    /**
      * Checks if User PIN is valid.
      *
      * @param pin
@@ -1478,8 +1541,6 @@ public final class UserServiceImpl extends AbstractService
             String primaryEmail, User jpaUser,
             List<UserEmailDto> secondaryEmailList) {
 
-        final EmailValidator validator = new EmailValidator();
-
         /*
          * Sorted map of new secondary e-mails.
          */
@@ -1505,7 +1566,7 @@ public final class UserServiceImpl extends AbstractService
             /*
              * INVARIANT: email address MUST be valid.
              */
-            if (!validator.validate(address)) {
+            if (!EmailValidator.validate(address)) {
                 return createError("msg-email-invalid", address);
             }
 
@@ -1969,6 +2030,9 @@ public final class UserServiceImpl extends AbstractService
                         .equalsIgnoreCase(primaryCardNumber)) {
                     userCardDAO().delete(card);
                     iter.remove();
+                    // Prevent JPA/Hibernate "duplicate key value" exception,
+                    // when adding same card number as primary.
+                    ServiceContext.getDaoContext().commitInBetween();
                 }
             }
 
@@ -1986,7 +2050,6 @@ public final class UserServiceImpl extends AbstractService
 
             primaryCard.setNumber(primaryCardNumber.toLowerCase());
         }
-
     }
 
     @Override
@@ -2044,6 +2107,9 @@ public final class UserServiceImpl extends AbstractService
                         .equalsIgnoreCase(primaryEmailAddress)) {
                     userEmailDAO().delete(email);
                     iter.remove();
+                    // Prevent JPA/Hibernate "duplicate key value" exception,
+                    // when adding same email address as primary.
+                    ServiceContext.getDaoContext().commitInBetween();
                 }
             }
 
@@ -2061,7 +2127,6 @@ public final class UserServiceImpl extends AbstractService
 
             primaryEmail.setAddress(primaryEmailAddress.toLowerCase());
         }
-
     }
 
     /**
@@ -2193,6 +2258,9 @@ public final class UserServiceImpl extends AbstractService
                         .equalsIgnoreCase(primaryIdNumber)) {
                     userNumberDAO().delete(number);
                     iter.remove();
+                    // Prevent JPA/Hibernate "duplicate key value" exception,
+                    // when adding same ID number as primary.
+                    ServiceContext.getDaoContext().commitInBetween();
                 }
             }
 
@@ -2285,24 +2353,24 @@ public final class UserServiceImpl extends AbstractService
     }
 
     @Override
-    public String getPGPPubKeyID(final User user) {
+    public PGPKeyID getPGPPubKeyID(final User user) {
 
-        final String publicID;
+        final String hexKeyID;
 
         final UserAttr attr =
                 userAttrDAO().findByName(user, UserAttrEnum.PGP_PUBKEY_ID);
 
         if (attr == null) {
-            publicID = null;
+            hexKeyID = null;
         } else {
-            publicID = attr.getValue();
+            hexKeyID = attr.getValue();
         }
 
-        if (StringUtils.isBlank(publicID)) {
-            return "";
+        if (StringUtils.isBlank(hexKeyID)) {
+            return null;
         }
 
-        return publicID;
+        return new PGPKeyID(hexKeyID);
     }
 
     @Override
@@ -2506,6 +2574,7 @@ public final class UserServiceImpl extends AbstractService
             case PIN:
             case PGP_PUBKEY_ID:
             case PDF_PROPS:
+            case JOBTICKET_PROPS_LATEST:
             case UUID:
                 userAttrDAO().delete(attr);
                 iter.remove();
@@ -2635,18 +2704,30 @@ public final class UserServiceImpl extends AbstractService
 
     @Override
     public UserAttr removeUserAttr(final User user, final UserAttrEnum name) {
+        return removeUserAttr(user, name.getName());
+    }
+
+    /**
+     * Removes an attribute from the User's list of attributes AND from the
+     * database.
+     *
+     * @param user
+     *            The user.
+     * @param name
+     *            The name of the {@link UserAttr}.
+     * @return The removed {@link UserAttr} or {@code null} when not found.
+     */
+    private static UserAttr removeUserAttr(final User user, final String name) {
 
         UserAttr removedAttr = null;
 
         if (user.getAttributes() != null) {
 
-            final String strName = name.getName();
-
             final Iterator<UserAttr> iter = user.getAttributes().iterator();
 
             while (iter.hasNext()) {
                 final UserAttr attr = iter.next();
-                if (attr.getName().equals(strName)) {
+                if (attr.getName().equals(name)) {
                     removedAttr = attr;
                     iter.remove();
                     break;
@@ -2716,6 +2797,23 @@ public final class UserServiceImpl extends AbstractService
     }
 
     /**
+     * Creates or updates the attribute value to the database.
+     *
+     * @param user
+     *            The user.
+     * @param attrName
+     *            The name of the {@link UserAttr}.
+     * @param attrValue
+     *            The value.
+     */
+    private void setUserAttrValue(final User user, final String attrName,
+            final String attrValue) {
+
+        this.setUserAttrValue(user, userAttrDAO().findByName(user, attrName),
+                attrName, attrValue);
+    }
+
+    /**
      * Creates or updates a {@link UserAttr} value to the database.
      *
      * @param user
@@ -2732,6 +2830,26 @@ public final class UserServiceImpl extends AbstractService
      */
     private void setUserAttrValue(final User user, final UserAttr userAttr,
             final UserAttrEnum attrEnum, final String attrValue) {
+        this.setUserAttrValue(user, userAttr, attrEnum.getName(), attrValue);
+    }
+
+    /**
+     * Creates or updates a {@link UserAttr} value to the database.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param userAttr
+     *            The {@link UserAttr}. When {@code null} the attribute is
+     *            created.
+     * @param attrName
+     *            The {@link UserAttr#getName()} (used when {@link UserAttr} is
+     *            {@code null}).
+     * @param attrValue
+     *            The attribute value (used when {@link UserAttr} is
+     *            {@code null}).
+     */
+    private void setUserAttrValue(final User user, final UserAttr userAttr,
+            final String attrName, final String attrValue) {
 
         if (userAttr == null) {
 
@@ -2739,7 +2857,7 @@ public final class UserServiceImpl extends AbstractService
 
             attrNew.setUser(user);
 
-            attrNew.setName(attrEnum.getName());
+            attrNew.setName(attrName);
             attrNew.setValue(attrValue);
 
             userAttrDAO().create(attrNew);
@@ -3090,7 +3208,7 @@ public final class UserServiceImpl extends AbstractService
          */
         for (final UserGroup userGroup : userGroupDAO().getListChunk(
                 new UserGroupDao.ListFilter(), null, null,
-                UserGroupDao.Field.NAME, true)) {
+                UserGroupDao.Field.ID, true)) {
 
             final String groupName = userGroup.getGroupName();
 
@@ -3146,7 +3264,7 @@ public final class UserServiceImpl extends AbstractService
     }
 
     @Override
-    public PdfProperties getPdfProperties(final User user) throws Exception {
+    public PdfProperties getPdfProperties(final User user) {
 
         PdfProperties props = null;
         String json = this.findUserAttrValue(user, UserAttrEnum.PDF_PROPS);
@@ -3160,8 +3278,8 @@ public final class UserServiceImpl extends AbstractService
              * Be forgiving ...
              */
             json = null;
-            LOGGER.warn("PDF Properties of user [" + user.getUserId()
-                    + "] are reset, because: " + e.getMessage());
+            LOGGER.warn("PDF Properties of user [{}] are reset, because: {}",
+                    user.getUserId(), e.getMessage());
         }
 
         if (json == null) {
@@ -3186,6 +3304,39 @@ public final class UserServiceImpl extends AbstractService
     }
 
     @Override
+    public JobTicketProperties getJobTicketPropsLatest(final User user) {
+
+        JobTicketProperties props = null;
+        String json = this.findUserAttrValue(user,
+                UserAttrEnum.JOBTICKET_PROPS_LATEST);
+        try {
+            if (json != null) {
+                props = JobTicketProperties.create(json);
+            }
+        } catch (Exception e) {
+            // Be forgiving ...
+            json = null;
+            LOGGER.warn(
+                    "JobTicket properties of user [{}] are reset, because: {}",
+                    user.getUserId(), e.getMessage());
+        }
+
+        if (json == null) {
+            props = new JobTicketProperties();
+        }
+
+        return props;
+    }
+
+    @Override
+    public void setJobTicketPropsLatest(final User user,
+            final JobTicketProperties objProps) throws IOException {
+
+        this.setUserAttrValue(user, UserAttrEnum.JOBTICKET_PROPS_LATEST,
+                objProps.stringify());
+    }
+
+    @Override
     public boolean isErased(final User user) {
         return user.getDeleted()
                 && user.getUserId().equals(User.ERASED_USER_ID);
@@ -3200,4 +3351,230 @@ public final class UserServiceImpl extends AbstractService
         }
         return user.getUserId();
     }
+
+    /**
+     *
+     * @param user
+     *            The user (for logging).
+     * @param attrName
+     *            The user attribute (for logging).
+     * @param jsonSet
+     *            The JSON "set" string with Long values.
+     * @return {@code null} when user attribute is not present, or when JSON is
+     *         invalid.
+     */
+    private Set<Long> getLongSet(final User user, final UserAttrEnum attrName,
+            final String jsonSet) {
+
+        try {
+            if (StringUtils.isNotBlank(jsonSet)) {
+                return JsonHelper.createLongSet(jsonSet);
+            }
+        } catch (IOException e) {
+            LOGGER.warn("User [{}] attribute [{}] : {}", user.getUserId(),
+                    attrName.getName(), e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     *
+     * @param user
+     * @param attrName
+     * @return
+     */
+    private Set<Long> getPreferredDelegateDbKeys(final User user,
+            final UserAttrEnum attrName) {
+        return this.getLongSet(user, attrName,
+                this.getUserAttrValue(user, attrName));
+    }
+
+    /**
+     *
+     * @param user
+     * @param attrName
+     * @param dbIds
+     * @return
+     * @throws OutOfBoundsException
+     */
+    private boolean addPreferredDelegateDbKeys(final User user,
+            final UserAttrEnum attrName, final Set<Long> dbIds)
+            throws OutOfBoundsException {
+
+        final UserAttr userAttr = getUserAttr(user, attrName);
+
+        Set<Long> groupIdsDb;
+
+        if (userAttr == null) {
+            groupIdsDb = null;
+        } else {
+            groupIdsDb = this.getLongSet(user, attrName, userAttr.getValue());
+        }
+
+        if (groupIdsDb == null) {
+            groupIdsDb = new HashSet<>();
+        }
+
+        if (groupIdsDb.addAll(dbIds)) {
+
+            final String json = JsonHelper.stringifyLongSet(groupIdsDb);
+
+            if (json.length() > UserAttr.COL_ATTRIB_VALUE_LENGTH) {
+                throw new OutOfBoundsException(
+                        "Max reached: preference not stored.");
+            }
+
+            if (userAttr == null) {
+                this.addUserAttr(user, attrName, json);
+            } else {
+                userAttr.setValue(json);
+                this.setUserAttrValue(user, attrName, json);
+            }
+
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     *
+     * @param user
+     * @param attrName
+     * @param dbIds
+     * @return
+     */
+    private boolean removePreferredDelegateDbKeys(final User user,
+            final UserAttrEnum attrName, final Set<Long> dbIds) {
+
+        final UserAttr userAttr = getUserAttr(user, attrName);
+
+        if (userAttr == null) {
+            return false;
+        }
+
+        final Set<Long> groupIdsDb =
+                this.getLongSet(user, attrName, userAttr.getValue());
+
+        final boolean change;
+
+        if (groupIdsDb == null) {
+
+            this.removeUserAttr(user, attrName);
+            change = true;
+
+        } else if (groupIdsDb.removeAll(dbIds)) {
+
+            if (groupIdsDb.isEmpty()) {
+                this.removeUserAttr(user, attrName);
+            } else {
+                final String json = JsonHelper.stringifyLongSet(groupIdsDb);
+                this.setUserAttrValue(user, attrName, json);
+            }
+            change = true;
+        } else {
+            change = false;
+        }
+
+        return change;
+    }
+
+    @Override
+    public Set<Long> getPreferredDelegateGroups(final User user) {
+        return this.getPreferredDelegateDbKeys(user,
+                UserAttrEnum.PROXY_PRINT_DELEGATE_GROUPS_PREFERRED);
+    }
+
+    @Override
+    public boolean addPreferredDelegateGroups(final User user,
+            final Set<Long> dbIds) throws OutOfBoundsException {
+        return addPreferredDelegateDbKeys(user,
+                UserAttrEnum.PROXY_PRINT_DELEGATE_GROUPS_PREFERRED, dbIds);
+    }
+
+    @Override
+    public boolean removePreferredDelegateGroups(final User user,
+            final Set<Long> dbIds) {
+        return removePreferredDelegateDbKeys(user,
+                UserAttrEnum.PROXY_PRINT_DELEGATE_GROUPS_PREFERRED, dbIds);
+    }
+
+    @Override
+    public Set<Long> getPreferredDelegateAccounts(final User user) {
+        return this.getPreferredDelegateDbKeys(user,
+                UserAttrEnum.PROXY_PRINT_DELEGATE_ACCOUNTS_PREFERRED);
+    }
+
+    @Override
+    public boolean addPreferredDelegateAccounts(final User user,
+            final Set<Long> dbIds) throws OutOfBoundsException {
+        return addPreferredDelegateDbKeys(user,
+                UserAttrEnum.PROXY_PRINT_DELEGATE_ACCOUNTS_PREFERRED, dbIds);
+    }
+
+    @Override
+    public boolean removePreferredDelegateAccounts(final User user,
+            final Set<Long> dbIds) {
+        return removePreferredDelegateDbKeys(user,
+                UserAttrEnum.PROXY_PRINT_DELEGATE_ACCOUNTS_PREFERRED, dbIds);
+    }
+
+    /**
+     *
+     * @param user
+     * @param attrName
+     * @param dao
+     * @return
+     */
+    public Set<Long> prunePreferredDelegateDbKeys(final User user,
+            final UserAttrEnum attrName, final GenericDao<?> dao) {
+
+        final UserAttr userAttr = getUserAttr(user, attrName);
+
+        if (userAttr != null) {
+            try {
+                final Set<Long> dbIds =
+                        JsonHelper.createLongSet(userAttr.getValue());
+
+                final int sizePrv = dbIds.size();
+                final Iterator<Long> iter = dbIds.iterator();
+
+                while (iter.hasNext()) {
+                    final Long id = iter.next();
+
+                    if (id == null || dao.findById(id) == null) {
+                        iter.remove();
+                    }
+                }
+
+                if (dbIds.isEmpty()) {
+                    this.removeUserAttr(user, attrName);
+                } else if (sizePrv != dbIds.size()) {
+                    final String json = JsonHelper.stringifyLongSet(dbIds);
+                    userAttr.setValue(json);
+                    this.setUserAttrValue(user, attrName, json);
+                }
+
+                return dbIds;
+
+            } catch (IOException e) {
+                this.removeUserAttr(user, attrName);
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public Set<Long> prunePreferredDelegateGroups(final User user) {
+        return prunePreferredDelegateDbKeys(user,
+                UserAttrEnum.PROXY_PRINT_DELEGATE_GROUPS_PREFERRED,
+                userGroupDAO());
+    }
+
+    @Override
+    public Set<Long> prunePreferredDelegateAccounts(final User user) {
+        return prunePreferredDelegateDbKeys(user,
+                UserAttrEnum.PROXY_PRINT_DELEGATE_ACCOUNTS_PREFERRED,
+                accountDAO());
+    }
+
 }

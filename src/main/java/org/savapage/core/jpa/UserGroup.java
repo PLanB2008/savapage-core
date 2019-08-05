@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -53,8 +53,8 @@ public class UserGroup extends org.savapage.core.jpa.Entity {
     @Id
     @Column(name = "user_group_id")
     @TableGenerator(name = "userGroupPropGen", table = Sequence.TABLE_NAME,
-            pkColumnName = "SEQUENCE_NAME",
-            valueColumnName = "SEQUENCE_NEXT_VALUE",
+            pkColumnName = Sequence.COL_SEQUENCE_NAME,
+            valueColumnName = Sequence.COL_SEQUENCE_NEXT_VALUE,
             pkColumnValue = TABLE_NAME, allocationSize = 1)
     @GeneratedValue(strategy = GenerationType.TABLE,
             generator = "userGroupPropGen")
@@ -62,6 +62,9 @@ public class UserGroup extends org.savapage.core.jpa.Entity {
 
     @Column(name = "group_name", length = 255, nullable = false)
     private String groupName;
+
+    @Column(name = "full_name", length = 255, nullable = true)
+    private String fullName;
 
     /**
      *
@@ -154,7 +157,6 @@ public class UserGroup extends org.savapage.core.jpa.Entity {
             cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<UserGroupAccount> accounts;
 
-
     public Long getId() {
         return id;
     }
@@ -169,6 +171,14 @@ public class UserGroup extends org.savapage.core.jpa.Entity {
 
     public void setGroupName(String groupName) {
         this.groupName = groupName;
+    }
+
+    public String getFullName() {
+        return fullName;
+    }
+
+    public void setFullName(String fullName) {
+        this.fullName = fullName;
     }
 
     public Boolean getInitialSettingsEnabled() {
@@ -207,7 +217,8 @@ public class UserGroup extends org.savapage.core.jpa.Entity {
         return initialUseGlobalOverdraft;
     }
 
-    public void setInitialUseGlobalOverdraft(Boolean initialUseGlobalOverdraft) {
+    public void
+            setInitialUseGlobalOverdraft(Boolean initialUseGlobalOverdraft) {
         this.initialUseGlobalOverdraft = initialUseGlobalOverdraft;
     }
 

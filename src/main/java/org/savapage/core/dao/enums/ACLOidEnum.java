@@ -51,7 +51,8 @@ public enum ACLOidEnum {
     A_ACCOUNTS(EnumSet.of(ACLPermissionEnum.READER, ACLPermissionEnum.EDITOR)),
 
     /** */
-    A_CONFIG_EDITOR(EnumSet.of(ACLPermissionEnum.READER, ACLPermissionEnum.EDITOR)),
+    A_CONFIG_EDITOR(EnumSet.of(ACLPermissionEnum.READER, //
+            ACLPermissionEnum.EDITOR)),
 
     /** */
     A_DASHBOARD(EnumSet.of(ACLPermissionEnum.READER, ACLPermissionEnum.EDITOR)),
@@ -81,7 +82,8 @@ public enum ACLOidEnum {
     A_USERS(EnumSet.of(ACLPermissionEnum.READER, ACLPermissionEnum.EDITOR)),
 
     /** */
-    A_USER_GROUPS(EnumSet.of(ACLPermissionEnum.READER, ACLPermissionEnum.EDITOR)),
+    A_USER_GROUPS(EnumSet.of(ACLPermissionEnum.READER, //
+            ACLPermissionEnum.EDITOR)),
 
     /** */
     A_VOUCHERS(EnumSet.of(ACLPermissionEnum.READER, ACLPermissionEnum.EDITOR)),
@@ -94,7 +96,9 @@ public enum ACLOidEnum {
     /**
      * The user inbox (SafePages).
      */
-    U_INBOX(EnumSet.of(ACLPermissionEnum.READER, ACLPermissionEnum.EDITOR), EnumSet.of(ACLPermissionEnum.DOWNLOAD, ACLPermissionEnum.SEND)),
+    U_INBOX(EnumSet.of(ACLPermissionEnum.READER, ACLPermissionEnum.EDITOR), //
+            EnumSet.of(ACLPermissionEnum.DOWNLOAD, ACLPermissionEnum.SEND,
+                    ACLPermissionEnum.SIGN)),
 
     /**
      * Financial.
@@ -104,13 +108,31 @@ public enum ACLOidEnum {
     /**
      * Letterhead.
      */
-    U_LETTERHEAD(EnumSet.of(ACLPermissionEnum.READER, ACLPermissionEnum.EDITOR));
+    U_LETTERHEAD(EnumSet.of(ACLPermissionEnum.READER, //
+            ACLPermissionEnum.EDITOR)),
+
+    /**
+     * Can personal account be used for printing.
+     */
+    U_PERSONAL_PRINT(EnumSet.of(ACLPermissionEnum.READER)),
+
+    /**
+     * Print Archive.
+     */
+    U_PRINT_ARCHIVE(EnumSet.of(ACLPermissionEnum.EDITOR),
+            EnumSet.of(ACLPermissionEnum.SELECT)),
+
+    /**
+     * Print Journal.
+     */
+    U_PRINT_JOURNAL(EnumSet.of(ACLPermissionEnum.READER));
 
     /**
      * OIDs for user role. The enum order is the top to bottom order in the UI.
      */
-    private static final ACLOidEnum[] USER_ENUMS_ARRAY =
-            new ACLOidEnum[] { U_INBOX, U_USER, U_FINANCIAL, U_LETTERHEAD };
+    private static final ACLOidEnum[] USER_ENUMS_ARRAY = new ACLOidEnum[] {
+            U_INBOX, U_USER, U_PERSONAL_PRINT, U_PRINT_JOURNAL, U_PRINT_ARCHIVE,
+            U_FINANCIAL, U_LETTERHEAD };
 
     /**
      * OIDs for user role. The enum order is lost.

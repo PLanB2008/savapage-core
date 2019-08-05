@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,6 +34,7 @@ import org.savapage.core.ipp.helpers.IppOptionMap;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.core.services.helpers.InboxSelectScopeEnum;
+import org.savapage.core.services.helpers.PrintScalingEnum;
 import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import org.savapage.core.services.helpers.ProxyPrintCostParms;
 
@@ -93,6 +94,7 @@ public abstract class AbstractProxyPrintReq
     private PrintModeEnum printMode;
 
     private String printerName;
+    private String ticketPrinterName;
     private String jobName;
     private int numberOfCopies;
     private int numberOfPages;
@@ -107,10 +109,34 @@ public abstract class AbstractProxyPrintReq
     private boolean collate;
 
     /**
+     * Archive print job.
+     */
+    private boolean archive;
+
+    /**
+     * Disable print job journal.
+     */
+    private boolean disableJournal;
+
+    /**
      * {@code true} if PDF must to be converted to grayscale before proxy
      * printing.
      */
     private boolean convertToGrayscale = false;
+
+    /**
+     * {@code true} if booklet page ordering is performed client-side (locally).
+     */
+    private boolean localBooklet = false;
+
+    /** */
+    private String jobTicketNumber;
+    /** */
+    private String jobTicketDomain;
+    /** */
+    private String jobTicketUse;
+    /** */
+    private String jobTicketTag;
 
     //
     private Locale locale = Locale.getDefault();
@@ -126,8 +152,6 @@ public abstract class AbstractProxyPrintReq
     private Map<String, String> optionValues;
 
     private InboxSelectScopeEnum clearScope;
-
-    private Boolean fitToPage;
 
     /**
      * {@code true} when one of the job pages has landscape orientation.
@@ -234,6 +258,22 @@ public abstract class AbstractProxyPrintReq
         this.collate = collate;
     }
 
+    public boolean isArchive() {
+        return archive;
+    }
+
+    public void setArchive(boolean archive) {
+        this.archive = archive;
+    }
+
+    public boolean isDisableJournal() {
+        return disableJournal;
+    }
+
+    public void setDisableJournal(boolean disableJournal) {
+        this.disableJournal = disableJournal;
+    }
+
     @Override
     public int getNumberOfCopies() {
         return numberOfCopies;
@@ -266,6 +306,14 @@ public abstract class AbstractProxyPrintReq
 
     public void setPrinterName(String printerName) {
         this.printerName = printerName;
+    }
+
+    public String getTicketPrinterName() {
+        return ticketPrinterName;
+    }
+
+    public void setTicketPrinterName(String ticketPrinterName) {
+        this.ticketPrinterName = ticketPrinterName;
     }
 
     public String getJobName() {
@@ -364,6 +412,14 @@ public abstract class AbstractProxyPrintReq
     }
 
     /**
+     *
+     * @return {@code true} if Booklet option is present.
+     */
+    public boolean isBooklet() {
+        return isBooklet(getOptionValues());
+    }
+
+    /**
      * @return {@code true} if <u>printer</u> is capable of duplex printing.
      */
     public boolean hasDuplex() {
@@ -424,6 +480,27 @@ public abstract class AbstractProxyPrintReq
     public void setMediaSourceOption(final String mediaSource) {
         this.optionValues.put(IppDictJobTemplateAttr.ATTR_MEDIA_SOURCE,
                 mediaSource);
+    }
+
+    /**
+     * Sets the value of the "print-scaling" option.
+     *
+     * @param printScaling
+     *            The {@link PrintScalingEnum}.
+     */
+    public void setPrintScalingOption(final PrintScalingEnum printScaling) {
+        this.optionValues.put(PrintScalingEnum.IPP_NAME,
+                printScaling.getIppValue());
+    }
+
+    /**
+     * Gets the value of the "print-scaling" option.
+     *
+     * @return The {@link PrintScalingEnum}.
+     */
+    public PrintScalingEnum getPrintScalingOption() {
+        return PrintScalingEnum
+                .fromIppValue(this.optionValues.get(PrintScalingEnum.IPP_NAME));
     }
 
     @Override
@@ -514,6 +591,17 @@ public abstract class AbstractProxyPrintReq
         return grayscale;
     }
 
+    public static boolean isBooklet(Map<String, String> optionValues) {
+        boolean booklet = false;
+        final String value = optionValues.get(
+                IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET);
+        if (value != null) {
+            booklet = !value.equals(
+                    IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET_NONE);
+        }
+        return booklet;
+    }
+
     public void setGrayscale() {
         getOptionValues().put(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE,
                 IppKeyword.PRINT_COLOR_MODE_MONOCHROME);
@@ -522,14 +610,6 @@ public abstract class AbstractProxyPrintReq
     public void setColor() {
         getOptionValues().put(IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE,
                 IppKeyword.PRINT_COLOR_MODE_COLOR);
-    }
-
-    public Boolean getFitToPage() {
-        return fitToPage;
-    }
-
-    public void setFitToPage(Boolean fitToPage) {
-        this.fitToPage = fitToPage;
     }
 
     /**
@@ -688,6 +768,77 @@ public abstract class AbstractProxyPrintReq
      */
     public final void setConvertToGrayscale(boolean convertToGrayscale) {
         this.convertToGrayscale = convertToGrayscale;
+    }
+
+    /**
+     * @return {@code true} if booklet page ordering is performed client-side
+     *         (locally).
+     */
+    public boolean isLocalBooklet() {
+        return localBooklet;
+    }
+
+    /**
+     *
+     * @param localBooklet
+     *            {@code true} if booklet page ordering is performed client-side
+     *            (locally).
+     */
+    public void setLocalBooklet(boolean localBooklet) {
+        this.localBooklet = localBooklet;
+    }
+
+    public String getJobTicketNumber() {
+        return jobTicketNumber;
+    }
+
+    public void setJobTicketNumber(String jobTicketNumber) {
+        this.jobTicketNumber = jobTicketNumber;
+    }
+
+    /**
+     * @return Job Ticket Domain or {@code null}.
+     */
+    public String getJobTicketDomain() {
+        return jobTicketDomain;
+    }
+
+    /**
+     * @param jobTicketDomain
+     *            Job Ticket Domain or {@code null}.
+     */
+    public void setJobTicketDomain(String jobTicketDomain) {
+        this.jobTicketDomain = jobTicketDomain;
+    }
+
+    /**
+     * @return Job Ticket Use or {@code null}.
+     */
+    public String getJobTicketUse() {
+        return jobTicketUse;
+    }
+
+    /**
+     * @param jobTicketUse
+     *            Job Ticket Use or {@code null}.
+     */
+    public void setJobTicketUse(String jobTicketUse) {
+        this.jobTicketUse = jobTicketUse;
+    }
+
+    /**
+     * @return Job Ticket Tag or {@code null}.
+     */
+    public String getJobTicketTag() {
+        return jobTicketTag;
+    }
+
+    /**
+     * @param jobTicketTag
+     *            Job Ticket Tag or {@code null}.
+     */
+    public void setJobTicketTag(String jobTicketTag) {
+        this.jobTicketTag = jobTicketTag;
     }
 
 }

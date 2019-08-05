@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -41,14 +41,13 @@ import java.util.Set;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
-import org.apache.commons.lang3.time.DurationFormatUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.config.UserHomePathEnum;
 import org.savapage.core.dao.enums.ExternalSupplierEnum;
 import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.doc.DocContent;
@@ -77,6 +76,7 @@ import org.savapage.core.services.helpers.DocContentPrintInInfo;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
 import org.savapage.core.services.helpers.ProxyPrintInboxPattern;
 import org.savapage.core.util.BigDecimalUtil;
+import org.savapage.core.util.DateUtil;
 import org.savapage.core.util.JsonHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,11 +102,6 @@ public final class OutboxServiceImpl extends AbstractService
     *
     */
     private static final String OUTBOX_DESCRIPT_FILE_NAME = "outbox.json";
-
-    /**
-     * .
-     */
-    private static final String USER_RELATIVE_OUTBOX_PATH = "outbox";
 
     /**
      * Implementation of execution pattern for proxy printing from the user
@@ -173,12 +168,14 @@ public final class OutboxServiceImpl extends AbstractService
         @Override
         protected void onPdfGenerated(final User lockedUser,
                 final ProxyPrintInboxReq request,
-                final LinkedHashMap<String, Integer> uuidPageCount,
-                final PdfCreateInfo createInfo) {
+                final PdfCreateInfo createInfo, final int chunkIndex,
+                final int chunkSize) {
 
-            final OutboxJobDto job =
-                    this.serviceImpl.createOutboxJob(request, this.submitDate,
-                            this.expiryDate, createInfo, uuidPageCount);
+            final OutboxJobDto job = this.serviceImpl.createOutboxJob(request,
+                    this.submitDate, this.expiryDate, createInfo);
+
+            job.setChunkIndex(Integer.valueOf(chunkIndex));
+            job.setChunkSize(Integer.valueOf(chunkSize));
 
             this.outboxInfo.addJob(job.getFile(), job);
         }
@@ -189,7 +186,7 @@ public final class OutboxServiceImpl extends AbstractService
     public File getUserOutboxDir(final String userId) {
         return FileSystems.getDefault()
                 .getPath(ConfigManager.getUserHomeDir(userId),
-                        USER_RELATIVE_OUTBOX_PATH)
+                        UserHomePathEnum.OUTBOX.getPath())
                 .toFile();
     }
 
@@ -208,7 +205,8 @@ public final class OutboxServiceImpl extends AbstractService
     private static File getOutboxInfoFilePath(final String userId) {
         return FileSystems.getDefault()
                 .getPath(ConfigManager.getUserHomeDir(userId),
-                        USER_RELATIVE_OUTBOX_PATH, OUTBOX_DESCRIPT_FILE_NAME)
+                        UserHomePathEnum.OUTBOX.getPath(),
+                        OUTBOX_DESCRIPT_FILE_NAME)
                 .toFile();
     }
 
@@ -225,16 +223,11 @@ public final class OutboxServiceImpl extends AbstractService
 
         final File jsonFile = getOutboxInfoFilePath(userId);
 
-        Writer writer = null;
-        try {
-            writer = new FileWriter(jsonFile);
+        try (Writer writer = new FileWriter(jsonFile);) {
             JsonHelper.write(outboxInfo, writer);
-            writer.close();
         } catch (IOException e) {
             throw new SpException(String.format("Error writing file [%s]",
                     jsonFile.getAbsolutePath()), e);
-        } finally {
-            IOUtils.closeQuietly(writer);
         }
     }
 
@@ -315,8 +308,7 @@ public final class OutboxServiceImpl extends AbstractService
     @Override
     public OutboxJobDto createOutboxJob(final AbstractProxyPrintReq request,
             final Date submitDate, final Date expiryDate,
-            final PdfCreateInfo createInfo,
-            final LinkedHashMap<String, Integer> uuidPageCount) {
+            final PdfCreateInfo createInfo) {
 
         final OutboxJobDto job = new OutboxJobDto();
 
@@ -327,6 +319,13 @@ public final class OutboxServiceImpl extends AbstractService
             // Print job
             job.setFillerPages(createInfo.getBlankFillerPages());
             job.setFile(createInfo.getPdfFile().getName());
+            job.setUuidPageCount(createInfo.getUuidPageCount());
+        }
+
+        // Note: set userid for Job Ticket only. Hold Release jobs do NOT have
+        // userid.
+        if (job.isJobTicket()) {
+            job.setUserId(request.getIdUser());
         }
 
         job.setSheets(PdfPrintCollector.calcNumberOfPrintedSheets(request,
@@ -343,7 +342,17 @@ public final class OutboxServiceImpl extends AbstractService
         job.setCostResult(request.getCostResult());
         job.setSubmitTime(submitDate.getTime());
         job.setExpiryTime(expiryDate.getTime());
-        job.setFitToPage(request.getFitToPage());
+
+        job.setTicketNumber(request.getJobTicketNumber());
+        job.setJobTicketDomain(request.getJobTicketDomain());
+        job.setJobTicketUse(request.getJobTicketUse());
+        job.setJobTicketTag(request.getJobTicketTag());
+
+        if (request.isArchive()) {
+            job.setArchive(request.isArchive());
+        } else {
+            job.setArchive(null);
+        }
 
         if (createInfo != null && createInfo.getPdfOrientationInfo() != null) {
             job.setPdfOrientation(createInfo.getPdfOrientationInfo());
@@ -356,7 +365,6 @@ public final class OutboxServiceImpl extends AbstractService
 
         job.setDrm(request.isDrm());
         job.putOptionValues(request.getOptionValues());
-        job.setUuidPageCount(uuidPageCount);
 
         if (request.getSupplierInfo() != null) {
             job.setExternalSupplierInfo(request.getSupplierInfo());
@@ -403,8 +411,13 @@ public final class OutboxServiceImpl extends AbstractService
             uuidPageCount.put(printInfo.getUuidJob().toString(),
                     Integer.valueOf(request.getNumberOfPages()));
 
-            final OutboxJobDto job = createOutboxJob(request, submitDate,
-                    expiryDate, createInfo, uuidPageCount);
+            createInfo.setUuidPageCount(uuidPageCount);
+
+            final OutboxJobDto job = this.createOutboxJob(request, submitDate,
+                    expiryDate, createInfo);
+
+            job.setChunkIndex(Integer.valueOf(1));
+            job.setChunkSize(Integer.valueOf(1));
 
             outboxInfo.addJob(job.getFile(), job);
 
@@ -711,10 +724,9 @@ public final class OutboxServiceImpl extends AbstractService
 
         if (remainMillis < 0) {
             remainTime = String.format("-%s",
-                    DurationFormatUtils.formatDuration(-remainMillis, "H:mm"));
+                    DateUtil.formatDuration(-remainMillis));
         } else {
-            remainTime =
-                    DurationFormatUtils.formatDuration(remainMillis, "H:mm");
+            remainTime = DateUtil.formatDuration(remainMillis);
         }
         localeInfo.setRemainTime(remainTime);
     }
@@ -855,6 +867,7 @@ public final class OutboxServiceImpl extends AbstractService
             targetTrxInfo.setAccount(account);
             targetTrxInfo.setExtDetails(sourceTrxInfo.getExtDetails());
             targetTrxInfo.setWeight(Integer.valueOf(sourceTrxInfo.getWeight()));
+            targetTrxInfo.setWeightUnit(sourceTrxInfo.getWeightUnit());
         }
 
         //
@@ -900,6 +913,7 @@ public final class OutboxServiceImpl extends AbstractService
             outboxTrxInfo.setAccountId(trxInfo.getAccount().getId());
             outboxTrxInfo.setExtDetails(trxInfo.getExtDetails());
             outboxTrxInfo.setWeight(trxInfo.getWeight().intValue());
+            outboxTrxInfo.setWeightUnit(trxInfo.getWeightUnit());
         }
     }
 
@@ -1011,9 +1025,12 @@ public final class OutboxServiceImpl extends AbstractService
 
     @Override
     public boolean isMonitorPaperCutPrintStatus(final OutboxJobDto job) {
-        return job.getAccountTransactions() != null
-                && job.getAccountTransactions().getTransactions() != null
-                && paperCutService().isExtPaperCutPrint(job.getPrinter());
+
+        final boolean isNonPersonalPrint = job.getAccountTransactions() != null
+                && job.getAccountTransactions().getTransactions() != null;
+
+        return paperCutService().isMonitorPaperCutPrintStatus(job.getPrinter(),
+                isNonPersonalPrint);
     }
 
 }

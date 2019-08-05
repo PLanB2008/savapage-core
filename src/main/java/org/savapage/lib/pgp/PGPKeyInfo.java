@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -46,7 +46,7 @@ public abstract class PGPKeyInfo {
             LoggerFactory.getLogger(PGPKeyInfo.class);
 
     /**
-     * @return Human readable Key ID (upper-case, with "0x" prefix).
+     * @return Human readable Key ID (upper-case, <i>with</i> "0x" prefix).
      */
     public abstract String formattedKeyID();
 
@@ -60,15 +60,6 @@ public abstract class PGPKeyInfo {
      * @return List of UIDs as {@link InternetAddress}.
      */
     public abstract List<InternetAddress> getUids();
-
-    /**
-     * @param id
-     *            The Key ID.
-     * @return Human readable Key ID (upper-case, with "0x" prefix).
-     */
-    protected final String formattedKeyID(final long id) {
-        return String.format("0x%s", Long.toHexString(id).toUpperCase());
-    }
 
     /**
      * @param fingerprint
@@ -100,7 +91,7 @@ public abstract class PGPKeyInfo {
      * @return List of UIDs as {@link InternetAddress}.
      */
     protected final List<InternetAddress>
-    getUids(final PGPPublicKey publicKey) {
+            getUids(final PGPPublicKey publicKey) {
 
         final List<InternetAddress> uids = new ArrayList<>();
 

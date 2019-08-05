@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -31,13 +31,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.file.FileSystems;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Iterator;
-import java.util.List;
+import java.util.Locale;
 
 import javax.print.attribute.Size2DSyntax;
 import javax.print.attribute.standard.MediaSize;
@@ -48,11 +44,13 @@ import org.savapage.core.community.CommunityDictEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
-import org.savapage.core.doc.DocContentTypeEnum;
-import org.savapage.core.doc.IFileConverter;
+import org.savapage.core.doc.PdfRepair;
+import org.savapage.core.doc.PdfToBooklet;
 import org.savapage.core.doc.PdfToGrayscale;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
+import org.savapage.core.i18n.PhraseEnum;
 import org.savapage.core.json.PdfProperties;
+import org.savapage.core.services.ServiceContext;
 import org.savapage.core.util.MediaUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +70,7 @@ import com.itextpdf.text.pdf.PRIndirectReference;
 import com.itextpdf.text.pdf.PdfContentByte;
 import com.itextpdf.text.pdf.PdfCopy;
 import com.itextpdf.text.pdf.PdfDictionary;
+import com.itextpdf.text.pdf.PdfEncryptor;
 import com.itextpdf.text.pdf.PdfException;
 import com.itextpdf.text.pdf.PdfImportedPage;
 import com.itextpdf.text.pdf.PdfName;
@@ -80,6 +79,7 @@ import com.itextpdf.text.pdf.PdfObject;
 import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfStamper;
 import com.itextpdf.text.pdf.PdfWriter;
+import com.itextpdf.text.pdf.XfaForm;
 import com.itextpdf.text.pdf.parser.ContentByteUtils;
 import com.itextpdf.text.pdf.parser.FilteredTextRenderListener;
 import com.itextpdf.text.pdf.parser.PdfContentStreamProcessor;
@@ -92,6 +92,18 @@ import com.itextpdf.text.pdf.parser.PdfContentStreamProcessor;
  */
 public final class ITextPdfCreator extends AbstractPdfCreator {
 
+    /** */
+    public static final String PDF_INFO_KEY_TITLE = "Title";
+    /** */
+    public static final String PDF_INFO_KEY_SUBJECT = "Subject";
+    /** */
+    public static final String PDF_INFO_KEY_AUTHOR = "Author";
+    /** */
+    public static final String PDF_INFO_KEY_CREATOR = "Creator";
+    /** */
+    public static final String PDF_INFO_KEY_KEYWORDS = "Keywords";
+
+    /** */
     private static final int ITEXT_POINTS_PER_INCH = 72;
 
     /**
@@ -137,6 +149,17 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
      * {@code true} if the created pdf is to be converted to grayscale onExit.
      */
     private boolean onExitConvertToGrayscale = false;
+
+    /**
+     * {@code true} if PDF has to be repaired onExit.
+     */
+    private boolean onExitRepairPdf = false;
+
+    /**
+     * {@code true} if PDF with page porder for 2-up duplex booklet is to be
+     * created.
+     */
+    private boolean onExitBookletPageOrder = false;
 
     /**
      * .
@@ -282,35 +305,6 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     }
 
     /**
-     * Checks if rectangles have same size (orientation portrait/landscape is
-     * ignored).
-     *
-     * @param rectA
-     *            The first {@link Rectangle}.
-     * @param rectB
-     *            The second {@link Rectangle}.
-     * @return {@code true} if same size.
-     */
-    private boolean isSameSize(final Rectangle rectA, final Rectangle rectB) {
-
-        final boolean isSame;
-
-        if (rectA.getWidth() == rectB.getWidth()
-                && rectA.getHeight() == rectB.getHeight()) {
-            // portrait == portrait, landscape = landscape
-            isSame = true;
-        } else if (rectA.getWidth() == rectB.getHeight()
-                && rectA.getHeight() == rectB.getWidth()) {
-            // portrait == landscape
-            isSame = true;
-        } else {
-            isSame = false;
-        }
-        return isSame;
-
-    }
-
-    /**
      * Gets the PDF page properties from the media box {@link Rectangle}.
      *
      * @param mediabox
@@ -350,97 +344,21 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         return pageProps;
     }
 
-    @Override
-    public List<SpPdfPageProps> getPageSizeChunks(final String filePathPdf)
-            throws PdfSecurityException {
-
-        final List<SpPdfPageProps> pagePropsList = new ArrayList<>();
-
-        PdfReader reader = null;
-
-        try {
-            /*
-             * Instantiating/opening can throw a BadPasswordException.
-             */
-            reader = new PdfReader(filePathPdf);
-
-            if (reader.isEncrypted()) {
-                throw new PdfSecurityException("Encrypted PDF not supported.");
-            }
-
-            final int nPagesTot = reader.getNumberOfPages();
-
-            /*
-             * First Page.
-             */
-            SpPdfPageProps pagePropsItem = null;
-            Rectangle rectangleItem = null;
-            Rectangle rectangleWlk = null;
-
-            int nPagesItem = 0;
-            int i = 0;
-
-            if (nPagesTot > 0) {
-                // Note: page index is 1-based.
-                rectangleWlk = reader.getPageSize(i + 1);
-
-                nPagesItem = 0;
-                rectangleItem = rectangleWlk;
-                pagePropsItem = this.createPageProps(rectangleWlk);
-                pagePropsList.add(pagePropsItem);
-            }
-            /*
-             * Process pages.
-             */
-            for (; i < nPagesTot; i++) {
-
-                /*
-                 * Next page.
-                 */
-                rectangleWlk = reader.getPageSize(i + 1);
-
-                /*
-                 * New page size.
-                 */
-                if (!this.isSameSize(rectangleItem, rectangleWlk)) {
-
-                    // flush pending item
-                    pagePropsItem.setNumberOfPages(nPagesItem);
-
-                    // create new
-                    nPagesItem = 0;
-                    rectangleItem = rectangleWlk;
-                    pagePropsItem = this.createPageProps(rectangleWlk);
-                    pagePropsList.add(pagePropsItem);
-                }
-
-                nPagesItem++;
-            }
-
-            if (pagePropsItem != null) {
-                // flush last pending item
-                pagePropsItem.setNumberOfPages(nPagesItem);
-            }
-
-        } catch (com.itextpdf.text.exceptions.BadPasswordException e) {
-            throw new PdfSecurityException(
-                    "Password protected PDF not supported.");
-        } catch (IOException e) {
-            throw new SpException(e);
-
-        } finally {
-
-            if (reader != null) {
-                reader.close();
-            }
-        }
-
-        return pagePropsList;
+    /**
+     * Checks if XFA form is present in PDF.
+     *
+     * @param reader
+     *            The PDF reader.
+     * @return {@code true} if XFA form is present.
+     */
+    private static boolean isPdfXfaPresent(final PdfReader reader) {
+        return XfaForm.getXfaObject(reader) != null;
     }
 
     @Override
     public SpPdfPageProps getPageProps(final String filePathPdf)
-            throws PdfSecurityException, PdfValidityException {
+            throws PdfSecurityException, PdfValidityException,
+            PdfPasswordException, PdfUnsupportedException {
 
         SpPdfPageProps pageProps = null;
         PdfReader reader = null;
@@ -456,10 +374,34 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
             reader = new PdfReader(filePathPdf);
 
             if (reader.isEncrypted()) {
-                throw new PdfSecurityException("Encrypted PDF not supported.");
+
+                final int permissions = (int) reader.getPermissions();
+                final boolean isPrintingAllowed = PdfEncryptor
+                        .isPrintingAllowed(permissions)
+                        || PdfEncryptor.isDegradedPrintingAllowed(permissions);
+
+                final PhraseEnum phrase;
+                if (isPrintingAllowed) {
+                    phrase = PhraseEnum.PDF_ENCRYPTED_UNSUPPORTED;
+                } else {
+                    phrase = PhraseEnum.PDF_PRINTING_NOT_ALLOWED;
+                }
+
+                throw new PdfSecurityException(
+                        phrase.uiText(ServiceContext.getLocale()), phrase,
+                        isPrintingAllowed);
+            }
+
+            if (isPdfXfaPresent(reader)) {
+                throw new PdfUnsupportedException(
+                        PhraseEnum.PDF_XFA_UNSUPPORTED.uiText(Locale.ENGLISH),
+                        PhraseEnum.PDF_XFA_UNSUPPORTED
+                                .uiText(ServiceContext.getLocale()),
+                        PhraseEnum.PDF_XFA_UNSUPPORTED);
             }
 
             pageProps = this.createPageProps(reader.getPageSize(firstPage));
+
             pageProps.setNumberOfPages(reader.getNumberOfPages());
             pageProps.setRotationFirstPage(reader.getPageRotation(firstPage));
 
@@ -470,11 +412,16 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
                     PdfPageRotateHelper.getPageContentRotation(ctm).intValue());
 
         } catch (com.itextpdf.text.exceptions.BadPasswordException e) {
-            throw new PdfSecurityException(
-                    "Password protected PDF not supported.");
+            throw new PdfPasswordException(
+                    PhraseEnum.PDF_PASSWORD_UNSUPPORTED
+                            .uiText(ServiceContext.getLocale()),
+                    PhraseEnum.PDF_PASSWORD_UNSUPPORTED);
+
         } catch (InvalidPdfException e) {
-            throw new PdfValidityException(
-                    String.format("Invalid PDF: %s", e.getMessage()));
+            throw new PdfValidityException(e.getMessage(),
+                    PhraseEnum.PDF_INVALID.uiText(ServiceContext.getLocale()),
+                    PhraseEnum.PDF_INVALID);
+
         } catch (IOException e) {
             throw new SpException(e);
 
@@ -491,6 +438,8 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     protected void onInit() {
 
         this.onExitConvertToGrayscale = this.isGrayscalePdf();
+        this.onExitBookletPageOrder = this.isBookletPageOrder();
+        this.onExitRepairPdf = this.isRepairPdf();
 
         this.targetPdfCopyFilePath = String.format("%s.tmp", this.pdfFile);
         this.nPagesAdded2Target = 0;
@@ -519,22 +468,16 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     @Override
     protected void onPdfGenerated(final File pdfFile) throws Exception {
 
-        if (onExitConvertToGrayscale) {
-
-            final IFileConverter converter = new PdfToGrayscale();
-
-            final File grayscalePdfFile =
-                    converter.convert(DocContentTypeEnum.PDF, pdfFile);
-
-            // move
-            final Path source = FileSystems.getDefault()
-                    .getPath(grayscalePdfFile.getAbsolutePath());
-
-            final Path target =
-                    FileSystems.getDefault().getPath(pdfFile.getAbsolutePath());
-
-            Files.move(source, target,
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        if (this.onExitConvertToGrayscale) {
+            replaceWithConvertedPdf(pdfFile,
+                    new PdfToGrayscale().convert(pdfFile));
+        }
+        if (this.onExitRepairPdf) {
+            replaceWithConvertedPdf(pdfFile, new PdfRepair().convert(pdfFile));
+        }
+        if (this.onExitBookletPageOrder) {
+            replaceWithConvertedPdf(pdfFile,
+                    new PdfToBooklet().convert(pdfFile));
         }
     }
 
@@ -835,13 +778,13 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
         java.util.HashMap info = this.readerWlk.getInfo();
 
-        info.put("Title", propPdf.getDesc().getTitle());
+        info.put(PDF_INFO_KEY_TITLE, propPdf.getDesc().getTitle());
 
         if (propPdf.getApply().getSubject()) {
-            info.put("Subject", propPdf.getDesc().getSubject());
+            info.put(PDF_INFO_KEY_SUBJECT, propPdf.getDesc().getSubject());
         }
 
-        info.put("Author", propPdf.getDesc().getAuthor());
+        info.put(PDF_INFO_KEY_AUTHOR, propPdf.getDesc().getAuthor());
 
         /*
          * info.setCreationDate(now);
@@ -849,10 +792,10 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
          * info.setModificationDate(now);
          */
 
-        info.put("Creator", this.getCreatorString());
+        info.put(PDF_INFO_KEY_CREATOR, this.getCreatorString());
 
         if (propPdf.getApply().getKeywords()) {
-            info.put("Keywords", propPdf.getDesc().getKeywords());
+            info.put(PDF_INFO_KEY_KEYWORDS, propPdf.getDesc().getKeywords());
         }
 
         this.targetStamper.setMoreInfo(info);
@@ -865,15 +808,15 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
         java.util.HashMap<String, String> info = this.readerWlk.getInfo();
 
-        info.put("Title", propPdf.getDesc().getTitle());
-        info.put("Subject", "FOR PRINTING PURPOSES ONLY");
-        info.put("Author", CommunityDictEnum.SAVAPAGE.getWord());
+        info.put(PDF_INFO_KEY_TITLE, propPdf.getDesc().getTitle());
+        info.put(PDF_INFO_KEY_SUBJECT, "FOR PRINTING PURPOSES ONLY");
+        info.put(PDF_INFO_KEY_AUTHOR, CommunityDictEnum.SAVAPAGE.getWord());
 
-        info.put("Creator", this.getCreatorString());
+        info.put(PDF_INFO_KEY_CREATOR, this.getCreatorString());
 
         // info.setModificationDate(now);
         if (propPdf.getApply().getKeywords()) {
-            info.put("Keywords", propPdf.getDesc().getKeywords());
+            info.put(PDF_INFO_KEY_KEYWORDS, propPdf.getDesc().getKeywords());
         }
 
         this.targetStamper.setMoreInfo(info);

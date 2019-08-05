@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,9 +21,12 @@
  */
 package org.savapage.core.services.helpers;
 
+import java.util.List;
+
 import org.savapage.core.SpException;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.config.WebAppTypeEnum;
 import org.savapage.core.dao.DeviceDao;
 import org.savapage.core.dao.enums.DeviceAttrEnum;
 import org.savapage.core.dao.enums.DeviceTypeEnum;
@@ -55,71 +58,6 @@ public class UserAuth {
     private static final Logger LOGGER =
             LoggerFactory.getLogger(UserAuth.class);
 
-    /**
-     * Login method 'Username'.
-     * <p>
-     * <b>NOTE</b>: Value is used as URL parameter at WebApp Login.
-     * </p>
-     */
-    public static final String MODE_NAME = "name";
-
-    /**
-     * Login method 'ID Number'.
-     * <p>
-     * <b>NOTE</b>: Value is used as URL parameter at WebApp Login.
-     * </p>
-     */
-    public static final String MODE_ID = "id";
-
-    /**
-     * Login method 'Local NFC Card'.
-     * <p>
-     * <b>NOTE</b>: Value is used as URL parameter at WebApp Login.
-     * </p>
-     */
-    public static final String MODE_CARD_LOCAL = "nfc-local";
-
-    /**
-     * Login method 'Network NFC Card'.
-     * <p>
-     * <b>NOTE</b>: Value is used as URL parameter at WebApp Login.
-     * </p>
-     */
-    public static final String MODE_CARD_IP = "nfc-network";
-
-    /**
-     * Generic OAuth.
-     */
-    public static final String MODE_OAUTH = "oauth";
-
-    /**
-     * Login method for Yubico USB keys.
-     * <p>
-     * <b>NOTE</b>: Value is used as URL parameter at WebApp Login.
-     * </p>
-     */
-    public static final String MODE_YUBIKEY = "yubikey";
-
-    /**
-     *
-     * @author Rijk Ravestein
-     *
-     */
-    public enum Mode {
-        /** Username/password. */
-        NAME,
-        /** ID. */
-        ID,
-        /** Local NFC. */
-        CARD_LOCAL,
-        /** Network NFC. */
-        CARD_IP,
-        /** OAuth (any). */
-        OAUTH,
-        /** YubiKey. */
-        YUBIKEY
-    }
-
     /** */
     private boolean visibleAuthName;
     /** */
@@ -132,7 +70,7 @@ public class UserAuth {
     private boolean visibleAuthYubikey;
 
     /** */
-    private Mode authModeDefault;
+    private UserAuthModeEnum authModeDefault;
 
     /** */
     private boolean authIdPinReq;
@@ -164,39 +102,13 @@ public class UserAuth {
     }
 
     /**
-     * Gets the String representation from the {@link Mode}.
-     *
-     * @param mode
-     *            The authentication mode.
-     * @return {@code null} when not found.
-     */
-    public static String mode(final Mode mode) {
-        switch (mode) {
-        case CARD_IP:
-            return MODE_CARD_IP;
-        case CARD_LOCAL:
-            return MODE_CARD_LOCAL;
-        case ID:
-            return MODE_ID;
-        case NAME:
-            return MODE_NAME;
-        case OAUTH:
-            return MODE_OAUTH;
-        case YUBIKEY:
-            return MODE_YUBIKEY;
-        default:
-            return null;
-        }
-    }
-
-    /**
      * Gets the UI text of an {@link Mode}.
      *
      * @param authMode
-     *            The {@link Mode} (can be {@code null}).
+     *            The {@link UserAuthModeEnum} (can be {@code null}).
      * @return The UI text.
      */
-    public static String getUiText(final Mode authMode) {
+    public static String getUiText(final UserAuthModeEnum authMode) {
         if (authMode == null) {
             // #21B7: CLOCKWISE TOP SEMICIRCLE ARROW
             return "↷";
@@ -221,30 +133,6 @@ public class UserAuth {
     }
 
     /**
-     * Gets the {@link Mode} representation from the String.
-     *
-     * @param mode
-     *            The authentication mode.
-     * @return {@code null} when not found.
-     */
-    public static Mode mode(final String mode) {
-        if (mode.equals(MODE_NAME)) {
-            return Mode.NAME;
-        } else if (mode.equals(MODE_ID)) {
-            return Mode.ID;
-        } else if (mode.equals(MODE_CARD_IP)) {
-            return Mode.CARD_IP;
-        } else if (mode.equals(MODE_CARD_LOCAL)) {
-            return Mode.CARD_LOCAL;
-        } else if (mode.equals(MODE_OAUTH)) {
-            return Mode.OAUTH;
-        } else if (mode.equals(MODE_YUBIKEY)) {
-            return Mode.YUBIKEY;
-        }
-        return null;
-    }
-
-    /**
      * Renders the User Authentication Mode parameters for a terminal.
      *
      * @param terminal
@@ -252,11 +140,16 @@ public class UserAuth {
      * @param authModeRequest
      *            The requested authentication mode (used to determine the
      *            default {@link Mode}). Can be {@code null}.
-     * @param isAdminWebAppContext
-     *            {@code true} if this is an Admin WebApp context.
+     * @param webAppType
+     *            The type of Web App.
+     * @param internetAccess
+     *            If {@code true}, the Web App is requested from the Internet.
      */
     public UserAuth(final Device terminal, final String authModeRequest,
-            final boolean isAdminWebAppContext) {
+            final WebAppTypeEnum webAppType, final boolean internetAccess) {
+
+        final boolean isAdminWebAppContext =
+                webAppType.equals(WebAppTypeEnum.ADMIN);
 
         final DeviceDao deviceDao =
                 ServiceContext.getDaoContext().getDeviceDao();
@@ -299,10 +192,10 @@ public class UserAuth {
         boolean showAuthCardIp = false;
         boolean showAuthYubiKey = false;
 
-        Mode authModeReq = null;
+        UserAuthModeEnum authModeReq = null;
 
         if (authModeRequest != null) {
-            authModeReq = UserAuth.mode(authModeRequest);
+            authModeReq = UserAuthModeEnum.fromDbValue(authModeRequest);
         }
 
         /*
@@ -336,9 +229,9 @@ public class UserAuth {
             this.allowAuthYubikey =
                     customAuth.isTrue(DeviceAttrEnum.AUTH_MODE_YUBIKEY, false);
 
-            this.authModeDefault = UserAuth
-                    .mode(customAuth.get(DeviceAttrEnum.AUTH_MODE_DEFAULT,
-                            UserAuth.mode(UserAuth.Mode.NAME)));
+            this.authModeDefault = UserAuthModeEnum.fromDbValue(
+                    customAuth.get(DeviceAttrEnum.AUTH_MODE_DEFAULT,
+                            UserAuthModeEnum.NAME.toDbValue()));
 
             showAuthName = this.allowAuthName;
             showAuthId = this.allowAuthId;
@@ -374,59 +267,162 @@ public class UserAuth {
 
         } else {
             /*
-             * Global values.
+             * Use dedicated Web App values when accessed from the Internet.
              */
-            this.allowAuthName = cm.isConfigValue(Key.AUTH_MODE_NAME);
-            this.allowAuthId = cm.isConfigValue(Key.AUTH_MODE_ID);
-            this.allowAuthCardLocal =
-                    cm.isConfigValue(Key.AUTH_MODE_CARD_LOCAL);
-            this.allowAuthYubikey = cm.isConfigValue(Key.AUTH_MODE_YUBIKEY);
-            this.allowAuthCardIp = false;
+            Key keyInternetAuthEnable = null;
+            Key keyInternetAuthModes = null;
 
-            showAuthName = cm.isConfigValue(Key.AUTH_MODE_NAME_SHOW);
-            showAuthId = cm.isConfigValue(Key.AUTH_MODE_ID_SHOW);
-            showAuthCardLocal = cm.isConfigValue(Key.AUTH_MODE_CARD_LOCAL_SHOW);
-            showAuthYubiKey = cm.isConfigValue(Key.AUTH_MODE_YUBIKEY_SHOW);
-            showAuthCardIp = false;
-
-            this.authModeDefault =
-                    UserAuth.mode(cm.getConfigValue(Key.AUTH_MODE_DEFAULT));
-
-            /*
-             * This can only occur when we refactored the URL API (URL parameter
-             * names). Just in case we fall-back to basic Username login.
-             */
-            if (this.authModeDefault == null) {
-                LOGGER.warn("System AuthModeDefault ["
-                        + cm.getConfigValue(Key.AUTH_MODE_DEFAULT)
-                        + "] not found: using Username "
-                        + "as default login method");
-                this.authModeDefault = Mode.NAME;
+            if (internetAccess) {
+                switch (webAppType) {
+                case ADMIN:
+                    keyInternetAuthEnable =
+                            Key.WEBAPP_INTERNET_ADMIN_AUTH_MODE_ENABLE;
+                    keyInternetAuthModes = Key.WEBAPP_INTERNET_ADMIN_AUTH_MODES;
+                    break;
+                case PRINTSITE:
+                    keyInternetAuthEnable =
+                            Key.WEBAPP_INTERNET_PRINTSITE_AUTH_MODE_ENABLE;
+                    keyInternetAuthModes =
+                            Key.WEBAPP_INTERNET_PRINTSITE_AUTH_MODES;
+                    break;
+                case JOBTICKETS:
+                    keyInternetAuthEnable =
+                            Key.WEBAPP_INTERNET_JOBTICKETS_AUTH_MODE_ENABLE;
+                    keyInternetAuthModes =
+                            Key.WEBAPP_INTERNET_JOBTICKETS_AUTH_MODES;
+                    break;
+                case POS:
+                    keyInternetAuthEnable =
+                            Key.WEBAPP_INTERNET_POS_AUTH_MODE_ENABLE;
+                    keyInternetAuthModes = Key.WEBAPP_INTERNET_POS_AUTH_MODES;
+                    break;
+                case USER:
+                    keyInternetAuthEnable =
+                            Key.WEBAPP_INTERNET_USER_AUTH_MODE_ENABLE;
+                    keyInternetAuthModes = Key.WEBAPP_INTERNET_USER_AUTH_MODES;
+                    break;
+                default:
+                    break;
+                }
             }
 
-            boolean isValidDefault = false;
+            final boolean useInternetValues = keyInternetAuthEnable != null
+                    && cm.isConfigValue(keyInternetAuthEnable);
 
-            switch (this.authModeDefault) {
-            case CARD_LOCAL:
-                isValidDefault = this.allowAuthCardLocal && showAuthCardLocal;
-                break;
-            case ID:
-                isValidDefault = this.allowAuthId && showAuthId;
-                break;
-            case NAME:
-                isValidDefault = this.allowAuthName && showAuthName;
-                break;
-            case YUBIKEY:
-                isValidDefault = this.allowAuthYubikey && showAuthYubiKey;
-                break;
-            default:
-                break;
+            if (useInternetValues) {
+
+                this.allowAuthName = false;
+
+                final List<UserAuthModeEnum> internetAuthModes =
+                        UserAuthModeEnum.parseList(
+                                cm.getConfigValue(keyInternetAuthModes));
+
+                int iMode = 0;
+
+                for (final UserAuthModeEnum mode : internetAuthModes) {
+
+                    if (mode == UserAuthModeEnum.OAUTH) {
+                        if (internetAuthModes.size() == 1) {
+                            this.authModeDefault = mode;
+                        }
+                        continue;
+                    }
+
+                    if (iMode == 0) {
+                        this.authModeDefault = mode;
+                    }
+                    iMode++;
+
+                    switch (mode) {
+                    case CARD_LOCAL:
+                        this.allowAuthCardLocal = true;
+                        showAuthCardLocal = true;
+                        break;
+                    case CARD_IP:
+                        this.allowAuthCardIp = true;
+                        showAuthCardIp = true;
+                        break;
+                    case ID:
+                        this.allowAuthId = true;
+                        showAuthId = true;
+                        break;
+                    case NAME:
+                        this.allowAuthName = true;
+                        showAuthName = true;
+                        break;
+                    case YUBIKEY:
+                        this.allowAuthYubikey = true;
+                        showAuthYubiKey = true;
+                        break;
+                    default:
+                        break;
+                    }
+                }
+
+                if (!this.allowAuthName) {
+                    this.authCardSelfAssoc = false;
+                }
+
+            } else {
+
+                /*
+                 * Global values.
+                 */
+                this.allowAuthName = cm.isConfigValue(Key.AUTH_MODE_NAME);
+                this.allowAuthId = cm.isConfigValue(Key.AUTH_MODE_ID);
+                this.allowAuthCardLocal =
+                        cm.isConfigValue(Key.AUTH_MODE_CARD_LOCAL);
+                this.allowAuthYubikey = cm.isConfigValue(Key.AUTH_MODE_YUBIKEY);
+                this.allowAuthCardIp = false;
+
+                showAuthName = cm.isConfigValue(Key.AUTH_MODE_NAME_SHOW);
+                showAuthId = cm.isConfigValue(Key.AUTH_MODE_ID_SHOW);
+                showAuthCardLocal =
+                        cm.isConfigValue(Key.AUTH_MODE_CARD_LOCAL_SHOW);
+                showAuthYubiKey = cm.isConfigValue(Key.AUTH_MODE_YUBIKEY_SHOW);
+                showAuthCardIp = false;
+
+                this.authModeDefault = UserAuthModeEnum
+                        .fromDbValue(cm.getConfigValue(Key.AUTH_MODE_DEFAULT));
+
+                /*
+                 * This can only occur when we refactored the URL API (URL
+                 * parameter names). Just in case we fall-back to basic Username
+                 * login.
+                 */
+                if (this.authModeDefault == null) {
+                    LOGGER.warn("System AuthModeDefault ["
+                            + cm.getConfigValue(Key.AUTH_MODE_DEFAULT)
+                            + "] not found: using Username "
+                            + "as default login method");
+                    this.authModeDefault = UserAuthModeEnum.NAME;
+                }
+
+                boolean isValidDefault = false;
+
+                switch (this.authModeDefault) {
+                case CARD_LOCAL:
+                    isValidDefault =
+                            this.allowAuthCardLocal && showAuthCardLocal;
+                    break;
+                case ID:
+                    isValidDefault = this.allowAuthId && showAuthId;
+                    break;
+                case NAME:
+                    isValidDefault = this.allowAuthName && showAuthName;
+                    break;
+                case YUBIKEY:
+                    isValidDefault = this.allowAuthYubikey && showAuthYubiKey;
+                    break;
+                default:
+                    break;
+                }
+
+                if (!isValidDefault) {
+                    this.authModeDefault = UserAuthModeEnum.NAME;
+                }
             }
-
-            if (!isValidDefault) {
-                this.authModeDefault = Mode.NAME;
-            }
-
+            //
             if (!isAdminWebAppContext) {
                 this.maxIdleSeconds =
                         cm.getConfigInt(Key.WEBAPP_USER_MAX_IDLE_SECS);
@@ -437,7 +433,7 @@ public class UserAuth {
          * Just in case.
          */
         if (this.authModeDefault == null) {
-            this.authModeDefault = UserAuth.Mode.NAME;
+            this.authModeDefault = UserAuthModeEnum.NAME;
         }
 
         /*
@@ -454,9 +450,9 @@ public class UserAuth {
 
             /*
              * INVARIANT: Admin WebApp SHOULD always be able to login with
-             * user/password.
+             * user/password in intranet context.
              */
-            if (isAdminWebAppContext) {
+            if (isAdminWebAppContext && !internetAccess) {
                 this.visibleAuthName = true;
             }
 
@@ -505,30 +501,32 @@ public class UserAuth {
          * INVARIANT: The default MUST match a valid authentication method. If
          * not it should be corrected.
          */
-        boolean incorrectDefault = (this.authModeDefault == Mode.NAME
-                && !this.visibleAuthName)
-                || (this.authModeDefault == Mode.ID && !this.visibleAuthId)
-                || (this.authModeDefault == Mode.CARD_LOCAL
-                        && !this.visibleAuthCardLocal)
-                || (this.authModeDefault == Mode.CARD_IP
-                        && !this.visibleAuthCardIp)
-                || (this.authModeDefault == Mode.YUBIKEY
-                        && !this.visibleAuthYubikey);
+        boolean incorrectDefault =
+                (this.authModeDefault == UserAuthModeEnum.NAME
+                        && !this.visibleAuthName)
+                        || (this.authModeDefault == UserAuthModeEnum.ID
+                                && !this.visibleAuthId)
+                        || (this.authModeDefault == UserAuthModeEnum.CARD_LOCAL
+                                && !this.visibleAuthCardLocal)
+                        || (this.authModeDefault == UserAuthModeEnum.CARD_IP
+                                && !this.visibleAuthCardIp)
+                        || (this.authModeDefault == UserAuthModeEnum.YUBIKEY
+                                && !this.visibleAuthYubikey);
 
         if (incorrectDefault) {
             /*
              * Assign the more advanced methods first.
              */
             if (this.visibleAuthYubikey) {
-                this.authModeDefault = Mode.YUBIKEY;
+                this.authModeDefault = UserAuthModeEnum.YUBIKEY;
             } else if (this.visibleAuthCardIp) {
-                this.authModeDefault = Mode.CARD_IP;
+                this.authModeDefault = UserAuthModeEnum.CARD_IP;
             } else if (this.visibleAuthCardLocal) {
-                this.authModeDefault = Mode.CARD_LOCAL;
+                this.authModeDefault = UserAuthModeEnum.CARD_LOCAL;
             } else if (this.visibleAuthId) {
-                this.authModeDefault = Mode.ID;
+                this.authModeDefault = UserAuthModeEnum.ID;
             } else if (this.visibleAuthName) {
-                this.authModeDefault = Mode.NAME;
+                this.authModeDefault = UserAuthModeEnum.NAME;
             }
         }
     }
@@ -536,7 +534,7 @@ public class UserAuth {
     /**
      * Check if an authentication mode is allowed.
      * <p>
-     * NOTE: when Card Self Association is enabled, {@link Mode#NAME} is ALWAYS
+     * NOTE: when Card Self Association is enabled, {@link Mode#ID} is ALWAYS
      * allowed.
      * </p>
      *
@@ -544,17 +542,17 @@ public class UserAuth {
      *            The authentication mode.
      * @return {@code true} when allowed.
      */
-    public boolean isAuthModeAllowed(final UserAuth.Mode mode) {
+    public boolean isAuthModeAllowed(final UserAuthModeEnum mode) {
 
-        if (mode == UserAuth.Mode.NAME && authCardSelfAssoc) {
+        if (mode == UserAuthModeEnum.NAME && authCardSelfAssoc) {
             return true;
         }
 
-        return (allowAuthName && mode == UserAuth.Mode.NAME)
-                || (allowAuthId && mode == UserAuth.Mode.ID)
-                || (allowAuthCardLocal && mode == UserAuth.Mode.CARD_LOCAL)
-                || (allowAuthCardIp && mode == UserAuth.Mode.CARD_IP)
-                || (allowAuthYubikey && mode == UserAuth.Mode.YUBIKEY);
+        return (allowAuthName && mode == UserAuthModeEnum.NAME)
+                || (allowAuthId && mode == UserAuthModeEnum.ID)
+                || (allowAuthCardLocal && mode == UserAuthModeEnum.CARD_LOCAL)
+                || (allowAuthCardIp && mode == UserAuthModeEnum.CARD_IP)
+                || (allowAuthYubikey && mode == UserAuthModeEnum.YUBIKEY);
     }
 
     public boolean isVisibleAuthName() {
@@ -577,7 +575,7 @@ public class UserAuth {
         return visibleAuthYubikey;
     }
 
-    public Mode getAuthModeDefault() {
+    public UserAuthModeEnum getAuthModeDefault() {
         return authModeDefault;
     }
 

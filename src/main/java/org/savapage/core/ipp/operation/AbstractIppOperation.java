@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,9 +21,11 @@
  */
 package org.savapage.core.ipp.operation;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
+import org.savapage.core.ipp.IppProcessingException;
 import org.savapage.core.ipp.encoding.IppEncoder;
 import org.savapage.core.jpa.IppQueue;
 import org.slf4j.Logger;
@@ -69,23 +71,24 @@ public abstract class AbstractIppOperation {
 
     /**
      *
-     * @param reader
+     * @param istr
+     *            Input stream.
      * @param ostr
-     * @throws Exception
+     *            Output Stream
+     * @throws IOException
+     *             If IO error.
+     * @throws IppProcessingException
+     *             If exception during processing.
      */
-    abstract void process(final InputStream istr, final OutputStream ostr)
-            throws Exception;
+    abstract void process(InputStream istr, OutputStream ostr)
+            throws IOException, IppProcessingException;
 
     /**
      * Handles an IPP printing request.
      *
-     * @param remoteAddr
-     *            The client IP address.
      * @param queue
      *            The print queue. Can be {@code null} is no queue matches the
      *            URI.
-     * @param requestedQueueUrlPath
-     *            The requested URL path.
      * @param istr
      *            The IPP input stream.
      * @param ostr
@@ -99,17 +102,21 @@ public abstract class AbstractIppOperation {
      * @param trustedUserAsRequester
      *            If {@code true}, the trustedIppClientUserId overrules the
      *            requesting user.
+     * @param ctx
+     *            The operation context.
      * @return The {@link IppOperationId}, or {@code null} when requested
      *         operation is not supported.
-     * @throws Exception
-     *             When an error occurred.
+     * @throws IOException
+     *             If IO error.
+     * @throws IppProcessingException
+     *             If exception during processing.
      */
-    public static IppOperationId handle(final String remoteAddr,
-            final IppQueue queue, final String requestedQueueUrlPath,
+    public static IppOperationId handle(final IppQueue queue,
             final InputStream istr, final OutputStream ostr,
             final boolean hasPrintAccessToQueue,
             final String trustedIppClientUserId,
-            final boolean trustedUserAsRequester) throws Exception {
+            final boolean trustedUserAsRequester, final IppOperationContext ctx)
+            throws IOException, IppProcessingException {
 
         // -----------------------------------------------
         // | version-number (2 bytes - required)
@@ -141,13 +148,12 @@ public abstract class AbstractIppOperation {
         final AbstractIppOperation operation;
 
         if (operationId == IppOperationId.PRINT_JOB.asInt()) {
-            operation = new IppPrintJobOperation(remoteAddr, queue,
-                    hasPrintAccessToQueue, trustedIppClientUserId,
-                    trustedUserAsRequester);
+            operation = new IppPrintJobOperation(queue, hasPrintAccessToQueue,
+                    trustedIppClientUserId, trustedUserAsRequester, ctx);
 
         } else if (operationId == IppOperationId.VALIDATE_JOB.asInt()) {
-            operation = new IppValidateJobOperation(remoteAddr, queue,
-                    requestedQueueUrlPath, hasPrintAccessToQueue,
+            operation = new IppValidateJobOperation(ctx.getRemoteAddr(), queue,
+                    ctx.getRequestedQueueUrlPath(), hasPrintAccessToQueue,
                     trustedIppClientUserId, trustedUserAsRequester);
 
         } else if (operationId == IppOperationId.GET_PRINTER_ATTR.asInt()) {

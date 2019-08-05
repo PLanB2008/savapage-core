@@ -177,6 +177,32 @@ public final class PrinterDaoImpl extends GenericDaoImpl<Printer>
     }
 
     @Override
+    public boolean isJobTicketRedirectPrinter(final Long id) {
+
+        final String jpql = String.format(
+                "SELECT COUNT(PM.id) FROM PrinterGroupMember PM "
+                        + "WHERE PM.printer.id = :id AND PM.group.id IN "
+                        + "(SELECT PG.id FROM PrinterGroup PG "
+                        + " WHERE PG.displayName IN"
+                        + " (SELECT A1.value FROM PrinterAttr A1"
+                        + "  WHERE A1.name = '%s' "
+                        + "  AND A1.printer.id IN " //
+                        + "  (SELECT A2.printer.id FROM PrinterAttr A2"
+                        + "   WHERE A2.name = '%s' AND A2.value = '%s'"
+                        + "  ) GROUP BY A1.value" //
+                        + " )" //
+                        + ")", //
+                PrinterAttrEnum.JOBTICKET_PRINTER_GROUP.getDbName(),
+                PrinterAttrEnum.JOBTICKET_ENABLE.getDbName(),
+                PrinterAttrDao.V_YES);
+
+        final Query query = getEntityManager().createQuery(jpql);
+        query.setParameter("id", id);
+        final Number countResult = (Number) query.getSingleResult();
+        return countResult.longValue() > 0;
+    }
+
+    @Override
     public Printer findByName(final String printerName) {
 
         final String key = ProxyPrinterName.getDaoName(printerName);
@@ -287,7 +313,20 @@ public final class PrinterDaoImpl extends GenericDaoImpl<Printer>
     }
 
     /**
-     * Applies PrinterAttr constraint to the JPQL string.
+     * Applies PrinterAttr presence constraint to the JPQL string.
+     *
+     * @param where
+     *            The {@link StringBuilder} to append to.
+     * @param attrName
+     *            The attribute name.
+     */
+    private void applyPrinterAttrConstraint(final StringBuilder where,
+            final PrinterAttrEnum attrName) {
+        where.append("(A.name = \'").append(attrName.getDbName()).append("\')");
+    }
+
+    /**
+     * Applies PrinterAttr boolean constraint to the JPQL string.
      *
      * @param where
      *            The {@link StringBuilder} to append to.
@@ -358,20 +397,36 @@ public final class PrinterDaoImpl extends GenericDaoImpl<Printer>
             where.append(
                     " P NOT IN (SELECT A.printer FROM PrinterAttr A WHERE ");
 
+            int nConstraint = 0;
+
             if (filter.getInternal() != null) {
                 applyPrinterAttrConstraint(where,
                         PrinterAttrEnum.ACCESS_INTERNAL,
                         !filter.getInternal().booleanValue());
+                nConstraint++;
             }
+
             if (filter.getJobTicket() != null) {
-                if (filter.getInternal() != null) {
+                if (nConstraint > 0) {
                     where.append(" OR ");
                 }
                 applyPrinterAttrConstraint(where,
                         PrinterAttrEnum.JOBTICKET_ENABLE,
                         !filter.getJobTicket().booleanValue());
+                nConstraint++;
             }
+            where.append(")");
+        }
 
+        if (filter.getSnmp() != null) {
+
+            if (nWhere > 0) {
+                where.append(" AND");
+            }
+            nWhere++;
+
+            where.append(" P IN (SELECT A.printer FROM PrinterAttr A WHERE ");
+            applyPrinterAttrConstraint(where, PrinterAttrEnum.SNMP_DATE);
             where.append(")");
         }
 
@@ -402,7 +457,6 @@ public final class PrinterDaoImpl extends GenericDaoImpl<Printer>
         }
 
         return printer;
-
     }
 
 }

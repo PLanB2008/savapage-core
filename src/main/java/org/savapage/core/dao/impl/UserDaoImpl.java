@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -228,20 +228,31 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
             where.append(" G.id = :userGroupId");
         }
 
-        if (filter.getContainingIdText() != null) {
-            if (nWhere > 0) {
-                where.append(" AND");
-            }
-            nWhere++;
-            where.append(" lower(U.userId) like :containingIdText");
-        }
+        if (filter.getContainingNameOrIdText() == null) {
 
-        if (filter.getContainingNameText() != null) {
+            if (filter.getContainingIdText() != null) {
+                if (nWhere > 0) {
+                    where.append(" AND");
+                }
+                nWhere++;
+                where.append(" lower(U.userId) like :containingIdText");
+            }
+
+            if (filter.getContainingNameText() != null) {
+                if (nWhere > 0) {
+                    where.append(" AND");
+                }
+                nWhere++;
+                where.append(" lower(U.fullName) like :containingNameText");
+            }
+        } else {
+
             if (nWhere > 0) {
                 where.append(" AND");
             }
             nWhere++;
-            where.append(" lower(U.fullName) like :containingNameText");
+            where.append(" (lower(U.fullName) like :containingNameOrIdText");
+            where.append(" OR lower(U.userId) like :containingNameOrIdText)");
         }
 
         if (filter.getContainingEmailText() != null) {
@@ -330,6 +341,13 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
             where.append(" OR (UA.name != null AND UA.value NOT LIKE :jsonRole"
                     + " AND UGA.value LIKE :jsonRoleValue)");
 
+            //
+            if (filter.getAclFilter().getAclRoleUsersExt() != null
+                    && !filter.getAclFilter().getAclRoleUsersExt().isEmpty()) {
+                where.append(" OR U.id IN :aclRoleUsersExt");
+            }
+
+            //
             where.append(")");
         }
 
@@ -369,20 +387,33 @@ public final class UserDaoImpl extends GenericDaoImpl<User> implements UserDao {
             query.setParameter("jsonRoleValue", String.format("%%%s:%s%%",
                     jsonRole, Boolean.TRUE.toString()));
 
+            if (filter.getAclFilter().getAclRoleUsersExt() != null
+                    && !filter.getAclFilter().getAclRoleUsersExt().isEmpty()) {
+                query.setParameter("aclRoleUsersExt",
+                        filter.getAclFilter().getAclRoleUsersExt());
+            }
+
         }
 
         if (filter.getUserGroupId() != null) {
             query.setParameter("userGroupId", filter.getUserGroupId());
         }
 
-        if (filter.getContainingIdText() != null) {
-            query.setParameter("containingIdText", String.format("%%%s%%",
-                    filter.getContainingIdText().toLowerCase()));
+        if (filter.getContainingNameOrIdText() == null) {
+
+            if (filter.getContainingIdText() != null) {
+                query.setParameter("containingIdText", String.format("%%%s%%",
+                        filter.getContainingIdText().toLowerCase()));
+            }
+            if (filter.getContainingNameText() != null) {
+                query.setParameter("containingNameText", String.format("%%%s%%",
+                        filter.getContainingNameText().toLowerCase()));
+            }
+        } else {
+            query.setParameter("containingNameOrIdText", String.format("%%%s%%",
+                    filter.getContainingNameOrIdText().toLowerCase()));
         }
-        if (filter.getContainingNameText() != null) {
-            query.setParameter("containingNameText", String.format("%%%s%%",
-                    filter.getContainingNameText().toLowerCase()));
-        }
+
         if (filter.getContainingEmailText() != null) {
             query.setParameter("containingEmailText", String.format("%%%s%%",
                     filter.getContainingEmailText().toLowerCase()));

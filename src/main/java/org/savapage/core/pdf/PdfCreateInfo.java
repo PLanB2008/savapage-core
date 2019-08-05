@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,10 +22,12 @@
 package org.savapage.core.pdf;
 
 import java.io.File;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 import org.savapage.core.inbox.PdfOrientationInfo;
 import org.savapage.core.ipp.rules.IppRuleNumberUp;
+import org.savapage.core.jpa.DocLog;
 
 /**
  * Information about a created PDF file.
@@ -58,6 +60,17 @@ public final class PdfCreateInfo {
      * {@link IppRuleNumberUp}.
      */
     private PdfOrientationInfo pdfOrientationInfo;
+
+    /**
+     * {@code true}, if PDF/PGP signed.
+     */
+    private boolean pgpSigned;
+
+    /**
+     * The number of selected pages per {@link DocLog} input file UUID. A value
+     * of {@code null} is allowed (for Copy Job Ticket).
+     */
+    private LinkedHashMap<String, Integer> uuidPageCount;
 
     /**
      *
@@ -142,6 +155,39 @@ public final class PdfCreateInfo {
     public void
             setPdfOrientationInfo(final PdfOrientationInfo orientationInfo) {
         this.pdfOrientationInfo = orientationInfo;
+    }
+
+    /**
+     * @return {@code true}, if PDF/PGP signed.
+     */
+    public boolean isPgpSigned() {
+        return pgpSigned;
+    }
+
+    /**
+     * @param pgpSigned
+     *            {@code true}, if PDF/PGP signed.
+     */
+    public void setPgpSigned(boolean pgpSigned) {
+        this.pgpSigned = pgpSigned;
+    }
+
+    /**
+     * @return The number of selected pages per {@link DocLog} input file UUID.
+     *         A value of {@code null} is allowed (for Copy Job Ticket).
+     */
+    public LinkedHashMap<String, Integer> getUuidPageCount() {
+        return uuidPageCount;
+    }
+
+    /**
+     * @param uuidPageCount
+     *            The number of selected pages per {@link DocLog} input file
+     *            UUID. A value of {@code null} is allowed (for Copy Job
+     *            Ticket).
+     */
+    public void setUuidPageCount(LinkedHashMap<String, Integer> uuidPageCount) {
+        this.uuidPageCount = uuidPageCount;
     }
 
 }

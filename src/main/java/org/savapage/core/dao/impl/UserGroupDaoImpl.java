@@ -31,6 +31,7 @@ import javax.persistence.criteria.CriteriaBuilder;
 import javax.persistence.criteria.CriteriaQuery;
 import javax.persistence.criteria.Root;
 
+import org.savapage.core.SpException;
 import org.savapage.core.dao.UserGroupDao;
 import org.savapage.core.dao.enums.ReservedUserGroupEnum;
 import org.savapage.core.dao.enums.UserGroupAttrEnum;
@@ -105,10 +106,12 @@ public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup>
         //
         jpql.append(" ORDER BY ");
 
-        if (orderBy == Field.NAME) {
+        if (orderBy == Field.ID) {
             jpql.append("C.groupName");
+        } else if (orderBy == Field.NAME) {
+            jpql.append("C.fullName");
         } else {
-            jpql.append("C.groupName");
+            throw new SpException(orderBy.toString() + " not supported.");
         }
 
         if (!sortAscending) {
@@ -151,12 +154,37 @@ public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup>
             where.append(" A.name = :roleName AND A.value like :jsonRoleValue");
         }
 
-        if (filter.getContainingText() != null) {
+        if (filter.getContainingNameOrIdText() == null) {
+
+            if (filter.getContainingIdText() != null) {
+                if (nWhere > 0) {
+                    where.append(" AND");
+                }
+                nWhere++;
+                where.append(" lower(C.groupName) like :containingIdText");
+            }
+            if (filter.getContainingNameText() != null) {
+                if (nWhere > 0) {
+                    where.append(" AND");
+                }
+                nWhere++;
+                where.append(" lower(C.fullName) like :containingNameText");
+            }
+        } else {
             if (nWhere > 0) {
                 where.append(" AND");
             }
             nWhere++;
-            where.append(" lower(C.groupName) like :containingText");
+            where.append(" (lower(C.groupName) like :containingNameOrIdText");
+            where.append(" OR lower(C.fullName) like :containingNameOrIdText)");
+        }
+
+        if (filter.getGroupIds() != null) {
+            if (nWhere > 0) {
+                where.append(" AND");
+            }
+            nWhere++;
+            where.append(" C.id IN :groupIds");
         }
 
         if (nWhere > 0) {
@@ -195,9 +223,22 @@ public final class UserGroupDaoImpl extends GenericDaoImpl<UserGroup>
             query.setParameter("jsonRoleValue", like.toString());
         }
 
-        if (filter.getContainingText() != null) {
-            query.setParameter("containingText", String.format("%%%s%%",
-                    filter.getContainingText().toLowerCase()));
+        if (filter.getContainingNameOrIdText() == null) {
+            if (filter.getContainingIdText() != null) {
+                query.setParameter("containingIdText", String.format("%%%s%%",
+                        filter.getContainingIdText().toLowerCase()));
+            }
+            if (filter.getContainingNameText() != null) {
+                query.setParameter("containingNameText", String.format("%%%s%%",
+                        filter.getContainingNameText().toLowerCase()));
+            }
+        } else {
+            query.setParameter("containingNameOrIdText", String.format("%%%s%%",
+                    filter.getContainingNameOrIdText().toLowerCase()));
+        }
+
+        if (filter.getGroupIds() != null) {
+            query.setParameter("groupIds", filter.getGroupIds());
         }
 
         return query;

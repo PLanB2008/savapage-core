@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -36,8 +36,10 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.PostScriptDrmException;
+import org.savapage.core.SpException;
 import org.savapage.core.cometd.AdminPublisher;
 import org.savapage.core.cometd.PubLevelEnum;
 import org.savapage.core.cometd.PubTopicEnum;
@@ -46,20 +48,35 @@ import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.enums.DocLogProtocolEnum;
+import org.savapage.core.dao.enums.IppRoutingEnum;
 import org.savapage.core.doc.DocContent;
 import org.savapage.core.doc.DocContentTypeEnum;
 import org.savapage.core.doc.DocInputStream;
-import org.savapage.core.doc.IFileConverter;
+import org.savapage.core.doc.IDocFileConverter;
 import org.savapage.core.doc.IStreamConverter;
+import org.savapage.core.doc.PdfRepair;
+import org.savapage.core.doc.PdfToDecrypted;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
+import org.savapage.core.i18n.PhraseEnum;
+import org.savapage.core.ipp.routing.IppRoutingListener;
+import org.savapage.core.jpa.Device;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.IppQueue;
+import org.savapage.core.jpa.PrintIn;
+import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
+import org.savapage.core.pdf.PdfAbstractException;
+import org.savapage.core.pdf.PdfPasswordException;
 import org.savapage.core.pdf.PdfSecurityException;
+import org.savapage.core.pdf.PdfUnsupportedException;
 import org.savapage.core.pdf.PdfValidityException;
 import org.savapage.core.pdf.SpPdfPageProps;
+import org.savapage.core.print.proxy.ProxyPrintException;
+import org.savapage.core.services.DeviceService;
 import org.savapage.core.services.DocLogService;
 import org.savapage.core.services.InboxService;
+import org.savapage.core.services.ProxyPrintService;
+import org.savapage.core.services.QueueService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.UserService;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
@@ -68,6 +85,8 @@ import org.savapage.core.util.FileSystemHelper;
 import org.savapage.core.util.Messages;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.itextpdf.text.ExceptionConverter;
 
 /**
  * Processes a document print request. The document can be PDF, PostScripts,
@@ -84,20 +103,22 @@ public final class DocContentPrintProcessor {
     private static final Logger LOGGER =
             LoggerFactory.getLogger(DocContentPrintProcessor.class);
 
-    /**
-     *
-     */
+    /** */
+    private static final DeviceService DEVICE_SERVICE =
+            ServiceContext.getServiceFactory().getDeviceService();
+    /** */
     private static final DocLogService DOC_LOG_SERVICE =
             ServiceContext.getServiceFactory().getDocLogService();
-
-    /**
-    *
-    */
+    /** */
     private static final InboxService INBOX_SERVICE =
             ServiceContext.getServiceFactory().getInboxService();
-    /**
-     *
-     */
+    /** */
+    private static final ProxyPrintService PROXYPRINT_SERVICE =
+            ServiceContext.getServiceFactory().getProxyPrintService();
+    /** */
+    private static final QueueService QUEUE_SERVICE =
+            ServiceContext.getServiceFactory().getQueueService();
+    /** */
     private static final UserService USER_SERVICE =
             ServiceContext.getServiceFactory().getUserService();
 
@@ -135,6 +156,11 @@ public final class DocContentPrintProcessor {
      *
      */
     private boolean drmRestricted = false;
+
+    /**
+     *
+     */
+    private boolean pdfRepaired = false;
 
     /**
      *
@@ -186,6 +212,9 @@ public final class DocContentPrintProcessor {
      */
     private final String originatorIp;
 
+    /** */
+    private IppRoutingListener ippRoutinglistener;
+
     /**
      *
      */
@@ -225,8 +254,24 @@ public final class DocContentPrintProcessor {
     }
 
     /**
+     * @return Listener.
+     */
+    public IppRoutingListener getIppRoutinglistener() {
+        return ippRoutinglistener;
+    }
+
+    /**
+     * @param listener
+     *            Listener.
+     */
+    public void setIppRoutinglistener(final IppRoutingListener listener) {
+        this.ippRoutinglistener = listener;
+    }
+
+    /**
+     * Gets the IP address of the requesting client.
      *
-     * @return
+     * @return {@code null} when unknown or irrelevant.
      */
     public String getOriginatorIp() {
         return originatorIp;
@@ -716,12 +761,14 @@ public final class DocContentPrintProcessor {
      * @param preferredOutputFont
      *            The preferred font for the PDF output. This parameter is
      *            {@code null} when (user) preference is unknown or irrelevant.
-     * @throws Exception
+     * @throws IOException
+     *             If IO errors.
      */
     public void process(final InputStream istrContent,
             final DocLogProtocolEnum protocol, final String originatorEmail,
             final DocContentTypeEnum contentTypeProvided,
-            final InternalFontFamilyEnum preferredOutputFont) throws Exception {
+            final InternalFontFamilyEnum preferredOutputFont)
+            throws IOException {
 
         if (!isTrustedUser()) {
             return;
@@ -813,16 +860,17 @@ public final class DocContentPrintProcessor {
             }
 
             /*
-             * Be optimistic about PostScript content.
+             * Be optimistic about PostScript and PDF content.
              */
             setDrmViolationDetected(false);
             setDrmRestricted(false);
+            setPdfRepaired(false);
 
             /*
              * Document content converters are needed for non-PDF content.
              */
             IStreamConverter streamConverter = null;
-            IFileConverter fileConverter = null;
+            IDocFileConverter fileConverter = null;
 
             /*
              * Directly write (rest of) offered content to PostScript or PDF, or
@@ -904,31 +952,41 @@ public final class DocContentPrintProcessor {
             /*
              * Calculate number of pages, etc...
              */
-            this.setPageProps(SpPdfPageProps.create(tempPathPdf));
+            final SpPdfPageProps pdfPageProps =
+                    this.createPdfPageProps(tempPathPdf);
+
+            this.setPageProps(pdfPageProps);
 
             /*
-             * Logging in Database: this should be done BEFORE the file MOVE.
+             * STEP 1: Log in Database: BEFORE the file MOVE.
              */
-            this.logPrintIn(protocol);
+            final DocContentPrintInInfo printInInfo = this.logPrintIn(protocol);
 
             /*
-             * Move to user safepages home.
+             * STEP 2: Optional IPP Routing.
              */
-            final Path pathTarget =
-                    FileSystems.getDefault().getPath(homeDir, jobFileBasePdf);
+            if (!this.processIppRouting(printInInfo, new File(tempPathPdf))) {
 
-            FileSystemHelper.doAtomicFileMove(//
-                    FileSystems.getDefault().getPath(tempPathPdf), pathTarget);
+                /*
+                 * Move to user safepages home.
+                 */
+                final Path pathTarget = FileSystems.getDefault()
+                        .getPath(homeDir, jobFileBasePdf);
 
-            /*
-             * Start task to create the shadow EcoPrint PDF file?
-             */
-            if (ConfigManager.isEcoPrintEnabled()
-                    && this.getPageProps().getNumberOfPages() <= ConfigManager
-                            .instance().getConfigInt(
-                                    Key.ECO_PRINT_AUTO_THRESHOLD_SHADOW_PAGE_COUNT)) {
-                INBOX_SERVICE.startEcoPrintPdfTask(homeDir, pathTarget.toFile(),
-                        this.uuidJob);
+                FileSystemHelper.doAtomicFileMove(//
+                        FileSystems.getDefault().getPath(tempPathPdf),
+                        pathTarget);
+
+                /*
+                 * Start task to create the shadow EcoPrint PDF file?
+                 */
+                if (ConfigManager.isEcoPrintEnabled() && this.getPageProps()
+                        .getNumberOfPages() <= ConfigManager.instance()
+                                .getConfigInt(
+                                        Key.ECO_PRINT_AUTO_THRESHOLD_SHADOW_PAGE_COUNT)) {
+                    INBOX_SERVICE.startEcoPrintPdfTask(homeDir,
+                            pathTarget.toFile(), this.uuidJob);
+                }
             }
 
         } catch (Exception e) {
@@ -978,7 +1036,83 @@ public final class DocContentPrintProcessor {
                 }
             }
         }
+    }
 
+    /**
+     * Creates PDF page properties, and optionally repairs or decrypts PDF.
+     *
+     * @param tempPathPdf
+     *            The PDF file path.
+     * @return {@link SpPdfPageProps}.
+     * @throws PdfValidityException
+     *             When invalid PDF document.
+     * @throws PdfSecurityException
+     *             When encrypted PDF document.
+     * @throws IOException
+     *             When file IO error.
+     * @throws PdfPasswordException
+     *             When password protected PDF document.
+     * @throws PdfUnsupportedException
+     *             When unsupported PDF document.
+     */
+    private SpPdfPageProps createPdfPageProps(final String tempPathPdf)
+            throws PdfValidityException, PdfSecurityException, IOException,
+            PdfPasswordException, PdfUnsupportedException {
+
+        SpPdfPageProps pdfPageProps;
+
+        try {
+
+            pdfPageProps = SpPdfPageProps.create(tempPathPdf);
+
+        } catch (PdfValidityException e) {
+
+            if (ConfigManager.instance().isConfigValue(
+                    IConfigProp.Key.PRINT_IN_REPAIR_PDF_ENABLE)) {
+
+                final File pdfFile = new File(tempPathPdf);
+
+                // Convert ...\
+                try {
+                    FileSystemHelper.replaceWithNewVersion(pdfFile,
+                            new PdfRepair().convert(pdfFile));
+                } catch (IOException ignore) {
+                    throw new PdfValidityException(e.getMessage(),
+                            PhraseEnum.PDF_REPAIR_FAILED
+                                    .uiText(ServiceContext.getLocale()),
+                            PhraseEnum.PDF_REPAIR_FAILED);
+                }
+                // and try again.
+                pdfPageProps = SpPdfPageProps.create(tempPathPdf);
+
+                this.setPdfRepaired(true);
+            } else {
+                throw e;
+            }
+
+        } catch (PdfSecurityException e) {
+
+            if (e.isPrintingAllowed()
+                    && ConfigManager.instance().isConfigValue(
+                            IConfigProp.Key.PRINT_IN_ALLOW_ENCRYPTED_PDF)
+                    && PdfToDecrypted.isAvailable()) {
+
+                final File pdfFile = new File(tempPathPdf);
+
+                // Convert ...
+                FileSystemHelper.replaceWithNewVersion(pdfFile,
+                        new PdfToDecrypted().convert(pdfFile));
+
+                // and try again.
+                pdfPageProps = SpPdfPageProps.create(tempPathPdf);
+
+                this.setDrmRestricted(true);
+
+            } else {
+                throw e;
+            }
+        }
+        return pdfPageProps;
     }
 
     /**
@@ -989,8 +1123,11 @@ public final class DocContentPrintProcessor {
      *
      * @param protocol
      *            The {@link DocLogProtocolEnum}.
+     * @return {@link DocContentPrintInInfo}.
      */
-    private void logPrintIn(final DocLogProtocolEnum protocol) {
+    private DocContentPrintInInfo
+
+            logPrintIn(final DocLogProtocolEnum protocol) {
 
         final DocContentPrintInInfo printInInfo = new DocContentPrintInInfo();
 
@@ -1005,6 +1142,79 @@ public final class DocContentPrintProcessor {
 
         DOC_LOG_SERVICE.logPrintIn(this.getUserDb(), this.getQueue(), protocol,
                 printInInfo);
+
+        return printInInfo;
+    }
+
+    /**
+     * Processes IPP Routing, if applicable.
+     *
+     * @param printInInfo
+     *            {@link PrintIn} information.
+     * @param pdfFile
+     *            The PDF document to route.
+     * @return {@code true} if IPP routing was applied, {@code false} if not.
+     */
+    private boolean processIppRouting(final DocContentPrintInInfo printInInfo,
+            final File pdfFile) {
+
+        if (!ConfigManager.instance().isConfigValue(Key.IPP_ROUTING_ENABLE)) {
+            return false;
+        }
+
+        if (StringUtils.isBlank(this.originatorIp)
+                || QUEUE_SERVICE.isReservedQueue(this.queue.getUrlPath())) {
+            return false;
+        }
+
+        final IppRoutingEnum routing = QUEUE_SERVICE.getIppRouting(this.queue);
+
+        if (routing == null || routing == IppRoutingEnum.NONE) {
+            return false;
+        }
+
+        if (routing != IppRoutingEnum.TERMINAL) {
+            throw new SpException(String.format(
+                    "IPP Routing [%s] is not supported", routing.toString()));
+        }
+
+        final Device terminal =
+                DEVICE_SERVICE.getHostTerminal(this.originatorIp);
+
+        final String warnMsg;
+
+        if (terminal == null) {
+            warnMsg = ": terminal not found.";
+        } else if (BooleanUtils.isTrue(terminal.getDisabled())) {
+            warnMsg = ": terminal disabled.";
+        } else {
+            final Printer printer = terminal.getPrinter();
+            if (printer == null) {
+                warnMsg = ": no printer on terminal.";
+            } else {
+                warnMsg = null;
+            }
+        }
+
+        if (warnMsg != null) {
+            final String msg =
+                    String.format("IPP Routing of Queue /%s from %s %s",
+                            queue.getUrlPath(), this.originatorIp, warnMsg);
+            AdminPublisher.instance().publish(PubTopicEnum.PROXY_PRINT,
+                    PubLevelEnum.WARN, msg);
+            LOGGER.warn(msg);
+            return false;
+        }
+
+        try {
+            PROXYPRINT_SERVICE.proxyPrintIppRouting(this.userDb, this.queue,
+                    terminal.getPrinter(), printInInfo, pdfFile,
+                    this.ippRoutinglistener);
+        } catch (ProxyPrintException e) {
+            throw new SpException(e.getMessage());
+        }
+
+        return true;
     }
 
     /**
@@ -1067,6 +1277,14 @@ public final class DocContentPrintProcessor {
 
     public void setDrmRestricted(boolean restricted) {
         drmRestricted = restricted;
+    }
+
+    public boolean isPdfRepaired() {
+        return pdfRepaired;
+    }
+
+    public void setPdfRepaired(boolean pdfRepaired) {
+        this.pdfRepaired = pdfRepaired;
     }
 
     /**
@@ -1145,8 +1363,9 @@ public final class DocContentPrintProcessor {
      * </p>
      *
      * @param isAuthorized
+     *            {@code true} when requesting user is authorized.
      */
-    public void evaluateErrorState(boolean isAuthorized) {
+    public void evaluateErrorState(final boolean isAuthorized) {
 
         final Exception exception = getDeferredException();
 
@@ -1179,9 +1398,9 @@ public final class DocContentPrintProcessor {
 
         } else {
 
-            pubMessage = exception.getMessage();
-
             if (exception instanceof PostScriptDrmException) {
+
+                pubMessage = exception.getMessage();
 
                 if (LOGGER.isWarnEnabled()) {
                     LOGGER.warn(String.format(
@@ -1190,16 +1409,19 @@ public final class DocContentPrintProcessor {
                 }
                 setDeferredException(null);
 
-            } else if ((exception instanceof PdfSecurityException)
-                    || (exception instanceof PdfValidityException)) {
+            } else if ((exception instanceof PdfAbstractException)) {
+
+                pubMessage = ((PdfAbstractException) exception).getLogMessage();
 
                 if (LOGGER.isWarnEnabled()) {
-                    LOGGER.warn(String.format("User [%s]: %s", userid,
-                            exception.getMessage()));
+                    LOGGER.warn(
+                            String.format("User [%s]: %s", userid, pubMessage));
                 }
                 setDeferredException(null);
 
             } else if (exception instanceof UnsupportedPrintJobContent) {
+
+                pubMessage = exception.getMessage();
 
                 if (LOGGER.isWarnEnabled()) {
                     if (LOGGER.isWarnEnabled()) {
@@ -1211,14 +1433,21 @@ public final class DocContentPrintProcessor {
                 setDeferredException(null);
 
             } else {
-                pubLevel = PubLevelEnum.ERROR;
-                LOGGER.error(exception.getMessage(), exception);
+                pubMessage = exception.getMessage();
+                if ((exception instanceof //
+                org.xhtmlrenderer.util.XRRuntimeException)
+                        || (exception instanceof ExceptionConverter)) {
+                    LOGGER.warn("[{}] PDF error: {}", this.getJobName(),
+                            pubMessage);
+                    pubLevel = PubLevelEnum.WARN;
+                } else {
+                    LOGGER.error(pubMessage, exception);
+                    pubLevel = PubLevelEnum.ERROR;
+                }
             }
         }
 
-        /*
-         *
-         */
+        //
         String deniedUserId = userid;
 
         if (StringUtils.isBlank(deniedUserId)) {

@@ -21,7 +21,9 @@
  */
 package org.savapage.core.services;
 
+import org.savapage.core.jpa.User;
 import org.savapage.lib.pgp.PGPBaseException;
+import org.savapage.lib.pgp.PGPKeyID;
 import org.savapage.lib.pgp.PGPPublicKeyInfo;
 
 /**
@@ -32,13 +34,77 @@ import org.savapage.lib.pgp.PGPPublicKeyInfo;
 public interface PGPPublicKeyService {
 
     /**
-     * Looks up key from PGP Public Key Server.
+     * Gets the URL template of Web Page to preview the content of the PGP
+     * Public Key.
+     * <p>
+     * Placeholder <tt>{0}</tt> is to be replaced by the Hexadecimal KeyID,
+     * without "0x" prefix.
+     * </p>
      *
-     * @param hexKeyID
-     *            Hexadecimal KeyID, without "0x" prefix.
-     * @return The {@link PGPPublicKeyInfo} or {@code null} when not found.
-     * @throws PGPBaseException
-     *             When lookup fails.
+     * @return The template string, or {@code null} when unknown.
      */
-    PGPPublicKeyInfo lookup(String hexKeyID) throws PGPBaseException;
+    String getPublicKeyPreviewUrlTpl();
+
+    /**
+     * Adds public key to user's key ring.
+     *
+     * @param user
+     *            The user.
+     * @param keyID
+     *            The Key ID.
+     * @return Public Key info.
+     * @throws PGPBaseException
+     *             When errors.
+     */
+    PGPPublicKeyInfo lazyAddRingEntry(User user, PGPKeyID keyID)
+            throws PGPBaseException;
+
+    /**
+     * Read user's own public key from user's key ring.
+     *
+     * @param user
+     *            The user.
+     * @return Public Key info, or {@code null} when not available.
+     * @throws PGPBaseException
+     *             When errors.
+     */
+    PGPPublicKeyInfo readRingEntry(User user) throws PGPBaseException;
+
+    /**
+     * Read user's own public key from user's key ring.
+     *
+     * @param userid
+     *            The User ID.
+     * @return Public Key info, or {@code null} when not available.
+     * @throws PGPBaseException
+     *             When errors.
+     */
+    PGPPublicKeyInfo readRingEntry(String userid) throws PGPBaseException;
+
+    /**
+     * Read public key from user's key ring.
+     *
+     * @param user
+     *            The user.
+     * @param keyID
+     *            The Key ID.
+     * @return Public Key info.
+     * @throws PGPBaseException
+     *             When errors.
+     */
+    PGPPublicKeyInfo readRingEntry(User user, PGPKeyID keyID)
+            throws PGPBaseException;
+
+    /**
+     * Deletes public key from user's key ring.
+     *
+     * @param user
+     *            The user.
+     * @param keyID
+     *            The Key ID.
+     * @return {@code true} if and only if the entry is successfully deleted;
+     *         {@code false} otherwise.
+     */
+    boolean deleteRingEntry(User user, PGPKeyID keyID);
+
 }

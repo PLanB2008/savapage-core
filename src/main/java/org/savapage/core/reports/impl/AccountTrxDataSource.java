@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -22,6 +22,7 @@
 package org.savapage.core.reports.impl;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.text.DateFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -32,7 +33,6 @@ import java.util.Locale;
 import java.util.Map;
 
 import org.apache.commons.lang3.BooleanUtils;
-import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.savapage.core.SpException;
@@ -42,8 +42,10 @@ import org.savapage.core.dao.AccountDao;
 import org.savapage.core.dao.AccountTrxDao;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.enums.AccountTrxTypeEnum;
+import org.savapage.core.dao.enums.DaoEnumHelper;
 import org.savapage.core.dao.enums.PrintModeEnum;
 import org.savapage.core.dao.helpers.AccountTrxPagerReq;
+import org.savapage.core.i18n.JobTicketNounEnum;
 import org.savapage.core.i18n.PrintOutNounEnum;
 import org.savapage.core.i18n.PrintOutVerbEnum;
 import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
@@ -56,12 +58,14 @@ import org.savapage.core.jpa.PosPurchase;
 import org.savapage.core.jpa.PrintOut;
 import org.savapage.core.jpa.User;
 import org.savapage.core.reports.AbstractJrDataSource;
+import org.savapage.core.services.AccountingService;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.util.BigDecimalUtil;
 import org.savapage.core.util.BitcoinUtil;
 import org.savapage.core.util.CurrencyUtil;
 import org.savapage.core.util.JsonHelper;
+import org.savapage.core.util.LocaleHelper;
 
 import net.sf.jasperreports.engine.JRDataSource;
 import net.sf.jasperreports.engine.JRException;
@@ -79,12 +83,15 @@ public final class AccountTrxDataSource extends AbstractJrDataSource
 
     private static final int CHUNK_SIZE = 100;
 
-    /**
-     * .
-     */
+    /** */
     private static final ProxyPrintService PROXYPRINT_SERVICE =
             ServiceContext.getServiceFactory().getProxyPrintService();
 
+    /** */
+    private static final AccountingService ACCOUNTING_SERVICE =
+            ServiceContext.getServiceFactory().getAccountingService();
+
+    /** */
     private List<AccountTrx> entryList = null;
     private Iterator<AccountTrx> iterator;
 
@@ -106,6 +113,8 @@ public final class AccountTrxDataSource extends AbstractJrDataSource
 
     final boolean showDocLogTitle;
 
+    final LocaleHelper localeHelper;
+
     /**
      *
      * @param req
@@ -115,6 +124,8 @@ public final class AccountTrxDataSource extends AbstractJrDataSource
             final Locale locale) {
 
         super(locale);
+
+        this.localeHelper = new LocaleHelper(locale);
 
         this.dfMediumDatetime =
                 new SimpleDateFormat("yyyy.MM.dd HH:mm:ss z", locale);
@@ -475,9 +486,25 @@ public final class AccountTrxDataSource extends AbstractJrDataSource
         final Locale locale = getLocale();
 
         //
-        final int nCopies = trx.getTransactionWeight().intValue();
+        final BigDecimal costPerCopy =
+                ACCOUNTING_SERVICE.calcCostPerPrintedCopy(
+                        docLog.getCostOriginal(), printOut.getNumberOfCopies());
 
-        desc.append(BULL_SEP).append(nCopies).append(" ")
+        final BigDecimal printedCopies;
+
+        if (costPerCopy.compareTo(BigDecimal.ZERO) == 0) {
+            printedCopies = BigDecimal.ZERO;
+        } else {
+            printedCopies = ACCOUNTING_SERVICE
+                    .calcPrintedCopies(trx.getAmount(), costPerCopy, 2).abs();
+        }
+
+        final int nCopies =
+                printedCopies.setScale(0, RoundingMode.HALF_UP).intValue();
+
+        desc.append(BULL_SEP)
+                .append(this.localeHelper.asExactIntegerOrScaled(printedCopies))
+                .append(" ")
                 .append(PrintOutNounEnum.COPY.uiText(locale, nCopies > 1));
 
         //
@@ -556,14 +583,21 @@ public final class AccountTrxDataSource extends AbstractJrDataSource
         }
 
         //
-        final PrintModeEnum printOutMode;
-        printOutMode =
-                EnumUtils.getEnum(PrintModeEnum.class, printOut.getPrintMode());
+        if (StringUtils.isNotBlank(docLog.getExternalId())) {
 
-        if (printOutMode == PrintModeEnum.TICKET
-                || printOutMode == PrintModeEnum.TICKET_C
-                || printOutMode == PrintModeEnum.TICKET_E) {
-            desc.append(BULL_SEP)
+            desc.append(BULL_SEP);
+
+            final PrintModeEnum printOutMode =
+                    DaoEnumHelper.getPrintMode(printOut);
+
+            if (printOutMode == PrintModeEnum.TICKET
+                    || printOutMode == PrintModeEnum.TICKET_C
+                    || printOutMode == PrintModeEnum.TICKET_E) {
+                desc.append(printOutMode.uiText(locale));
+            } else {
+                desc.append(JobTicketNounEnum.TAG.uiText(locale));
+            }
+            desc.append(" ")
                     .append(StringUtils.defaultString(docLog.getExternalId()));
         }
 

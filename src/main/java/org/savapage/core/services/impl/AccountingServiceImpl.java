@@ -55,6 +55,7 @@ import org.savapage.core.dao.helpers.AggregateResult;
 import org.savapage.core.dao.helpers.DaoBatchCommitter;
 import org.savapage.core.dto.AccountDisplayInfoDto;
 import org.savapage.core.dto.AccountVoucherRedeemDto;
+import org.savapage.core.dto.CreditLimitDtoEnum;
 import org.savapage.core.dto.FinancialDisplayInfoDto;
 import org.savapage.core.dto.IppMediaCostDto;
 import org.savapage.core.dto.IppMediaSourceCostDto;
@@ -297,16 +298,16 @@ public final class AccountingServiceImpl extends AbstractService
             dto.setBalance(BigDecimalUtil.localizeMinimalPrecision(balance,
                     minimalDecimals, ServiceContext.getLocale(), true));
 
-            UserAccountingDto.CreditLimitEnum creditLimit;
+            CreditLimitDtoEnum creditLimit;
 
             if (restricted) {
                 if (useGlobalOverdraft) {
-                    creditLimit = UserAccountingDto.CreditLimitEnum.DEFAULT;
+                    creditLimit = CreditLimitDtoEnum.DEFAULT;
                 } else {
-                    creditLimit = UserAccountingDto.CreditLimitEnum.INDIVIDUAL;
+                    creditLimit = CreditLimitDtoEnum.INDIVIDUAL;
                 }
             } else {
-                creditLimit = UserAccountingDto.CreditLimitEnum.NONE;
+                creditLimit = CreditLimitDtoEnum.NONE;
             }
 
             dto.setCreditLimit(creditLimit);
@@ -359,18 +360,17 @@ public final class AccountingServiceImpl extends AbstractService
                     BigDecimalUtil.parse(amount, dtoLocale, false, false));
         }
 
-        final UserAccountingDto.CreditLimitEnum creditLimit =
-                dto.getCreditLimit();
+        final CreditLimitDtoEnum creditLimit = dto.getCreditLimit();
 
         if (creditLimit != null) {
 
             group.setInitiallyRestricted(
-                    creditLimit != UserAccountingDto.CreditLimitEnum.NONE);
+                    creditLimit != CreditLimitDtoEnum.NONE);
 
             group.setInitialUseGlobalOverdraft(
-                    creditLimit == UserAccountingDto.CreditLimitEnum.DEFAULT);
+                    creditLimit == CreditLimitDtoEnum.DEFAULT);
 
-            if (creditLimit == UserAccountingDto.CreditLimitEnum.INDIVIDUAL) {
+            if (creditLimit == CreditLimitDtoEnum.INDIVIDUAL) {
                 final String amount = dto.getCreditLimitAmount();
                 group.setInitialOverdraft(
                         BigDecimalUtil.parse(amount, dtoLocale, false, false));
@@ -458,17 +458,15 @@ public final class AccountingServiceImpl extends AbstractService
             }
         }
 
-        final UserAccountingDto.CreditLimitEnum creditLimit =
-                dto.getCreditLimit();
+        final CreditLimitDtoEnum creditLimit = dto.getCreditLimit();
 
         if (creditLimit != null) {
 
-            account.setRestricted(
-                    creditLimit != UserAccountingDto.CreditLimitEnum.NONE);
+            account.setRestricted(creditLimit != CreditLimitDtoEnum.NONE);
             account.setUseGlobalOverdraft(
-                    creditLimit == UserAccountingDto.CreditLimitEnum.DEFAULT);
+                    creditLimit == CreditLimitDtoEnum.DEFAULT);
 
-            if (creditLimit == UserAccountingDto.CreditLimitEnum.INDIVIDUAL) {
+            if (creditLimit == CreditLimitDtoEnum.INDIVIDUAL) {
                 final String amount = dto.getCreditLimitAmount();
                 try {
                     account.setOverdraft(BigDecimalUtil.parse(amount, dtoLocale,
@@ -651,7 +649,7 @@ public final class AccountingServiceImpl extends AbstractService
 
         final Integer weight = Integer.valueOf(1);
         trx.setTransactionWeight(weight);
-        trx.setTransactionWeightUnit(weight);
+        trx.setTransactionWeightUnit(Integer.valueOf(1));
 
         trx.setTransactedBy(ServiceContext.getActor());
         trx.setTransactionDate(ServiceContext.getTransactionDate());
@@ -667,7 +665,7 @@ public final class AccountingServiceImpl extends AbstractService
         final int weight = printOut.getNumberOfCopies().intValue();
 
         createAccountTrx(account, docLog, AccountTrxTypeEnum.PRINT_OUT, weight,
-                weight, null);
+                weight, 1, null);
     }
 
     @Override
@@ -708,17 +706,18 @@ public final class AccountingServiceImpl extends AbstractService
                 .getAccountTrxInfoList()) {
 
             createAccountTrx(trxInfo.getAccount(), docLog, trxType,
-                    nTotalWeight, trxInfo.getWeight(), trxInfo.getExtDetails());
+                    nTotalWeight, trxInfo.getWeight(),
+                    trxInfo.getWeightUnit().intValue(),
+                    trxInfo.getExtDetails());
         }
     }
 
     @Override
     public List<AccountTrx> createAccountTrxsUI(final OutboxJobDto outboxJob) {
 
-        final List<AccountTrx> list = new ArrayList<>();
+        final List<AccountTrx> trxList = new ArrayList<>();
 
         final AccountDao dao = ServiceContext.getDaoContext().getAccountDao();
-
         final int scale = ConfigManager.getFinancialDecimalsInDatabase();
 
         if (outboxJob.getAccountTransactions() == null) {
@@ -738,63 +737,82 @@ public final class AccountingServiceImpl extends AbstractService
                 account.setName(user.getUserId());
             }
 
-            final Integer weight = Integer.valueOf(outboxJob.getCopies());
-            trx.setTransactionWeight(weight);
-            trx.setTransactionWeightUnit(weight);
+            trx.setTransactionWeight(Integer.valueOf(outboxJob.getCopies()));
+            trx.setTransactionWeightUnit(Integer.valueOf(1));
 
             trx.setCurrencyCode(ConfigManager.getAppCurrencyCode());
             trx.setAmount(outboxJob.getCostTotal().negate());
 
-            list.add(trx);
+            trxList.add(trx);
 
-            return list;
+        } else {
+
+            final int weightTotal =
+                    outboxJob.getAccountTransactions().getWeightTotal();
+
+            final BigDecimal costTotal = outboxJob.getCostTotal();
+
+            for (final OutboxAccountTrxInfo trxInfo : outboxJob
+                    .getAccountTransactions().getTransactions()) {
+
+                final AccountTrx trx = new AccountTrx();
+
+                trx.setAccount(dao.findById(trxInfo.getAccountId()));
+                trx.setExtDetails(trxInfo.getExtDetails());
+
+                final Integer weight = Integer.valueOf(trxInfo.getWeight());
+                final Integer weightUnit;
+
+                if (trxInfo.getWeightUnit() == null) {
+                    weightUnit = Integer.valueOf(1);
+                } else {
+                    weightUnit = trxInfo.getWeightUnit();
+                }
+
+                trx.setTransactionWeight(weight);
+                trx.setTransactionWeightUnit(weightUnit);
+
+                trx.setCurrencyCode(ConfigManager.getAppCurrencyCode());
+
+                if (weightTotal == 0) {
+                    trx.setAmount(BigDecimal.ZERO);
+                } else {
+                    trx.setAmount(this.calcWeightedAmount(costTotal,
+                            weightTotal, trxInfo.getWeight(),
+                            weightUnit.intValue(), scale).negate());
+                }
+                trxList.add(trx);
+            }
         }
-
-        final int weightTotal =
-                outboxJob.getAccountTransactions().getWeightTotal();
-
-        final BigDecimal costTotal = outboxJob.getCostTotal();
-
-        for (final OutboxAccountTrxInfo trxInfo : outboxJob
-                .getAccountTransactions().getTransactions()) {
-
-            final AccountTrx trx = new AccountTrx();
-
-            trx.setAccount(dao.findById(trxInfo.getAccountId()));
-            trx.setExtDetails(trxInfo.getExtDetails());
-
-            final Integer weight = Integer.valueOf(trxInfo.getWeight());
-            trx.setTransactionWeight(weight);
-            trx.setTransactionWeightUnit(weight);
-
-            trx.setCurrencyCode(ConfigManager.getAppCurrencyCode());
-            trx.setAmount(this.calcWeightedAmount(costTotal, weightTotal,
-                    trxInfo.getWeight(), scale).negate());
-
-            list.add(trx);
-        }
-        return list;
+        return trxList;
     }
 
-    /**
-     * Calculates the weighted amount.
-     *
-     * @param amount
-     *            The amount to weigh.
-     * @param weightTotal
-     *            The total of all weights.
-     * @param weight
-     *            The mathematical weight of the transaction in the context of a
-     *            transaction set.
-     * @param scale
-     *            The scale (precision).
-     * @return The weighted amount.
-     */
     @Override
     public BigDecimal calcWeightedAmount(final BigDecimal amount,
-            final int weightTotal, final int weight, final int scale) {
+            final int weightTotal, final int weight, final int weightUnit,
+            final int scale) {
         return amount.multiply(BigDecimal.valueOf(weight)).divide(
-                BigDecimal.valueOf(weightTotal), scale, RoundingMode.HALF_EVEN);
+                BigDecimal.valueOf(weightTotal * weightUnit), scale,
+                RoundingMode.HALF_EVEN);
+    }
+
+    @Override
+    public BigDecimal calcCostPerPrintedCopy(final BigDecimal totalCost,
+            final int copies) {
+
+        if (totalCost.compareTo(BigDecimal.ZERO) == 0) {
+            return BigDecimal.ZERO;
+        }
+
+        return totalCost.divide(new BigDecimal(copies),
+                ConfigManager.getFinancialDecimalsInDatabase(),
+                RoundingMode.HALF_EVEN);
+    }
+
+    @Override
+    public BigDecimal calcPrintedCopies(final BigDecimal cost,
+            final BigDecimal costPerCopy, final int scale) {
+        return cost.divide(costPerCopy, scale, RoundingMode.HALF_UP);
     }
 
     /**
@@ -819,12 +837,14 @@ public final class AccountingServiceImpl extends AbstractService
      * @param weight
      *            The mathematical weight of the to be created transaction in
      *            the context of a transaction set.
+     * @param weightUnit
+     *            The weight unit.
      * @param extDetails
      *            Free format details from external source.
      */
     private void createAccountTrx(final Account account, final DocLog docLog,
             final AccountTrxTypeEnum trxType, final int weightTotal,
-            final int weight, final String extDetails) {
+            final int weight, final int weightUnit, final String extDetails) {
 
         final String actor = ServiceContext.getActor();
         final Date trxDate = ServiceContext.getTransactionDate();
@@ -841,18 +861,10 @@ public final class AccountingServiceImpl extends AbstractService
          */
         final boolean isZeroAmount = trxAmount.equals(BigDecimal.ZERO);
 
-        /*
-         * The weighted amount for this account.
-         */
-        if (!isZeroAmount && weight != weightTotal) {
-            trxAmount = calcWeightedAmount(trxAmount, weightTotal, weight,
-                    ConfigManager.getFinancialDecimalsInDatabase());
-        }
-
-        /*
-         * Update account balance.
-         */
         if (!isZeroAmount) {
+
+            trxAmount = calcWeightedAmount(trxAmount, weightTotal, weight,
+                    weightUnit, ConfigManager.getFinancialDecimalsInDatabase());
 
             account.setBalance(account.getBalance().add(trxAmount));
 
@@ -879,7 +891,7 @@ public final class AccountingServiceImpl extends AbstractService
         trx.setTrxType(trxType.toString());
 
         trx.setTransactionWeight(weight);
-        trx.setTransactionWeightUnit(weight);
+        trx.setTransactionWeightUnit(weightUnit);
 
         trx.setTransactedBy(ServiceContext.getActor());
         trx.setTransactionDate(ServiceContext.getTransactionDate());
@@ -1357,13 +1369,20 @@ public final class AccountingServiceImpl extends AbstractService
     private String formatUserBalance(final UserAccount userAccount,
             final Locale locale, final String currencySymbol) {
 
-        final BigDecimal userBalance;
+        final BigDecimal balance;
 
         if (userAccount != null) {
-            userBalance = userAccount.getAccount().getBalance();
+            balance = userAccount.getAccount().getBalance();
         } else {
-            userBalance = BigDecimal.ZERO;
+            balance = BigDecimal.ZERO;
         }
+
+        return formatUserBalance(balance, locale, currencySymbol);
+    }
+
+    @Override
+    public String formatUserBalance(final BigDecimal balance,
+            final Locale locale, final String currencySymbol) {
 
         final String currencySymbolWrk;
 
@@ -1374,11 +1393,9 @@ public final class AccountingServiceImpl extends AbstractService
         }
 
         try {
-
-            return BigDecimalUtil.localize(userBalance,
+            return BigDecimalUtil.localize(balance,
                     ConfigManager.getUserBalanceDecimals(), locale,
                     currencySymbolWrk, true);
-
         } catch (ParseException e) {
             throw new SpException(e);
         }

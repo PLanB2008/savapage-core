@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -38,6 +38,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.ResourceBundle;
+import java.util.Set;
 
 import javax.print.attribute.standard.MediaSizeName;
 
@@ -50,10 +51,15 @@ import org.savapage.core.SpException;
 import org.savapage.core.community.CommunityDictEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.dao.PrinterAttrDao;
 import org.savapage.core.dao.PrinterDao;
+import org.savapage.core.dao.enums.ACLOidEnum;
 import org.savapage.core.dao.enums.PrinterAttrEnum;
 import org.savapage.core.dao.helpers.ProxyPrinterName;
 import org.savapage.core.doc.DocContent;
+import org.savapage.core.doc.store.DocStoreBranchEnum;
+import org.savapage.core.doc.store.DocStoreException;
+import org.savapage.core.doc.store.DocStoreTypeEnum;
 import org.savapage.core.dto.IppMediaCostDto;
 import org.savapage.core.dto.IppMediaSourceCostDto;
 import org.savapage.core.dto.MediaCostDto;
@@ -61,6 +67,7 @@ import org.savapage.core.dto.MediaPageCostDto;
 import org.savapage.core.dto.ProxyPrinterCostDto;
 import org.savapage.core.dto.ProxyPrinterDto;
 import org.savapage.core.dto.ProxyPrinterMediaSourcesDto;
+import org.savapage.core.i18n.PrintOutNounEnum;
 import org.savapage.core.ipp.IppMediaSizeEnum;
 import org.savapage.core.ipp.IppPrinterType;
 import org.savapage.core.ipp.IppSyntaxException;
@@ -77,6 +84,7 @@ import org.savapage.core.ipp.attribute.syntax.IppBoolean;
 import org.savapage.core.ipp.attribute.syntax.IppKeyword;
 import org.savapage.core.ipp.client.IppClient;
 import org.savapage.core.ipp.client.IppConnectException;
+import org.savapage.core.ipp.client.IppReqCupsGetPpd;
 import org.savapage.core.ipp.client.IppReqPrintJob;
 import org.savapage.core.ipp.encoding.IppDelimiterTag;
 import org.savapage.core.ipp.helpers.IppOptionMap;
@@ -112,6 +120,7 @@ import org.savapage.core.services.helpers.ThirdPartyEnum;
 import org.savapage.core.util.BigDecimalUtil;
 import org.savapage.core.util.DateUtil;
 import org.savapage.core.util.InetUtils;
+import org.savapage.core.util.JsonHelper;
 import org.savapage.core.util.Messages;
 import org.savapage.core.util.NumberUtil;
 import org.savapage.ext.papercut.PaperCutHelper;
@@ -125,30 +134,36 @@ import org.slf4j.LoggerFactory;
  */
 public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
-    /**
-     * .
-     */
+    /** */
     private static final Logger LOGGER =
             LoggerFactory.getLogger(ProxyPrintServiceImpl.class);
 
+    /** */
     private static final String CUSTOM_IPP_I18N_RESOURCE_NAME = "ipp-i18n";
 
-    /** Key prefix of IPP option (choice) text.*/
+    /** Key prefix of IPP option (choice) text. */
     private static final String LOCALIZE_IPP_ATTR_PREFIX = "ipp-attr-";
 
     /** Key prefix of IPP option choice(s) icon CSS class. */
     private static final String LOCALIZE_IPP_ICON_PREFIX = "ipp-icon-";
 
     /** */
-    private final static String NOTIFY_PULL_METHOD = "ippget";
+    private static final String NOTIFY_PULL_METHOD = "ippget";
 
     /**
      * A unique ID to distinguish our subscription from other system
      * subscriptions.
      */
-    private final static String NOTIFY_USER_DATA =
+    private static final String NOTIFY_USER_DATA =
             "savapage:" + ConfigManager.getServerPort();
 
+    /** */
+    private static final String URL_PATH_CUPS_PRINTERS = "/printers";
+
+    /** */
+    private static final String URL_PATH_CUPS_ADMIN = "/admin";
+
+    /** */
     private final IppClient ippClient = IppClient.instance();
 
     /**
@@ -305,8 +320,12 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 continue;
             }
 
+            final boolean isPpdPresent;
+
             if (IppPrinterType.hasProperty(printerType,
                     IppPrinterType.BitEnum.PRINTER_CLASS)) {
+
+                isPpdPresent = false;
 
                 final String printerName = group
                         .getAttrSingleValue(
@@ -325,6 +344,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 }
 
                 printerClasses.add(printerClass);
+            } else {
+                isPpdPresent = isCupsPpdPresent(uriPrinter);
             }
 
             /*
@@ -347,6 +368,9 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                                 proxyPrinterFromGroup.getPrinterUri());
 
                 if (proxyPrinterDetails != null) {
+
+                    proxyPrinterDetails.setPpdPresent(isPpdPresent);
+
                     printers.add(proxyPrinterDetails);
                     printerMap.put(proxyPrinterDetails.getName(),
                             proxyPrinterDetails);
@@ -474,7 +498,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      */
     private URL getCupsServerUrl(final URI uriPrinter)
             throws MalformedURLException {
-        return new URL("http", uriPrinter.getHost(), uriPrinter.getPort(), "");
+        return new URL(InetUtils.URL_PROTOCOL_HTTP, uriPrinter.getHost(),
+                uriPrinter.getPort(), "");
     }
 
     @Override
@@ -897,8 +922,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      * @param attrKeyword
      *            The IPP option keyword.
      * @param isMedia
-     *            {@code true] when this the "media" attribute.
-     * @param optChoice
+     *            {@code true] when this the "media" attribute. @param optChoice
      *            The {@link JsonProxyPrinterOptChoice} object.
      */
     private void localizePrinterOptChoice(final Locale locale,
@@ -918,10 +942,9 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      * @param attrKeyword
      *            The IPP option keyword.
      * @param isMedia
-     *            {@code true] when this the "media" attribute.
-     * @param choice
-     *            The {@link JsonProxyPrinterOptChoice} object.
-     * @return The localized choice text.
+     *            {@code true] when this the "media" attribute. @param choice
+     *            The {@link JsonProxyPrinterOptChoice} object. @return The
+     *            localized choice text.
      */
     private String localizePrinterOptChoice(final Locale locale,
             final String attrKeyword, final boolean isMedia,
@@ -1091,6 +1114,14 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             final String attrKeyword) {
 
         /*
+         * Skip exclusive PPDE options.
+         */
+        if (attrKeyword.equals(
+                IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_JOG_OFFSET)) {
+            return;
+        }
+
+        /*
          * Handle internal attributes first.
          */
         if (attrKeyword.equals(
@@ -1214,9 +1245,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
     }
 
     @Override
-    protected List<JsonProxyPrintJob> retrievePrintJobs(
-            final String printerName, final List<Integer> jobIds)
-            throws IppConnectException {
+    public List<JsonProxyPrintJob> retrievePrintJobs(final String printerName,
+            final Set<Integer> jobIds) throws IppConnectException {
 
         final List<JsonProxyPrintJob> jobs = new ArrayList<>();
 
@@ -1268,6 +1298,51 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      */
     private static String jobIdFromJobUri(final String jobUri) {
         return jobUri.substring(jobUri.lastIndexOf('/') + 1);
+    }
+
+    @Override
+    public boolean isCupsPpdPresent(final URI printerURI)
+            throws IppConnectException {
+
+        final URL urlCupsServer;
+
+        try {
+            urlCupsServer = getCupsServerUrl(printerURI);
+        } catch (MalformedURLException e) {
+            throw new SpException(e.getMessage());
+        }
+
+        final List<IppAttrGroup> ippRequest =
+                new IppReqCupsGetPpd(printerURI).build();
+
+        final List<IppAttrGroup> response = new ArrayList<>();
+
+        final IppStatusCode statusCode = ippClient.send(urlCupsServer,
+                IppOperationId.CUPS_GET_PPD, ippRequest, response);
+
+        if (statusCode == IppStatusCode.OK) {
+            /*
+             * The PPD file follows the end of the IPP response.
+             */
+            return true;
+        } else if (statusCode == IppStatusCode.CLI_NOTFND) {
+            // PPD file does not exist: e.g. Raw Printer
+            return false;
+        }
+
+        return false;
+    }
+
+    @Override
+    public URL getCupsPpdUrl(final String printerName) {
+
+        try {
+            return new URL(this.getUrlDefaultServer().toString()
+                    .concat(URL_PATH_CUPS_PRINTERS).concat("/")
+                    .concat(printerName).concat(".ppd"));
+        } catch (MalformedURLException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
     }
 
     @Override
@@ -1441,12 +1516,34 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
     protected void printPdf(final AbstractProxyPrintReq request,
             final JsonProxyPrinter jsonPrinter, final String user,
             final PdfCreateInfo createInfo, final DocLog docLog)
-            throws IppConnectException {
+            throws IppConnectException, DocStoreException {
 
         final JsonProxyPrintJob printJob =
                 this.sendPdfToPrinter(request, jsonPrinter, user, createInfo);
 
         collectPrintOutData(request, docLog, jsonPrinter, printJob, createInfo);
+
+        final DocStoreTypeEnum docStoreType;
+
+        if (request.isArchive()) {
+
+            docStoreType = DocStoreTypeEnum.ARCHIVE;
+
+        } else if (!request.isDisableJournal()
+                && !jsonPrinter.isJournalDisabled()
+                && docStoreService().isEnabled(DocStoreTypeEnum.JOURNAL,
+                        DocStoreBranchEnum.OUT_PRINT)
+                && accessControlService().hasAccess(docLog.getUser(),
+                        ACLOidEnum.U_PRINT_JOURNAL)) {
+            docStoreType = DocStoreTypeEnum.JOURNAL;
+
+        } else {
+            docStoreType = null;
+        }
+
+        if (docStoreType != null) {
+            docStoreService().store(docStoreType, request, docLog, createInfo);
+        }
     }
 
     /**
@@ -1502,11 +1599,10 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         final List<IppAttrGroup> response = new ArrayList<>();
 
-        final IppStatusCode statusCode =
-                ippClient.send(urlCupsServer,
-                        IppOperationId.CANCEL_JOB, reqCancelJobAttr(printerUri,
-                                printOut.getCupsJobId(), requestingUserName),
-                        response);
+        final IppStatusCode statusCode = ippClient.send(urlCupsServer,
+                IppOperationId.CANCEL_JOB, reqCancelJobAttr(printerUri,
+                        printOut.getCupsJobId(), requestingUserName),
+                response);
 
         return statusCode == IppStatusCode.OK;
     }
@@ -1521,16 +1617,18 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
      * @param uriJob
      *            If {@code null} uriPrinter and jobId is used.
      * @param jobId
+     *            CUPS job id.
      * @return {@code null} when print job is not found.
      * @throws IppConnectException
+     *             When connection error.
      */
     private JsonProxyPrintJob retrievePrintJobUri(final URL urlCupsServer,
-            final String uriPrinter, String uriJob, Integer jobId)
+            final String uriPrinter, final String uriJob, final Integer jobId)
             throws IppConnectException {
 
         final List<IppAttrGroup> response = new ArrayList<>();
 
-        IppStatusCode statusCode = null;
+        final IppStatusCode statusCode;
 
         if (uriJob == null) {
             statusCode =
@@ -1550,27 +1648,32 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
             job.setJobId(jobId);
 
-            IppAttrGroup group = response.get(1);
+            final IppAttrGroup group = response.get(1);
 
             job.setDest(group.getAttrSingleValue(
                     IppDictJobDescAttr.ATTR_JOB_PRINTER_URI));
             job.setTitle(
                     group.getAttrSingleValue(IppDictJobDescAttr.ATTR_JOB_NAME));
+
             job.setJobState(Integer.parseInt(
                     group.getAttrSingleValue(IppDictJobDescAttr.ATTR_JOB_STATE),
-                    10));
+                    NumberUtil.RADIX_10));
+            job.setJobStateMessage(group.getAttrSingleValue(
+                    IppDictJobDescAttr.ATTR_JOB_STATE_MESSAGE));
+            job.setJobStateReasons(group
+                    .getAttrValues(IppDictJobDescAttr.ATTR_JOB_STATE_REASONS));
 
-            job.setCreationTime(
-                    Integer.valueOf(
-                            group.getAttrSingleValue(
-                                    IppDictJobDescAttr.ATTR_TIME_AT_CREATION),
-                            10));
+            job.setCreationTime(Integer.valueOf(
+                    group.getAttrSingleValue(
+                            IppDictJobDescAttr.ATTR_TIME_AT_CREATION),
+                    NumberUtil.RADIX_10));
 
-            String value = group.getAttrSingleValue(
+            final String value = group.getAttrSingleValue(
                     IppDictJobDescAttr.ATTR_TIME_AT_COMPLETED, "");
 
             if (StringUtils.isNotBlank(value)) {
-                job.setCompletedTime(Integer.parseInt(value, 10));
+                job.setCompletedTime(
+                        Integer.parseInt(value, NumberUtil.RADIX_10));
             }
 
         } else {
@@ -2429,16 +2532,29 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         dto.setPresent(this.getCachedPrinter(printer.getPrinterName()) != null);
 
-        dto.setInternal(
-                Boolean.valueOf(printerService().isInternalPrinter(printer)));
+        dto.setInternal(printerService().isInternalPrinter(printer.getId()));
+
+        dto.setArchiveDisabled(printerService()
+                .isDocStoreDisabled(DocStoreTypeEnum.ARCHIVE, printer.getId()));
+
+        dto.setJournalDisabled(printerService()
+                .isDocStoreDisabled(DocStoreTypeEnum.JOURNAL, printer.getId()));
 
         dto.setPpdExtFile(printerService().getAttributeValue(printer,
                 PrinterAttrEnum.CUSTOM_PPD_EXT_FILE));
 
-        dto.setJobTicket(
-                Boolean.valueOf(printerService().isJobTicketPrinter(printer)));
+        dto.setJobTicket(printerService().isJobTicketPrinter(printer.getId()));
+
         dto.setJobTicketGroup(printerService().getAttributeValue(printer,
                 PrinterAttrEnum.JOBTICKET_PRINTER_GROUP));
+
+        final boolean isJobTicketLabelsEnabled =
+                printerService().isJobTicketLabelsEnabled(printer);
+
+        final ConfigManager cm = ConfigManager.instance();
+
+        dto.setJobTicketLabelsEnabled(isJobTicketLabelsEnabled
+                && cm.isConfigValue(Key.JOBTICKET_TAGS_ENABLE));
 
         /*
          * Printer Groups.
@@ -2573,6 +2689,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         final String requestingUser = ServiceContext.getActor();
         final Date now = ServiceContext.getTransactionDate();
 
+        final boolean isJobTicket = BooleanUtils.isTrue(dto.getJobTicket());
+
         jpaPrinter.setModifiedBy(requestingUser);
         jpaPrinter.setModifiedDate(now);
 
@@ -2602,6 +2720,13 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         //
         setPrinterAttr(jpaPrinter, PrinterAttrEnum.ACCESS_INTERNAL,
                 dto.getInternal());
+
+        setPrinterAttr(jpaPrinter, PrinterAttrEnum.ARCHIVE_DISABLE,
+                dto.getArchiveDisabled());
+
+        setPrinterAttr(jpaPrinter, PrinterAttrEnum.JOURNAL_DISABLE,
+                dto.getJournalDisabled());
+
         setPrinterAttr(jpaPrinter, PrinterAttrEnum.CUSTOM_PPD_EXT_FILE,
                 dto.getPpdExtFile());
 
@@ -2610,6 +2735,11 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 dto.getJobTicket());
         setPrinterAttr(jpaPrinter, PrinterAttrEnum.JOBTICKET_PRINTER_GROUP,
                 dto.getJobTicketGroup());
+
+        setPrinterAttr(jpaPrinter, PrinterAttrEnum.JOBTICKET_LABELS_ENABLE,
+                Boolean.valueOf(BooleanUtils.isNotTrue(dto.getJobTicket())
+                        && BooleanUtils
+                                .isTrue(dto.getJobTicketLabelsEnabled())));
 
         /*
          * Printer Groups.
@@ -2620,15 +2750,36 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         final Map<String, String> printerGroupLookup = new HashMap<>();
 
-        for (String displayName : StringUtils.split(printerGroups, " ,;:")) {
+        for (final String displayName : StringUtils.split(printerGroups,
+                " ,;:")) {
             printerGroupLookup.put(displayName.trim().toLowerCase(),
                     displayName.trim());
+        }
+
+        /*
+         * (1.1) "job sheet media sources configuration is offered for
+         * non-job-ticket printers, that belong to at least one job ticket
+         * printer group."
+         *
+         * NOTE: printer groups are not checked for being tied to a job ticket
+         * printer, so clean-up might not be performed, even if it logically
+         * should.
+         */
+        if (isJobTicket || printerGroupLookup.isEmpty()) {
+
+            final PrinterAttr removedAttr = printerService().removeAttribute(
+                    jpaPrinter, PrinterAttrEnum.JOB_SHEETS_MEDIA_SOURCES);
+            if (removedAttr != null) {
+                printerAttrDAO().delete(removedAttr);
+            }
         }
 
         /*
          * (2) Remove PrinterGroupMembers which are not selected now, and remove
          * entries from the Map if member already exists.
          */
+        boolean isGroupMemberChange = false;
+
         List<PrinterGroupMember> printerGroupMembers =
                 jpaPrinter.getPrinterGroupMembers();
 
@@ -2637,7 +2788,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             jpaPrinter.setPrinterGroupMembers(printerGroupMembers);
         }
 
-        Iterator<PrinterGroupMember> iterMembers =
+        final Iterator<PrinterGroupMember> iterMembers =
                 printerGroupMembers.iterator();
 
         while (iterMembers.hasNext()) {
@@ -2651,13 +2802,15 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             } else {
                 printerGroupMemberDAO().delete(member);
                 iterMembers.remove();
+                isGroupMemberChange = true;
             }
         }
 
         /*
          * (3) Lazy add new Groups and GroupMember.
          */
-        for (Entry<String, String> entry : printerGroupLookup.entrySet()) {
+        for (final Entry<String, String> entry : printerGroupLookup
+                .entrySet()) {
 
             final PrinterGroup group = printerGroupDAO().readOrAdd(
                     entry.getKey(), entry.getValue(), requestingUser, now);
@@ -2670,6 +2823,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             member.setCreatedDate(now);
 
             printerGroupMembers.add(member);
+
+            isGroupMemberChange = true;
         }
 
         //
@@ -2680,6 +2835,11 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
         //
         updateCachedPrinter(jpaPrinter);
+
+        //
+        if (isJobTicket && isGroupMemberChange) {
+            jobTicketService().updatePrinterGroupIDs(jpaPrinter);
+        }
     }
 
     /**
@@ -2731,7 +2891,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
                 final String key = attr.getName();
 
-                if (!key.startsWith(PrinterDao.CostMediaAttr.COST_MEDIA_PFX)) {
+                if (!key.startsWith(
+                        PrinterAttrEnum.PFX_COST_MEDIA.getDbName())) {
                     continue;
                 }
 
@@ -2806,7 +2967,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 final String key = attr.getName();
 
                 if (!key.startsWith(
-                        PrinterDao.MediaSourceAttr.MEDIA_SOURCE_PFX)) {
+                        PrinterAttrEnum.PFX_MEDIA_SOURCE.getDbName())) {
                     continue;
                 }
 
@@ -3257,7 +3418,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
             final String mediaSourceKey = dto.getSource();
 
             /*
-             * Validate active entries only.
+             * VALIDATE active entries only.
              */
             if (dto.getActive()) {
 
@@ -3316,8 +3477,8 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         }
 
         /*
-        *
-        */
+         *
+         */
         final Boolean isForceDefaultMonochrome =
                 dtoMediaSources.getDefaultMonochrome();
 
@@ -3333,9 +3494,62 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
         Boolean clientSideMonochrome =
                 dtoMediaSources.getClientSideMonochrome();
 
+        //
+        final Set<String> jobSheetsMediaSources =
+                dtoMediaSources.getJobSheetsMediaSources();
+
+        String jsonJobSheetsMediaSources = null;
+
+        if (jobSheetsMediaSources != null && !jobSheetsMediaSources.isEmpty()) {
+            /*
+             * INVARIANT: job-sheet media-sources must match active
+             * media-source.
+             */
+            for (final String mediaSource : jobSheetsMediaSources) {
+                final IppMediaSourceCostDto dtoWlk =
+                        mapMediaSources.get(mediaSource);
+                if (dtoWlk != null && BooleanUtils.isTrue(dtoWlk.getActive())) {
+                    continue;
+                }
+                return JsonRpcMethodError.createBasicError(Code.INVALID_PARAMS,
+                        "",
+                        localize(ServiceContext.getLocale(),
+                                "msg-printer-job-sheet-media-source-disabled",
+                                PrintOutNounEnum.JOB_SHEET.uiText(
+                                        ServiceContext.getLocale(), true),
+                                mediaSource));
+            }
+            jsonJobSheetsMediaSources =
+                    JsonHelper.stringifyStringSet(jobSheetsMediaSources);
+        } else {
+            jsonJobSheetsMediaSources = null;
+        }
+
+        //
         while (iterAttr.hasNext()) {
 
             final PrinterAttr printerAttr = iterAttr.next();
+
+            /*
+             * JobSheetsMediaSource?
+             */
+            if (printerAttr.getName().equalsIgnoreCase(
+                    PrinterAttrEnum.JOB_SHEETS_MEDIA_SOURCES.getDbName())) {
+
+                if (StringUtils.isNotBlank(jsonJobSheetsMediaSources)) {
+
+                    printerAttr.setValue(jsonJobSheetsMediaSources);
+                    jsonJobSheetsMediaSources = null;
+
+                } else {
+                    /*
+                     * Remove non-active entry.
+                     */
+                    printerAttrDAO().delete(printerAttr);
+                    iterAttr.remove();
+                }
+                continue;
+            }
 
             /*
              * Client-side grayscale conversion?
@@ -3346,16 +3560,14 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 if (clientSideMonochrome != null
                         && clientSideMonochrome.booleanValue()) {
 
-                    printerAttr.setValue(clientSideMonochrome.toString());
+                    printerAttr.setValue(PrinterAttrDao.V_YES);
                     clientSideMonochrome = null;
 
                 } else {
                     /*
                      * Remove non-active entry.
                      */
-                    // (1)
                     printerAttrDAO().delete(printerAttr);
-                    // (2)
                     iterAttr.remove();
                 }
                 continue;
@@ -3377,9 +3589,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                     /*
                      * Remove non-active entry.
                      */
-                    // (1)
                     printerAttrDAO().delete(printerAttr);
-                    // (2)
                     iterAttr.remove();
                 }
 
@@ -3427,9 +3637,7 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 /*
                  * Remove non-active entry.
                  */
-                // (1)
                 printerAttrDAO().delete(printerAttr);
-                // (2)
                 iterAttr.remove();
             }
 
@@ -3449,28 +3657,16 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 /*
                  * Add active entry.
                  */
-                final PrinterAttr printerAttr = new PrinterAttr();
-
-                printerAttr.setPrinter(printer);
-
-                printerAttr.setName(new PrinterDao.MediaSourceAttr(
-                        mediaSourceDto.getSource()).getKey());
-
-                String json;
+                mediaSourceDto.toDatabaseObject(locale);
 
                 try {
-                    mediaSourceDto.toDatabaseObject(locale);
-                    json = mediaSourceDto.stringify();
+                    createAddPrinterAttr(printer,
+                            new PrinterDao.MediaSourceAttr(
+                                    mediaSourceDto.getSource()).getKey(),
+                            mediaSourceDto.stringify());
                 } catch (IOException e) {
                     throw new SpException(e);
                 }
-
-                printerAttr.setValue(json);
-
-                // (1)
-                printerAttrDAO().create(printerAttr);
-                // (2)
-                printer.getAttributes().add(printerAttr);
 
             } else {
                 /*
@@ -3487,18 +3683,11 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
                 && isForceDefaultMonochrome != null
                 && isForceDefaultMonochrome) {
 
-            final PrinterAttr printerAttr = new PrinterAttr();
+            final String nameKey = new PrinterDao.IppKeywordAttr(
+                    IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE_DFLT).getKey();
 
-            printerAttr.setPrinter(printer);
-            printerAttr.setName(new PrinterDao.IppKeywordAttr(
-                    IppDictJobTemplateAttr.ATTR_PRINT_COLOR_MODE_DFLT)
-                            .getKey());
-            printerAttr.setValue(IppKeyword.PRINT_COLOR_MODE_MONOCHROME);
-
-            // (1)
-            printerAttrDAO().create(printerAttr);
-            // (2)
-            printer.getAttributes().add(printerAttr);
+            createAddPrinterAttr(printer, nameKey,
+                    IppKeyword.PRINT_COLOR_MODE_MONOCHROME);
         }
 
         /*
@@ -3506,17 +3695,18 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
          */
         if (clientSideMonochrome != null
                 && clientSideMonochrome.booleanValue()) {
-            final PrinterAttr printerAttr = new PrinterAttr();
+            createAddPrinterAttr(printer,
+                    PrinterAttrEnum.CLIENT_SIDE_MONOCHROME,
+                    PrinterAttrDao.V_YES);
+        }
 
-            printerAttr.setPrinter(printer);
-            printerAttr.setName(
-                    PrinterAttrEnum.CLIENT_SIDE_MONOCHROME.getDbName());
-            printerAttr.setValue(clientSideMonochrome.toString());
-
-            // (1)
-            printerAttrDAO().create(printerAttr);
-            // (2)
-            printer.getAttributes().add(printerAttr);
+        /*
+         * Client-side grayscale conversion (add).
+         */
+        if (StringUtils.isNotBlank(jsonJobSheetsMediaSources)) {
+            createAddPrinterAttr(printer,
+                    PrinterAttrEnum.JOB_SHEETS_MEDIA_SOURCES,
+                    jsonJobSheetsMediaSources);
         }
 
         /*
@@ -3536,21 +3726,82 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
     }
 
     /**
+     * Creates a {@link PrinterAttr} in database and adds it to printer
+     * attribute list.
+     *
+     * @param printer
+     *            The printer.
+     * @param attrEnum
+     *            The attribute enum.
+     * @param value
+     *            The attribute value.
+     */
+    private static void createAddPrinterAttr(final Printer printer,
+            final PrinterAttrEnum attrEnum, final String value) {
+        createAddPrinterAttr(printer, attrEnum.getDbName(), value);
+    }
+
+    /**
+     * Creates a {@link PrinterAttr} in database and adds it to printer
+     * attribute list.
+     *
+     * @param printer
+     *            The printer.
+     * @param name
+     *            The attribute name (key).
+     * @param value
+     *            The attribute value.
+     */
+    private static void createAddPrinterAttr(final Printer printer,
+            final String name, final String value) {
+
+        final PrinterAttr printerAttr = new PrinterAttr();
+
+        printerAttr.setPrinter(printer);
+        printerAttr.setName(name);
+        printerAttr.setValue(value);
+
+        // (1)
+        printerAttrDAO().create(printerAttr);
+        // (2)
+        printer.getAttributes().add(printerAttr);
+    }
+
+    /**
      * Gets the CUPS URL for a printer.
      *
      * @param path
      *            The path.
      * @return The URL.
+     * @throws UnknownHostException
+     *             If host unknown.
      */
-    private URL getCupsUrl(final String path) {
+    private URL getCupsUrl(final String path) throws UnknownHostException {
+        return this.getCupsUrl(InetUtils.URL_PROTOCOL_HTTPS,
+                InetUtils.getServerHostAddress(), path);
+    }
+
+    /**
+     * Gets the CUPS URL for a printer.
+     *
+     * @param protocol
+     *            The URL protocol.
+     * @param host
+     *            Host name or IP address.
+     * @param path
+     *            The path.
+     * @return The URL.
+     */
+    private URL getCupsUrl(final String protocol, final String host,
+            final String path) {
 
         final URL url;
 
         try {
-            url = new URL("https", InetUtils.getServerHostAddress(),
+            url = new URL(protocol, host,
                     Integer.parseInt(ConfigManager.getCupsPort()), path);
 
-        } catch (MalformedURLException | UnknownHostException e) {
+        } catch (MalformedURLException e) {
             throw new SpException(e.getMessage(), e);
         }
 
@@ -3559,12 +3810,39 @@ public final class ProxyPrintServiceImpl extends AbstractProxyPrintService {
 
     @Override
     public URL getCupsPrinterUrl(final String printerName) {
-        return getCupsUrl("/printers/" + printerName);
+        try {
+            return this.getCupsPrinterUrl(InetUtils.URL_PROTOCOL_HTTPS,
+                    InetUtils.getServerHostAddress(), printerName);
+        } catch (UnknownHostException e) {
+            throw new SpException(e.getMessage(), e);
+        }
+    }
+
+    /**
+     *
+     * @param protocol
+     *            The URL protocol.
+     * @param host
+     *            Host name or IP address.
+     * @param printerName
+     *            CUPS Printer name.
+     * @return The URL.
+     * @throws UnknownHostException
+     *             If host unknown.
+     */
+    private URL getCupsPrinterUrl(final String protocol, final String host,
+            final String printerName) throws UnknownHostException {
+        return getCupsUrl(protocol, host,
+                URL_PATH_CUPS_PRINTERS.concat("/").concat(printerName));
     }
 
     @Override
     public URL getCupsAdminUrl() {
-        return getCupsUrl("/admin");
+        try {
+            return getCupsUrl(URL_PATH_CUPS_ADMIN);
+        } catch (UnknownHostException e) {
+            throw new SpException(e.getMessage());
+        }
     }
 
     @Override

@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2019 Datraverse B.V.
  * Authors: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,25 +26,6 @@ package org.savapage.core.dto;
  * @author Rijk Ravestein
  *
  */
-public final class JobTicketTagDto extends AbstractDto {
-
-    private String id;
-    private String word;
-
-    public String getId() {
-        return id;
-    }
-
-    public void setId(final String id) {
-        this.id = id;
-    }
-
-    public String getWord() {
-        return word;
-    }
-
-    public void setWord(final String word) {
-        this.word = word;
-    }
+public final class JobTicketTagDto extends JobTicketLabelDomainPartDto {
 
 }

@@ -58,6 +58,7 @@ import org.savapage.core.print.proxy.JsonProxyPrinterOpt;
 import org.savapage.core.print.proxy.JsonProxyPrinterOptChoice;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
+import org.savapage.core.services.helpers.PrintScalingEnum;
 import org.savapage.core.util.MediaUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -160,11 +161,9 @@ public final class IppReqPrintJob extends IppReqCommon {
          * Do NOT correct for booklet jobs: printer booklet finishers are
          * supposed to apply the right orientation and layout.
          */
-        if (!StringUtils
-                .defaultString(
-                        optionValues
-                                .get(IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET),
-                        IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET_NONE)
+        if (!StringUtils.defaultString(optionValues.get(
+                IppDictJobTemplateAttr.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET),
+                IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET_NONE)
                 .equals(IppKeyword.ORG_SAVAPAGE_ATTR_FINISHINGS_BOOKLET_NONE)) {
 
             LOGGER.debug("No n-up correction for booklet needed.");
@@ -214,9 +213,8 @@ public final class IppReqPrintJob extends IppReqCommon {
         final AbstractIppDict dict = IppDictJobTemplateAttr.instance();
 
         if (cupsOrientationRequested != null) {
-            group.add(
-                    dict.createPpdOptionAttr(
-                            IppDictJobTemplateAttr.CUPS_ATTR_ORIENTATION_REQUESTED),
+            group.add(dict.createPpdOptionAttr(
+                    IppDictJobTemplateAttr.CUPS_ATTR_ORIENTATION_REQUESTED),
                     cupsOrientationRequested);
         }
 
@@ -275,7 +273,7 @@ public final class IppReqPrintJob extends IppReqCommon {
      * @param jsonPrinter
      *            The printer.
      * @param printerOptionsLookup
-     *            The printer options look-up.
+     *            The printer options look-up (can be {@code null}).
      * @param optionValuesOrg
      *            The original IPP job option values.
      * @param group
@@ -294,6 +292,10 @@ public final class IppReqPrintJob extends IppReqCommon {
         // Is sheet-collate already substituted?
         if (optionValuesOrg
                 .containsKey(IppDictJobTemplateAttr.ATTR_SHEET_COLLATE)) {
+            return;
+        }
+
+        if (printerOptionsLookup == null) {
             return;
         }
 
@@ -463,7 +465,6 @@ public final class IppReqPrintJob extends IppReqCommon {
                 }
             }
         }
-
     }
 
     /**
@@ -502,8 +503,6 @@ public final class IppReqPrintJob extends IppReqCommon {
         group.add(dict.getAttr(IppDictOperationAttr.ATTR_DOCUMENT_FORMAT),
                 IppMimeMediaType.PDF);
 
-        // "document-natural-language" (naturalLanguage):
-
         return group;
     }
 
@@ -511,7 +510,6 @@ public final class IppReqPrintJob extends IppReqCommon {
     public List<IppAttrGroup> build() {
 
         final int copies = this.request.getNumberOfCopies();
-        final Boolean fitToPage = this.request.getFitToPage();
         final Map<String, String> optionValues = this.request.getOptionValues();
 
         final List<IppAttrGroup> attrGroups = new ArrayList<>();
@@ -539,9 +537,9 @@ public final class IppReqPrintJob extends IppReqCommon {
             printerOptionsLookup = null;
         }
 
-        /*
-         * Mantis #738.
-         */
+        addJobCopies(group, printerOptionsLookup, copies);
+
+        // Mantis #738: Apply correct n-up layout in landscape proxy print.
         final StringBuilder numberUpRequested =
                 new StringBuilder(IppKeyword.NUMBER_UP_1);
 
@@ -549,21 +547,16 @@ public final class IppReqPrintJob extends IppReqCommon {
 
         addCupsPageAttrs(group);
 
-        if (fitToPage != null) {
-            addFitToPage(group, printerOptionsLookup, fitToPage.booleanValue());
-        }
+        // Print scaling
+        PrintScalingEnum scaling = PrintScalingEnum
+                .fromIppValue(optionValues.get(PrintScalingEnum.IPP_NAME));
 
-        /*
-         * Mantis #259: add number of copies when GT 1.
-         */
-        if (copies > 1) {
-            group.add(IppDictJobTemplateAttr.ATTR_COPIES, IppInteger.instance(),
-                    String.valueOf(copies));
+        if (scaling == null) {
+            scaling = PrintScalingEnum.NONE;
         }
+        addPrintScaling(group, printerOptionsLookup, scaling);
 
-        /*
-         * Mantis #738: Apply correct n-up layout in landscape proxy print.
-         */
+        // Mantis #738: Apply correct n-up layout in landscape proxy print.
         final PdfOrientationInfo pdfOrientation;
 
         if (this.pdfCreateInfo.getPdfOrientationInfo() != null) {
@@ -591,20 +584,17 @@ public final class IppReqPrintJob extends IppReqCommon {
 
         if (LOGGER.isDebugEnabled()) {
             for (final Entry<String, String> entry : optionValues.entrySet()) {
-                LOGGER.debug(String.format("IPP: %s/%s", entry.getKey(),
-                        entry.getValue()));
+                LOGGER.debug("IPP: {}/{}", entry.getKey(), entry.getValue());
             }
             for (final IppAttrValue val : group.getAttributes()) {
-                LOGGER.debug(String.format("PPD %s/%s",
-                        val.getAttribute().getKeyword(), val.getSingleValue()));
+                LOGGER.debug("PPD {}/{}", val.getAttribute().getKeyword(),
+                        val.getSingleValue());
             }
             for (final IppAttrCollection col : group.getCollections()) {
-                LOGGER.debug(
-                        String.format("PPD Collection: %s", col.getKeyword()));
+                LOGGER.debug("PPD Collection: {}", col.getKeyword());
                 for (final IppAttrValue val : col.getAttributes()) {
-                    LOGGER.debug(String.format("\t%s/%s",
-                            val.getAttribute().getKeyword(),
-                            val.getSingleValue()));
+                    LOGGER.debug("\t{}/{}", val.getAttribute().getKeyword(),
+                            val.getSingleValue());
                 }
             }
         }
@@ -617,7 +607,38 @@ public final class IppReqPrintJob extends IppReqCommon {
      * @param group
      *            The group to add job attributes to.
      * @param printerOptionsLookup
-     *            The printer options look-up.
+     *            The printer options look-up (can be {@code null}).
+     * @param copies
+     *            The number of copies.
+     */
+    private static void addJobCopies(final IppAttrGroup group,
+            final Map<String, JsonProxyPrinterOpt> printerOptionsLookup,
+            final int copies) {
+        /*
+         * Mantis #259: add number of copies when GT 1.
+         */
+        if (copies > 1) {
+
+            String attrKeyword = IppDictJobTemplateAttr.ATTR_COPIES;
+
+            if (printerOptionsLookup != null
+                    && printerOptionsLookup.containsKey(attrKeyword)) {
+                attrKeyword =
+                        printerOptionsLookup.get(attrKeyword).getKeywordPpd();
+            }
+
+            group.add(attrKeyword, IppInteger.instance(),
+                    String.valueOf(copies));
+        }
+    }
+
+    /**
+     * Adds requested option the group.
+     *
+     * @param group
+     *            The group to add job attributes to.
+     * @param printerOptionsLookup
+     *            The printer options look-up (can be {@code null}).
      * @param numberUpRequested
      *            The requested number-up to be filled by this method.
      */
@@ -643,13 +664,19 @@ public final class IppReqPrintJob extends IppReqCommon {
             // The IPP option keyword.
             final String optionKeywordIpp = entry.getKey();
 
+            // Skip print-scaling, this will be handled separately.
+            if (optionKeywordIpp.equals(PrintScalingEnum.IPP_NAME)) {
+                continue;
+            }
+
             // The mapped PPD option keyword.
             final String optionKeywordPpd;
 
             // IPP option from proxy printer definition.
             final JsonProxyPrinterOpt proxyPrinterOpt;
 
-            if (this.jsonPrinter.isInjectPpdExt()) {
+            if (this.jsonPrinter.isInjectPpdExt()
+                    && printerOptionsLookup != null) {
 
                 proxyPrinterOpt = printerOptionsLookup.get(optionKeywordIpp);
 
@@ -701,9 +728,8 @@ public final class IppReqPrintJob extends IppReqCommon {
                             mapIppRuleSubst.get(optionKeywordIpp).getPpdValue();
 
                     if (LOGGER.isDebugEnabled()) {
-                        LOGGER.debug(String.format("%s/%s -> %s/%s",
-                                optionKeywordIpp, optionValueIpp, optionKeyword,
-                                optionValue));
+                        LOGGER.debug("{}/{} -> {}/{}", optionKeywordIpp,
+                                optionValueIpp, optionKeyword, optionValue);
                     }
                 } else {
                     optionValue = optionValuePpd;
@@ -803,40 +829,42 @@ public final class IppReqPrintJob extends IppReqCommon {
     }
 
     /**
-     * Add print-scaling.
+     * Add print-scaling, as vendor PPDE option or as CUPS {@code fit-to-page}
+     * option.
      *
      * @param group
      *            The group to add job attributes to.
      * @param printerOptionsLookup
-     *            The printer options look-up.
-     * @param fitToPage
-     *            {@code true} when fit to page.
+     *            The printer options look-up (can be {@code null}).
+     * @param scaling
+     *            Print scaling.
      */
-    private static void addFitToPage(final IppAttrGroup group,
+    private static void addPrintScaling(final IppAttrGroup group,
             final Map<String, JsonProxyPrinterOpt> printerOptionsLookup,
-            final boolean fitToPage) {
+            final PrintScalingEnum scaling) {
 
-        final String optionKeywordIpp =
+        final String ippKeywordPrintScaling =
                 IppDictJobTemplateAttr.ATTR_PRINT_SCALING;
 
-        final JsonProxyPrinterOpt printScaling;
+        final JsonProxyPrinterOpt printerScalingOpt;
 
         if (printerOptionsLookup == null) {
-            printScaling = null;
+            printerScalingOpt = null;
         } else {
-            printScaling = printerOptionsLookup.get(optionKeywordIpp);
+            printerScalingOpt =
+                    printerOptionsLookup.get(ippKeywordPrintScaling);
         }
 
-        if (printScaling == null) {
+        if (printerScalingOpt == null) {
             /*
              * Mantis #205: add fit to page attribute.
              */
             final String fitToPageIppBoolean;
 
-            if (fitToPage) {
-                fitToPageIppBoolean = IppBoolean.TRUE;
-            } else {
+            if (scaling == PrintScalingEnum.NONE) {
                 fitToPageIppBoolean = IppBoolean.FALSE;
+            } else {
+                fitToPageIppBoolean = IppBoolean.TRUE;
             }
 
             group.add(IppDictJobTemplateAttr.CUPS_ATTR_FIT_TO_PAGE,
@@ -851,15 +879,10 @@ public final class IppReqPrintJob extends IppReqCommon {
              */
 
             // The mapped PPD option keyword.
-            final String optionKeywordPpd = printScaling.getKeywordPpd();
+            final String optionKeywordPpd = printerScalingOpt.getKeywordPpd();
 
             // The IPP value.
-            final String optionValueIpp;
-            if (fitToPage) {
-                optionValueIpp = IppKeyword.PRINT_SCALING_FIT;
-            } else {
-                optionValueIpp = IppKeyword.PRINT_SCALING_NONE;
-            }
+            final String optionValueIpp = scaling.getIppValue();
 
             // The actual attribute and value to send.
             final IppAttr attr;
@@ -867,14 +890,14 @@ public final class IppReqPrintJob extends IppReqCommon {
 
             if (optionKeywordPpd == null) {
 
-                attr = dict.getAttr(optionKeywordIpp);
+                attr = dict.getAttr(ippKeywordPrintScaling);
                 optionValue = optionValueIpp;
 
             } else {
 
                 String optionValuePpd = null;
 
-                for (final JsonProxyPrinterOptChoice choice : printScaling
+                for (final JsonProxyPrinterOptChoice choice : printerScalingOpt
                         .getChoices()) {
                     if (choice.getChoice().equals(optionValueIpp)) {
                         optionValuePpd = choice.getChoicePpd();

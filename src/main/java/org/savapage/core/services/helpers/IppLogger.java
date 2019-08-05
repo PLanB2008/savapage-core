@@ -1,6 +1,6 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2018 Datraverse B.V.
  * Author: Rijk Ravestein.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,6 +34,7 @@ import org.savapage.core.ipp.attribute.IppAttrValue;
 import org.savapage.core.ipp.client.IppConnectException;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.json.JsonPrinterDetail;
+import org.savapage.core.print.proxy.JsonProxyPrinter;
 import org.savapage.core.print.proxy.JsonProxyPrinterOpt;
 import org.savapage.core.print.proxy.JsonProxyPrinterOptChoice;
 import org.savapage.core.print.proxy.JsonProxyPrinterOptGroup;
@@ -94,6 +95,9 @@ public final class IppLogger {
                     "No details found for printer [" + printerName + "]");
         }
 
+        final JsonProxyPrinter cupsPrinter =
+                PROXY_PRINT_SERVICE.getCachedPrinter(printerName);
+
         /*
          * Collect printer options.
          */
@@ -107,6 +111,11 @@ public final class IppLogger {
             writer.append("CUPS    : ")
                     .append(PROXY_PRINT_SERVICE.getCupsVersion()).append(CRLF);
             writer.append("Printer : ").append(printerName).append(CRLF);
+            writer.append("Driver  : ")
+                    .append(StringUtils
+                            .defaultString(cupsPrinter.getModelName(), "?"))
+                    .append(CRLF);
+
             writer.append("URI     : ")
                     .append(jsonPrinter.getPrinterUri().toString()).append(CRLF)
                     .append(CRLF);
@@ -142,7 +151,10 @@ public final class IppLogger {
 
                         writer.append(CRLF);
 
-                        if (choice.getChoice().equals(opt.getDefchoiceIpp())) {
+                        if (choice.isExtended()) {
+                            writer.append("       +");
+                        } else if (choice.getChoice()
+                                .equals(opt.getDefchoiceIpp())) {
                             writer.append("       *");
                         } else {
                             writer.append("        ");
@@ -201,9 +213,9 @@ public final class IppLogger {
             for (final IppAttrValue attr : group.getAttributes()) {
 
                 writer.append(CRLF).append(CRLF).append(INDENT_UNIT)
-                        .append(attr.getAttribute().getKeyword())
-                        .append(" [").append(attr.getAttribute().getSyntax()
-                                .getClass().getSimpleName())
+                        .append(attr.getAttribute().getKeyword()).append(" [")
+                        .append(attr.getAttribute().getSyntax().getClass()
+                                .getSimpleName())
                         .append("]").append(CRLF);
 
                 for (final String value : attr.getValues()) {
@@ -238,9 +250,9 @@ public final class IppLogger {
         for (final IppAttrValue attr : collection.getAttributes()) {
 
             writer.append(CRLF).append(CRLF).append(indent).append(INDENT_UNIT)
-                    .append(attr.getAttribute().getKeyword())
-                    .append(" [").append(attr.getAttribute().getSyntax()
-                            .getClass().getSimpleName())
+                    .append(attr.getAttribute().getKeyword()).append(" [")
+                    .append(attr.getAttribute().getSyntax().getClass()
+                            .getSimpleName())
                     .append("]").append(CRLF);
 
             for (final String value : attr.getValues()) {
