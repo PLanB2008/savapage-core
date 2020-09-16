@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -27,6 +30,7 @@ import javax.persistence.NoResultException;
 import javax.persistence.Query;
 
 import org.apache.commons.lang3.StringUtils;
+import org.savapage.core.dao.IAttrDao;
 import org.savapage.core.dao.PrinterAttrDao;
 import org.savapage.core.dao.PrinterDao.IppKeywordAttr;
 import org.savapage.core.dao.enums.PrinterAttrEnum;
@@ -40,7 +44,7 @@ import org.savapage.core.services.helpers.PrinterAttrLookup;
  *
  */
 public final class PrinterAttrDaoImpl extends GenericDaoImpl<PrinterAttr>
-        implements PrinterAttrDao {
+        implements PrinterAttrDao, IAttrDao {
 
     /**
      * This SQL LIKE value is used to select all rolling statistics.

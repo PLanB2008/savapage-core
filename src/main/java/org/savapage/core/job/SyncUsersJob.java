@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -27,6 +30,7 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
@@ -449,14 +453,15 @@ public final class SyncUsersJob extends AbstractJob {
             return false;
         }
 
+        // Step 1: Initialize DoaContext. See Mantis #981.
+        final UserCardDao userCardDao =
+                ServiceContext.getDaoContext().getUserCardDao();
+
         if (this.isTest) {
             return !isExistingUser || !StringUtils
                     .defaultString(USER_SERVICE.getPrimaryCardNumber(user))
                     .equalsIgnoreCase(StringUtils.defaultString(cardNumberSrc));
         }
-
-        final UserCardDao userCardDao =
-                ServiceContext.getDaoContext().getUserCardDao();
 
         String primaryCardNumber = cardNumberSrc;
 
@@ -787,14 +792,15 @@ public final class SyncUsersJob extends AbstractJob {
             return false;
         }
 
+        // Step 1: Initialize DoaContext. See Mantis #981.
+        final UserNumberDao userNumberDao =
+                ServiceContext.getDaoContext().getUserNumberDao();
+
         if (this.isTest) {
             return !isExistingUser || !StringUtils
                     .defaultString(USER_SERVICE.getPrimaryIdNumber(user))
                     .equalsIgnoreCase(StringUtils.defaultString(idNumberSrc));
         }
-
-        final UserNumberDao userNumberDao =
-                ServiceContext.getDaoContext().getUserNumberDao();
 
         String primaryIdNumber = idNumberSrc;
 
@@ -1119,15 +1125,16 @@ public final class SyncUsersJob extends AbstractJob {
             return false;
         }
 
+        // Step 1: Initialize DoaContext. See Mantis #981.
+        final UserEmailDao userEmailDao =
+                ServiceContext.getDaoContext().getUserEmailDao();
+
         if (this.isTest) {
             return !isExistingUser || !StringUtils
                     .defaultString(USER_SERVICE.getPrimaryEmailAddress(user))
                     .equalsIgnoreCase(
                             StringUtils.defaultString(emailAddressSrc));
         }
-
-        final UserEmailDao userEmailDao =
-                ServiceContext.getDaoContext().getUserEmailDao();
 
         String primaryEmailAddress = emailAddressSrc;
 
@@ -1874,13 +1881,14 @@ public final class SyncUsersJob extends AbstractJob {
         final StringBuilder filesMsg = new StringBuilder();
 
         filesMsg.append("Files: present [")
-                .append(NumberUtil
-                        .humanReadableByteCount(nBytesUserFilesPresent, true))
+                .append(NumberUtil.humanReadableByteCountSI(Locale.getDefault(),
+                        nBytesUserFilesPresent))
                 .append("]");
 
         if (nBytesUserFilesDeleted > 0) {
-            filesMsg.append(" deleted [").append(NumberUtil
-                    .humanReadableByteCount(nBytesUserFilesDeleted, true))
+            filesMsg.append(" deleted [")
+                    .append(NumberUtil.humanReadableByteCountSI(
+                            Locale.getDefault(), nBytesUserFilesDeleted))
                     .append("]");
         }
         pubMsg(filesMsg.toString());

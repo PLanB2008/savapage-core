@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -21,19 +24,23 @@
  */
 package org.savapage.core.pdf;
 
+import java.awt.print.PageFormat;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.savapage.core.LetterheadNotFoundException;
 import org.savapage.core.PostScriptDrmException;
 import org.savapage.core.SpException;
+import org.savapage.core.community.CommunityDictEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.doc.PdfToPgpSignedPdf;
@@ -51,8 +58,8 @@ import org.savapage.core.jpa.DocOut;
 import org.savapage.core.jpa.PdfOut;
 import org.savapage.core.jpa.User;
 import org.savapage.core.json.PdfProperties;
+import org.savapage.core.json.PdfProperties.PdfPasswords;
 import org.savapage.core.print.proxy.BasePrintSheetCalcParms;
-import org.savapage.core.print.proxy.ProxyPrintSheetsCalcParms;
 import org.savapage.core.services.InboxService;
 import org.savapage.core.services.PGPPublicKeyService;
 import org.savapage.core.services.ServiceContext;
@@ -102,13 +109,6 @@ public abstract class AbstractPdfCreator {
     private int printNup;
 
     /**
-     * For future use, for now: do NOT encrypt since
-     * {@link PdfPrintCollector#collect(ProxyPrintSheetsCalcParms, boolean, File, File)}
-     * will fail.
-     */
-    private final boolean encryptForPrinting = false;
-
-    /**
      * {@code true} when graphics are removed from PDF.
      */
     private boolean removeGraphics = false;
@@ -145,6 +145,11 @@ public abstract class AbstractPdfCreator {
     protected LetterheadInfo.LetterheadJob myLetterheadJob = null;
 
     /**
+     * The {@link PageFormat} of the first page of first job.
+     */
+    protected PageFormat firstPageFormat;
+
+    /**
      * The {@link PdfOrientationInfo} of the first page of first job, used to
      * find the {@link IppRuleNumberUp}.
      */
@@ -152,6 +157,14 @@ public abstract class AbstractPdfCreator {
 
     /** */
     private PdfPgpVerifyUrl verifyUrl;
+
+    /**
+     *
+     * @return {@code true} if letterhead is to be applied.
+     */
+    protected boolean isApplyLetterhead() {
+        return this.myPdfFileLetterhead != null;
+    }
 
     /**
      *
@@ -202,6 +215,17 @@ public abstract class AbstractPdfCreator {
 
     public static int pageCountInPdfFile(final String filePathPdf) {
         return create().getNumberOfPagesInPdfFile(filePathPdf);
+    }
+
+    /**
+     * @return The Creator string visible in the PDF properties of PDF Reader.
+     */
+    public static String getCreatorString() {
+        return String.format("%s %s • %s • %s",
+                CommunityDictEnum.SAVAPAGE.getWord(),
+                ConfigManager.getAppVersion(),
+                CommunityDictEnum.SAVAPAGE_SLOGAN.getWord(),
+                CommunityDictEnum.SAVAPAGE_DOT_ORG.getWord());
     }
 
     /**
@@ -306,17 +330,21 @@ public abstract class AbstractPdfCreator {
     protected abstract void onInitStamp() throws Exception;
 
     /**
-     *
+     * @param pageOverlay
+     *            Base64 encoded SVG overlay (value) for one-based ordinal pages
+     *            (key) of the job pages.
      * @throws Exception
+     *             If error.
      */
-    protected abstract void onExitStamp() throws Exception;
+    protected abstract void onExitStamp(Map<Integer, String> pageOverlay)
+            throws Exception;
 
     /**
      *
      * @param pdfLetterhead
      * @throws Exception
      */
-    protected abstract void onStampLetterhead(final String pdfLetterhead)
+    protected abstract void onStampLetterhead(String pdfLetterhead)
             throws Exception;
 
     /**
@@ -324,11 +352,6 @@ public abstract class AbstractPdfCreator {
      * @throws Exception
      */
     protected abstract void onCompress() throws Exception;
-
-    /**
-     *
-     */
-    protected abstract void onStampEncryptionForPrinting();
 
     /**
      *
@@ -361,19 +384,16 @@ public abstract class AbstractPdfCreator {
 
     /**
      *
-     * @param propPdf
+     * @param propPdfAllow
+     *            PDF allowed properties.
      * @param ownerPass
+     *            Owner password.
      * @param userPass
-     * @param hasVisitorText
+     *            User password.
      */
     protected abstract void onStampEncryptionForExport(
-            final PdfProperties propPdf, final String ownerPass,
-            final String userPass, boolean hasVisitorText);
-
-    /**
-     *
-     */
-    protected abstract void onStampRotateForPrinting() throws Exception;
+            PdfProperties.PdfAllow propPdfAllow, String ownerPass,
+            String userPass);
 
     /**
      *
@@ -424,6 +444,7 @@ public abstract class AbstractPdfCreator {
 
         this.removeGraphics = createReq.isRemoveGraphics();
 
+        this.firstPageFormat = null;
         this.firstPageOrientationInfo = null;
 
         /*
@@ -439,7 +460,6 @@ public abstract class AbstractPdfCreator {
                                     + "PDF export is not permitted");
                 }
             }
-
             this.verifyUrl = createReq.getVerifyUrl();
         }
 
@@ -490,9 +510,7 @@ public abstract class AbstractPdfCreator {
             }
         }
 
-        /*
-         *
-         */
+        /* */
         onInit();
 
         // --------------------------------------------------------
@@ -517,9 +535,22 @@ public abstract class AbstractPdfCreator {
         }
 
         final PdfProperties propPdf;
+        final boolean isPgpSigned;
+
+        boolean hasEncryption = false;
+        String ownerPass = null;
+        String userPass = null;
+
+        //
+        final Map<Integer, String> pageOverlayMap = new HashMap<>();
+        int nPageOverlayWlk = 0;
 
         try {
             propPdf = USER_SERVICE.getPdfProperties(createReq.getUserObj());
+
+            isPgpSigned = !this.isForPrinting()
+                    && BooleanUtils.isTrue(propPdf.isPgpSignature())
+                    && this.verifyUrl != null;
 
             for (InboxJobRange page : pages) {
 
@@ -528,14 +559,16 @@ public abstract class AbstractPdfCreator {
                 int totJobRangePages = 0;
 
                 final InboxJob job = inboxInfo.getJobs().get(page.getJob());
-                final String pdfFile = job.getFile();
+                final String pdfFileWlk = job.getFile();
+                final Map<Integer, InboxInfoDto.PageOverlay> pdfPageOverlayWlk =
+                        job.getOverlay();
 
                 final String filePath = String.format("%s%c%s", this.userhome,
-                        File.separatorChar, pdfFile);
+                        File.separatorChar, pdfFileWlk);
 
                 String jobPfdName = null;
 
-                if (InboxServiceImpl.isPdfJobFilename(pdfFile)) {
+                if (InboxServiceImpl.isPdfJobFilename(pdfFileWlk)) {
                     jobPfdName = filePath;
                 } else {
                     throw new SpException("unknown input job type");
@@ -547,7 +580,7 @@ public abstract class AbstractPdfCreator {
                 }
 
                 // Init
-                onInitJob(jobPfdName, Integer.valueOf(job.getRotate()));
+                this.onInitJob(jobPfdName, Integer.valueOf(job.getRotate()));
 
                 final List<RangeAtom> ranges =
                         INBOX_SERVICE.createSortedRangeArray(page.getRange());
@@ -566,7 +599,24 @@ public abstract class AbstractPdfCreator {
                     final int nPageTo = rangeAtom.pageEnd;
                     final int nPagesinAtom = nPageTo - nPageFrom + 1;
 
-                    onProcessJobPages(nPageFrom, nPageTo, this.removeGraphics);
+                    // Traverse page-by-page to find page overlay.
+                    for (int i = nPageFrom - 1; i < nPageTo; i++) {
+                        nPageOverlayWlk++;
+                        if (pdfPageOverlayWlk != null
+                                && !pdfPageOverlayWlk.isEmpty()) {
+                            final InboxInfoDto.PageOverlay pageOverlay =
+                                    pdfPageOverlayWlk.get(Integer.valueOf(i));
+                            if (pageOverlay != null
+                                    && pageOverlay.getSvg64() != null) {
+                                pageOverlayMap.put(
+                                        Integer.valueOf(nPageOverlayWlk),
+                                        pageOverlay.getSvg64());
+                            }
+                        }
+                    }
+                    //
+                    this.onProcessJobPages(nPageFrom, nPageTo,
+                            this.removeGraphics);
 
                     totJobRangePages += nPagesinAtom;
                 }
@@ -597,7 +647,7 @@ public abstract class AbstractPdfCreator {
 
                 totFillerPages += fillerPagesToAppend;
 
-                onExitJob(fillerPagesToAppend);
+                this.onExitJob(fillerPagesToAppend);
 
                 /*
                  * Update grand totals.
@@ -611,7 +661,7 @@ public abstract class AbstractPdfCreator {
                      * The base name of the file is the UUID as registered in
                      * the database (DocIn table).
                      */
-                    final String uuid = FilenameUtils.getBaseName(pdfFile);
+                    final String uuid = FilenameUtils.getBaseName(pdfFileWlk);
                     Integer totUuidPages = uuidPageCount.get(uuid);
                     if (totUuidPages == null) {
                         totUuidPages = Integer.valueOf(0);
@@ -619,11 +669,11 @@ public abstract class AbstractPdfCreator {
                     uuidPageCount.put(uuid, Integer.valueOf(
                             totUuidPages.intValue() + totJobRangePages));
                 }
-            }
+            } // end-for
 
-            onExitJobs();
+            this.onExitJobs();
 
-            onInitStamp();
+            this.onInitStamp();
 
             // --------------------------------------------------------
             // Prepare document logging.
@@ -651,7 +701,7 @@ public abstract class AbstractPdfCreator {
             }
 
             if (createReq.isApplyPdfProps()) {
-                onStampMetaDataForExport(now, propPdf);
+                this.onStampMetaDataForExport(now, propPdf);
 
                 if (docOut != null) {
 
@@ -672,14 +722,22 @@ public abstract class AbstractPdfCreator {
 
             } else if (createReq.isForPrinting()) {
 
-                onStampMetaDataForPrinting(now, propPdf);
+                this.onStampMetaDataForPrinting(now, propPdf);
 
             }
 
             // --------------------------------------------------------
-            // Visitor text (init)
+            // Letterhead (before encryption!)
             // --------------------------------------------------------
-            boolean hasVisitorText = false; // TODO
+            boolean letterheadApplied = false;
+
+            if (this.isApplyLetterhead()) {
+                this.onStampLetterhead(this.myPdfFileLetterhead);
+                letterheadApplied = true;
+            }
+            if (docOut != null) {
+                docOut.setLetterhead(letterheadApplied);
+            }
 
             // --------------------------------------------------------
             // Encryption
@@ -691,8 +749,8 @@ public abstract class AbstractPdfCreator {
                 final boolean applyEncryption =
                         propPdf.getApply().getEncryption();
 
-                String ownerPass = propPdf.getPw().getOwner();
-                String userPass = propPdf.getPw().getUser();
+                ownerPass = propPdf.getPw().getOwner();
+                userPass = propPdf.getPw().getUser();
                 String encryption = propPdf.getEncryption();
 
                 if (ownerPass == null || !applyPasswords) {
@@ -705,19 +763,19 @@ public abstract class AbstractPdfCreator {
                     encryption = "";
                 }
 
-                // TODO: for later, if to be auto-generated
-                // ownerPass = java.util.UUID.randomUUID().toString();
-
-                boolean hasEncryption = !(ownerPass.isEmpty()
-                        && userPass.isEmpty() && encryption.isEmpty());
+                hasEncryption = !(ownerPass.isEmpty() && userPass.isEmpty()
+                        && encryption.isEmpty());
 
                 if (docLog != null) {
                     docLog.setDrmRestricted(hasEncryption);
                 }
 
-                if (hasEncryption) {
-                    onStampEncryptionForExport(propPdf, ownerPass, userPass,
-                            hasVisitorText);
+                /*
+                 * PDF encryption must be part of last PDF (PGP sign) action.
+                 */
+                if (hasEncryption && !isPgpSigned) {
+                    this.onStampEncryptionForExport(propPdf.getAllow(),
+                            ownerPass, userPass);
                 }
 
                 if (docOut != null) {
@@ -736,73 +794,35 @@ public abstract class AbstractPdfCreator {
                     }
                 }
 
-            } else if (createReq.isForPrinting() && encryptForPrinting) {
-
-                onStampEncryptionForPrinting();
-
-                if (docLog != null) {
-                    docLog.setDrmRestricted(true);
-                }
             }
-
-            // --------------------------------------------------------
-            // Visitor text (apply)
-            // --------------------------------------------------------
-            if (hasVisitorText) {
-                // imposeVisitorText(destination);
-            }
-
-            // --------------------------------------------------------
-            // Letterhead
-            // --------------------------------------------------------
-            boolean letterheadApplied = false;
-
-            if (myPdfFileLetterhead != null) {
-                onStampLetterhead(myPdfFileLetterhead);
-                letterheadApplied = true;
-            }
-            if (docOut != null) {
-                docOut.setLetterhead(letterheadApplied);
-            }
-
-            // --------------------------------------------------------
-            // Make sure everything is printed in portrait
-            // --------------------------------------------------------
-            if (createReq.isForPrinting()) {
-                onStampRotateForPrinting();
-            }
-
             // --------------------------------------------------------
             // Compress
             // --------------------------------------------------------
             if (!createReq.isForPrinting()) {
-                onCompress();
+                this.onCompress();
             }
 
-            onExitStamp();
+            this.onExitStamp(pageOverlayMap);
 
             /*
              * End
              */
-            onExit();
+            this.onExit();
 
         } catch (Exception e) {
             throw new SpException(e.getMessage(), e);
 
         } finally {
-            onProcessFinally();
+            this.onProcessFinally();
         }
 
         final File generatedPdf = new File(pdfFile);
 
-        final boolean isPgpSigned = !this.isForPrinting()
-                && BooleanUtils.isTrue(propPdf.isPgpSignature())
-                && this.verifyUrl != null;
-
         try {
-            onPdfGenerated(generatedPdf);
+            this.onPdfGenerated(generatedPdf);
             if (isPgpSigned) {
-                onPgpSign(generatedPdf, this.verifyUrl, this.user);
+                onPgpSign(generatedPdf, this.verifyUrl, this.user,
+                        hasEncryption, propPdf.getAllow(), ownerPass, userPass);
             }
         } catch (Exception e) {
             throw new SpException(e.getMessage(), e);
@@ -812,6 +832,7 @@ public abstract class AbstractPdfCreator {
 
         createInfo.setBlankFillerPages(totFillerPages);
         createInfo.setLogicalJobPages(logicalJobPages);
+        createInfo.setFirstPageFormat(this.firstPageFormat);
         createInfo.setPdfOrientationInfo(this.firstPageOrientationInfo);
         createInfo.setPgpSigned(isPgpSigned);
         createInfo.setUuidPageCount(uuidPageCount);
@@ -827,11 +848,21 @@ public abstract class AbstractPdfCreator {
      *            The verification URL.
      * @param userid
      *            The User ID of the PDF author.
+     * @param pdfEncryption
+     *            If {@code true}, encryption is applied.
+     * @param pdfAllow
+     *            PDF allowed properties.
+     * @param pdfOwnerPass
+     *            PDF owner password.
+     * @param pdfUserPass
+     *            PDF user password.
      * @throws IOException
      *             When IO error.
      */
     private static void onPgpSign(final File generatedPdf,
-            final PdfPgpVerifyUrl verifyUrl, final String userid)
+            final PdfPgpVerifyUrl verifyUrl, final String userid,
+            final boolean pdfEncryption, final PdfProperties.PdfAllow pdfAllow,
+            final String pdfOwnerPass, final String pdfUserPass)
             throws IOException {
 
         final ConfigManager cm = ConfigManager.instance();
@@ -848,10 +879,26 @@ public abstract class AbstractPdfCreator {
             } else {
                 signer = PdfPgpHelper.instance();
             }
+
+            final PdfProperties encryptionProps;
+
+            if (pdfEncryption) {
+                final PdfPasswords pw = new PdfPasswords();
+                pw.setOwner(pdfOwnerPass);
+                pw.setUser(pdfUserPass);
+                encryptionProps = new PdfProperties();
+                encryptionProps.setPw(pw);
+                encryptionProps.setAllow(pdfAllow);
+                encryptionProps.setApply(null);
+                encryptionProps.setDesc(null);
+            } else {
+                encryptionProps = null;
+            }
+
             replaceWithConvertedPdf(generatedPdf,
                     new PdfToPgpSignedPdf(signer, secKeyInfo, pubKeyInfoSigner,
                             PGP_PUBLICKEY_SERVICE.readRingEntry(userid),
-                            verifyUrl).convert(generatedPdf));
+                            verifyUrl, encryptionProps).convert(generatedPdf));
 
         } catch (PGPBaseException e) {
             throw new IOException(e.getMessage());

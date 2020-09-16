@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -22,16 +25,29 @@
 package org.savapage.core.imaging;
 
 import java.io.File;
+import java.util.UUID;
 
+import org.apache.commons.lang3.StringUtils;
+import org.savapage.core.config.ConfigManager;
+import org.savapage.core.config.IConfigProp;
 import org.savapage.core.pdf.PdfPageRotateHelper;
+import org.savapage.core.system.ICommandStrategy;
+import org.savapage.core.system.SystemInfo;
 
 /**
- * Command using Cairo.
+ * Create image from PDF using {@link SystemInfo.Command#PDFTOCAIRO}.
  *
  * @author Rijk Ravestein
  *
  */
-public final class Pdf2ImgCairoCmd implements Pdf2ImgCommand {
+public final class Pdf2ImgCairoCmd implements Pdf2ImgCommand, ICommandStrategy {
+
+    /**
+     * Do not use lower value.
+     */
+    public static final int RESOLUTION_FOR_THUMNAIL = 24;
+    /** */
+    public static final int RESOLUTION_FOR_BROWSER = 72;
 
     /** */
     public enum ImgType {
@@ -40,14 +56,88 @@ public final class Pdf2ImgCairoCmd implements Pdf2ImgCommand {
         /** */
         JPEG("-jpeg");
 
+        /**
+         * CLI option value.
+         */
         private final String cmdOpt;
 
+        /**
+         * @param opt
+         *            CLI option value.
+         */
+        ImgType(final String opt) {
+            this.cmdOpt = opt;
+        }
+
+        /**
+         * @return CLI option value.
+         */
         public String getCmdOpt() {
             return this.cmdOpt;
         }
 
-        ImgType(final String opt) {
-            this.cmdOpt = opt;
+        /**
+         * @return File extension, e.g. "png".
+         */
+        public String getFileExt() {
+            return this.cmdOpt.substring(1);
+        }
+    }
+
+    /**
+     * Command strategy.
+     */
+    public enum Strategy {
+        /**
+         * Automatic.
+         */
+        AUTO,
+        /**
+         * Use stdout/stdin redirection.
+         */
+        STREAM,
+        /**
+         * Split in logical AND commands.
+         */
+        SPLIT;
+
+        /** */
+        static final String PROBE_V_0_26_5 = "version 0.26.5";
+
+        /**
+         * Determine strategy depending on command version.
+         *
+         * @return The strategy.
+         */
+        static Strategy getStrategy() {
+            if (SystemInfo.getCommandVersionRegistry().getPdfToCairo()
+                    .contains(PROBE_V_0_26_5)) {
+                return Strategy.SPLIT;
+            }
+            return Strategy.STREAM;
+        }
+    }
+
+    /** */
+    private static final class StrategyHolder {
+        /** The singleton. */
+        private static final Strategy INSTANCE = Strategy.getStrategy();
+
+        /**
+         * Determines strategy.
+         *
+         * @return {@link Strategy}.
+         */
+        private static Strategy determineStrategy() {
+
+            final Strategy configStrategy = ConfigManager.instance()
+                    .getConfigEnum(Pdf2ImgCairoCmd.Strategy.class,
+                            IConfigProp.Key.SYS_HOST_CMD_PDFTOCAIRO_IMG_STRATEGY);
+
+            if (configStrategy == Strategy.AUTO) {
+                return StrategyHolder.INSTANCE;
+            }
+            return configStrategy;
         }
     }
 
@@ -70,34 +160,71 @@ public final class Pdf2ImgCairoCmd implements Pdf2ImgCommand {
     }
 
     @Override
-    public String createCommand(final File pdfFile, final boolean landscape,
-            final int rotation, final File imgFile, final int pageOrdinal,
-            final int resolution, final int rotate) {
+    public String createCommand(final CreateParms parms) {
 
-        final int pageOneBased = pageOrdinal + 1;
+        final int pageOneBased = parms.getPageOrdinal() + 1;
+
+        final Integer rotate2Apply = Integer.valueOf(parms.getRotate());
+        final boolean isRotateZero =
+                rotate2Apply.equals(PdfPageRotateHelper.PDF_ROTATION_0);
 
         final StringBuilder cmdBuffer =
                 new StringBuilder(STRINGBUILDER_CAPACITY);
 
-        cmdBuffer.append("pdftocairo ").append(this.imgType.getCmdOpt())
-                .append(" -r ").append(resolution).append(" -f ")
-                .append(pageOneBased).append(" -l ").append(pageOneBased)
-                .append(" -singlefile");
+        cmdBuffer.append(String.format("%s %s -r %d -f %d -l %d ",
+                SystemInfo.Command.PDFTOCAIRO.cmd(), this.imgType.getCmdOpt(),
+                parms.getResolution(), pageOneBased, pageOneBased));
 
-        cmdBuffer.append(" \"").append(pdfFile.getAbsolutePath()).append("\"");
+        if (StrategyHolder.determineStrategy() == Strategy.STREAM) {
 
-        /*
-         * Apply user requested rotate.
-         */
-        final Integer rotate2Apply = Integer.valueOf(rotate);
+            cmdBuffer.append(String.format("-singlefile \"%s\"",
+                    parms.getPdfFile().getAbsolutePath()));
 
-        if (rotate2Apply.equals(PdfPageRotateHelper.PDF_ROTATION_0)) {
-            cmdBuffer.append(" - > ");
+            if (isRotateZero) {
+                cmdBuffer.append(String.format(" - >",
+                        parms.getPdfFile().getAbsolutePath()));
+            } else {
+                cmdBuffer.append(String.format(" - | %s -rotate %d -",
+                        SystemInfo.Command.CONVERT.cmd(),
+                        rotate2Apply.intValue()));
+            }
+
+            cmdBuffer.append(" \"").append(parms.getImgFile().getAbsolutePath())
+                    .append("\"");
+
         } else {
-            cmdBuffer.append(" | convert -rotate ").append(rotate2Apply)
-                    .append(" - ");
+
+            final String imageFileOutTemplate =
+                    String.format("%s%c_pdftocairo_split_%s",
+                            StringUtils.defaultString(
+                                    parms.getImgFile().getParent()),
+                            File.separatorChar, UUID.randomUUID().toString());
+
+            final String imageFileOutProduced =
+                    String.format("%s-%s.%s", imageFileOutTemplate,
+                            StringUtils.leftPad(String.valueOf(pageOneBased),
+                                    String.valueOf(parms.getNumberOfPages())
+                                            .length(),
+                                    '0'),
+                            this.imgType.getFileExt());
+
+            cmdBuffer.append(String.format("\"%s\" \"%s\"",
+                    parms.getPdfFile().getAbsolutePath(),
+                    imageFileOutTemplate));
+
+            if (isRotateZero) {
+                cmdBuffer.append(String.format(" && mv \"%s\" \"%s\"",
+                        imageFileOutProduced,
+                        parms.getImgFile().getAbsolutePath()));
+            } else {
+                cmdBuffer.append(String.format(" && %s -rotate %d %s %s",
+                        SystemInfo.Command.CONVERT.cmd(),
+                        rotate2Apply.intValue(), imageFileOutProduced,
+                        parms.getImgFile().getAbsolutePath()));
+                cmdBuffer.append(
+                        String.format(" && rm %s", imageFileOutProduced));
+            }
         }
-        cmdBuffer.append("\"").append(imgFile.getAbsolutePath()).append("\"");
 
         final String command = cmdBuffer.toString();
 

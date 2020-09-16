@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -24,34 +27,44 @@ package org.savapage.core.doc;
 import java.io.File;
 import java.io.IOException;
 
-import org.apache.commons.io.FilenameUtils;
 import org.savapage.core.SpException;
+import org.savapage.core.system.SystemInfo;
+import org.savapage.core.system.SystemInfo.ArgumentGS;
 
 /**
- * Converts a PDF file to PrePress PDF, automatically repairing corrupted PDF
- * along the way.
+ * Uses Ghostscript to /prepress a PDF file, this will EmbedAllFonts by default.
+ * <p>
+ * The major difference between {@code /print} and {@code /prepress} is
+ * "CannotEmbedFontPolicy", i.e. the policy Distiller uses if it cannot find, or
+ * cannot embed, a font. {@code /print} has value "Warning" (Distiller displays
+ * a warning and continues) and {@code /prepress} has value "Error" (Distiller
+ * quits distilling the current job).
+ * </p>
+ * <p>
+ * <b>However: warnings and errors are written to stdout/stderr and gs returns
+ * with {@code rc == 0}.</b>
+ * </p>
+ * <p>
+ * For example:
  *
- * @deprecated Use {@link PdfRepair} for repair actions.
- * @see <a href="https://issues.savapage.org/view.php?id=1011">Mantis #1011</a>
+ * <pre>
+ * Can't find CMap Identity-UTF16-H building a CIDDecoding resource.
+ *  **** Error: can't process embedded font stream,
+ *       attempting to load the font using its name.
+ *              Output may be incorrect.
+ * </pre>
+ * </p>
  *
  * @author Rijk Ravestein
  *
  */
-@Deprecated
-public final class PdfToPrePress extends AbstractFileConverter
-        implements IPdfRepair, IPdfConverter {
-
-    /**
-     * The directory location of the created file (can be {@code null}).
-     */
-    private final File createHome;
+public final class PdfToPrePress extends AbstractPdfRepair {
 
     /**
      *
      */
     public PdfToPrePress() {
-        super(ExecMode.MULTI_THREADED);
-        this.createHome = null;
+        super();
     }
 
     /**
@@ -60,27 +73,7 @@ public final class PdfToPrePress extends AbstractFileConverter
      *            The directory location of the created file.
      */
     public PdfToPrePress(final File createDir) {
-        super(ExecMode.MULTI_THREADED);
-        this.createHome = createDir;
-    }
-
-    @Override
-    protected File getOutputFile(final File fileIn) {
-
-        final StringBuilder builder = new StringBuilder(128);
-
-        if (this.createHome == null) {
-            builder.append(fileIn.getParent());
-        } else {
-            builder.append(this.createHome.getAbsolutePath());
-        }
-
-        builder.append(File.separator)
-                .append(FilenameUtils.getBaseName(fileIn.getAbsolutePath()))
-                .append("-prepress.")
-                .append(DocContent.getFileExtension(DocContentTypeEnum.PDF));
-
-        return new File(builder.toString());
+        super(createDir);
     }
 
     @Override
@@ -90,11 +83,13 @@ public final class PdfToPrePress extends AbstractFileConverter
         final StringBuilder cmd = new StringBuilder(128);
 
         try {
-            cmd.append("gs -sOutputFile=\"").append(fileOut.getCanonicalPath())
-                    .append("\" -sDEVICE=pdfwrite -q -dNOPAUSE -dBATCH") //
+            cmd.append(SystemInfo.Command.GS.cmd()).append(" -sOutputFile=\"")
+                    .append(fileOut.getCanonicalPath())
+                    .append("\" -sDEVICE=pdfwrite -q -dNOPAUSE -dBATCH ") //
+                    .append(ArgumentGS.STDOUT_TO_STDOUT.getArg())
                     .append(" -dPDFSETTINGS=/prepress") //
-                    .append(" \"").append(fileIn.getCanonicalPath()) //
-                    .append("\" < /dev/null");
+                    .append(" \"").append(fileIn.getCanonicalPath())
+                    .append("\"");
         } catch (IOException e) {
             throw new SpException(e.getMessage(), e);
         }
@@ -103,13 +98,8 @@ public final class PdfToPrePress extends AbstractFileConverter
     }
 
     @Override
-    public File convert(final File fileIn) throws IOException {
-        final File filePdf = getOutputFile(fileIn);
-        try {
-            return convertWithOsCommand(DocContentTypeEnum.PDF, fileIn, filePdf,
-                    getOsCommand(DocContentTypeEnum.PDF, fileIn, filePdf));
-        } catch (DocContentToPdfException e) {
-            throw new IOException(e.getMessage());
-        }
+    protected String getUniqueFileNamePfx() {
+        return "-prepress";
     }
+
 }

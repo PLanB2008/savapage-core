@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -35,6 +38,8 @@ import java.nio.file.Paths;
 import java.text.MessageFormat;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.math.NumberUtils;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.UserHomePathEnum;
 import org.savapage.core.dao.enums.UserAttrEnum;
@@ -168,6 +173,18 @@ public final class PGPPublicKeyServiceImpl extends AbstractService
     }
 
     @Override
+    public boolean isValidRingEntryFileName(final String filename) {
+
+        final String ext = FilenameUtils.getExtension(filename);
+        if (ext.equalsIgnoreCase(PGPHelper.FILENAME_EXT_ASC)) {
+            // Check HEX format.
+            return NumberUtils.isCreatable(
+                    "0x".concat(FilenameUtils.getBaseName(filename)));
+        }
+        return false;
+    }
+
+    @Override
     public PGPPublicKeyInfo lazyAddRingEntry(final User user,
             final PGPKeyID keyID) throws PGPBaseException {
 
@@ -225,8 +242,8 @@ public final class PGPPublicKeyServiceImpl extends AbstractService
     public PGPPublicKeyInfo readRingEntry(final User user)
             throws PGPBaseException {
 
-        final UserAttr pgpPubAttr =
-                userAttrDAO().findByName(user, UserAttrEnum.PGP_PUBKEY_ID);
+        final UserAttr pgpPubAttr = userAttrDAO().findByName(user.getId(),
+                UserAttrEnum.PGP_PUBKEY_ID);
 
         if (pgpPubAttr != null) {
             return readRingEntry(user, new PGPKeyID(pgpPubAttr.getValue()));

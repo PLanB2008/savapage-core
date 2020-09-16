@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -34,11 +37,39 @@ import org.savapage.core.util.LocaleHelper;
 public enum PhraseEnum {
 
     /** */
+    ACTION_CANNOT_BE_UNDONE,
+
+    /** */
     ACTIVATE_CARD_READER,
+
+    /** */
+    CERT_EXPIRED_ON,
+    /** */
+    CERT_EXPIRES_ON,
+    /** */
+    CERT_VALID_UNTIL,
+
+    /** */
+    MAIL_SENT,
+
     /** */
     PDF_INVALID,
     /** */
     PDF_ENCRYPTED_UNSUPPORTED,
+
+    /** */
+    PDF_FONTS_NONE,
+    /** */
+    PDF_FONTS_ALL_EMBEDDED,
+    /** */
+    PDF_FONTS_ALL_NON_EMBEDDED,
+    /** */
+    PDF_FONTS_ALL_STANDARD,
+    /** */
+    PDF_FONTS_SOME_NON_EMBEDDED,
+    /** */
+    PDF_FONTS_STANDARD_OR_EMBEDDED,
+
     /** */
     PDF_PASSWORD_UNSUPPORTED,
     /** */
@@ -47,6 +78,10 @@ public enum PhraseEnum {
     PDF_REPAIR_FAILED,
     /** */
     PDF_XFA_UNSUPPORTED,
+
+    /** Question. */
+    Q_REPLACE_SECRET_CODE,
+
     /** */
     REALTIME_ACTIVITY,
     /** */
@@ -67,6 +102,30 @@ public enum PhraseEnum {
      */
     public String uiText(final Locale locale) {
         return LocaleHelper.uiText(this, locale);
+    }
+
+    /**
+     * Get the localized UI text with argument. To be used for:
+     * {@link #CERT_EXPIRED_ON}, {@link #CERT_EXPIRES_ON},
+     * {@link #CERT_VALID_UNTIL}.
+     *
+     * @param locale
+     *            The {@link Locale}.
+     * @param args
+     *            The arguments.
+     * @return The localized text.
+     */
+    public String uiText(final Locale locale, final String... args) {
+        switch (this) {
+        case CERT_EXPIRED_ON:
+        case CERT_EXPIRES_ON:
+        case CERT_VALID_UNTIL:
+            return LocaleHelper.uiTextArgs(this, locale, args);
+        default:
+            throw new IllegalArgumentException(String
+                    .format("%s does not support arguments.", this.toString()));
+        }
+
     }
 
 }

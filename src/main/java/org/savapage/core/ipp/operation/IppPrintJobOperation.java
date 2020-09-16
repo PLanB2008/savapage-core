@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -26,104 +29,129 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 import org.savapage.core.concurrent.ReadWriteLockEnum;
+import org.savapage.core.dao.enums.DocLogProtocolEnum;
+import org.savapage.core.dao.enums.ExternalSupplierEnum;
+import org.savapage.core.dao.enums.ExternalSupplierStatusEnum;
 import org.savapage.core.ipp.IppProcessingException;
-import org.savapage.core.ipp.routing.IppRoutingListener;
+import org.savapage.core.ipp.attribute.syntax.IppJobState;
+import org.savapage.core.ipp.helpers.IppPrintInData;
 import org.savapage.core.jpa.IppQueue;
+import org.savapage.core.services.helpers.ExternalSupplierInfo;
 
 /**
  *
  * @author Rijk Ravestein
  *
  */
-public final class IppPrintJobOperation extends AbstractIppOperation {
+public class IppPrintJobOperation extends AbstractIppJobOperation {
 
     /**
      *
+     * @author Rijk Ravestein
+     *
      */
-    private final IppPrintJobReq request = new IppPrintJobReq();
+    private static final class IppPrintJobReq extends AbstractIppPrintJobReq {
+
+        /** */
+        IppPrintJobReq() {
+            super();
+        }
+
+        @Override
+        protected String getPrintInJobName() {
+            return this.getJobName();
+        }
+
+        @Override
+        protected boolean isJobIdGenerated() {
+            return true;
+        }
+
+        @Override
+        void process(final AbstractIppOperation operation,
+                final InputStream istr) throws IOException {
+
+            final ExternalSupplierInfo supplierInfo =
+                    new ExternalSupplierInfo();
+            supplierInfo.setSupplier(ExternalSupplierEnum.IPP_CLIENT);
+            supplierInfo.setId(String.valueOf(this.getJobId()));
+            supplierInfo
+                    .setStatus(ExternalSupplierStatusEnum.COMPLETED.toString());
+
+            final IppPrintInData data = new IppPrintInData();
+            data.setIppVersion(operation.getIppVersion().getVersionKeyword());
+            data.setAttrPrintJob(this.selectIppPrintInData());
+            supplierInfo.setData(data);
+
+            this.getPrintInProcessor().setPrintInParent(null);
+
+            this.getPrintInProcessor().process(istr, supplierInfo,
+                    DocLogProtocolEnum.IPP, null, null, null);
+        }
+
+        @Override
+        protected IppStatusCode getResponseStatusCode() {
+            return IppStatusCode.OK;
+        }
+
+    }
 
     /**
      *
-     */
-    private final IppPrintJobRsp response = new IppPrintJobRsp();
-
-    /**
+     * @author Rijk Ravestein
      *
      */
-    private final IppQueue queue;
+    private static final class IppPrintJobRsp extends AbstractIppPrintJobRsp {
+    }
 
     /**
-     *
-     */
-    private final boolean clientIpAccessToQueue;
-
-    /**
-     *
-     */
-    private final String trustedIppClientUserId;
-
-    /**
-     * If {@code true}, the trustedIppClientUserId overrules the requesting
-     * user.
-     */
-    private final boolean trustedUserAsRequester;
-
-    /** */
-    private final String originatorIp;
-
-    /** */
-    private final IppRoutingListener ippRoutingListener;
-
-    /**
-     *
-     * @param originatorIp
-     *            The IP address of the requesting client.
      * @param queue
-     *            The print queue. Can be {@code null} is no queue matches the
-     *            URI.
-     * @param clientIpAccessToQueue
-     *            Indicates if client has access to printing. When {@code false}
-     *            , printing is NOT allowed.
-     * @param trustedIppClientUserId
-     *            The user id of the trusted on the IPP client. If {@code null}
-     *            there is NO trusted user.
-     * @param trustedUserAsRequester
-     *            If {@code true}, the trustedIppClientUserId overrules the
-     *            requesting user.
+     *            The print queue.
+     * @param authUser
+     *            The authenticated user id associated with the IPP client. If
+     *            {@code null} there is NO authenticated user.
+     * @param isAuthUserIppRequester
+     *            If {@code true}, the authUser overrules the IPP requesting
+     *            user.
      * @param ctx
      *            The operation context.
      */
-    public IppPrintJobOperation(final IppQueue queue,
-            final boolean clientIpAccessToQueue,
-            final String trustedIppClientUserId,
-            final boolean trustedUserAsRequester,
+    public IppPrintJobOperation(final IppQueue queue, final String authUser,
+            final boolean isAuthUserIppRequester,
             final IppOperationContext ctx) {
 
-        this.originatorIp = ctx.getRemoteAddr();
-        this.queue = queue;
-        this.clientIpAccessToQueue = clientIpAccessToQueue;
-        this.trustedIppClientUserId = trustedIppClientUserId;
-        this.trustedUserAsRequester = trustedUserAsRequester;
-        this.ippRoutingListener = ctx.getIppRoutingListener();
-    }
-
-    public IppRoutingListener getIppRoutingListener() {
-        return ippRoutingListener;
-    }
-
-    public IppQueue getQueue() {
-        return queue;
+        super(queue, authUser, isAuthUserIppRequester, ctx,
+                new IppPrintJobReq(), new IppPrintJobRsp());
     }
 
     /**
-     * @return The originator's IP address.
+     * @param queue
+     *            The print queue. Can be {@code null} is no queue matches the
+     *            URI.
+     * @param authUser
+     *            The authenticated user id associated with the IPP client. If
+     *            {@code null} there is NO authenticated user.
+     * @param isAuthUserIppRequester
+     *            If {@code true}, the authUser overrules the IPP requesting
+     *            user.
+     * @param ctx
+     *            The operation context.
+     * @param req
+     *            IPP Request.
+     * @param rsp
+     *            IPP Response.
      */
-    public String getOriginatorIp() {
-        return this.originatorIp;
+    protected IppPrintJobOperation(final IppQueue queue, final String authUser,
+            final boolean isAuthUserIppRequester, final IppOperationContext ctx,
+            final AbstractIppPrintJobReq req,
+            final AbstractIppPrintJobRsp rsp) {
+
+        super(queue, authUser, isAuthUserIppRequester, ctx, req, rsp);
     }
 
     @Override
-    protected void process(final InputStream istr, final OutputStream ostr)
+    protected final void process(final InputStream istr,
+            final OutputStream ostr)
             throws IOException, IppProcessingException {
 
         /*
@@ -152,41 +180,46 @@ public final class IppPrintJobOperation extends AbstractIppOperation {
              * Step 1.
              */
             try {
-                request.processAttributes(this, istr);
+                this.getRequest().processAttributes(this, istr);
             } catch (IOException e) {
-                request.setDeferredException(new IppProcessingException(
-                        IppProcessingException.StateEnum.INTERNAL_ERROR,
-                        e.getMessage()));
+                this.getRequest()
+                        .setDeferredException(new IppProcessingException(
+                                IppProcessingException.StateEnum.INTERNAL_ERROR,
+                                e.getMessage()));
             }
 
             /*
              * Step 2.
              */
             try {
-                if (isAuthorized()) {
-                    request.process(istr);
+                if (this.isAuthorized()) {
+                    this.getRequest().process(this, istr);
                 }
             } catch (IOException e) {
-                request.setDeferredException(new IppProcessingException(
-                        IppProcessingException.StateEnum.INTERNAL_ERROR,
-                        e.getMessage()));
+                this.getRequest()
+                        .setDeferredException(new IppProcessingException(
+                                IppProcessingException.StateEnum.INTERNAL_ERROR,
+                                e.getMessage()));
             }
 
             /*
              * Step 3.
              */
             try {
-                response.process(this, request, ostr);
+                this.getResponse().process(this, getRequest(), ostr,
+                        IppJobState.STATE_COMPLETED);
             } catch (IOException e) {
-                request.setDeferredException(new IppProcessingException(
-                        IppProcessingException.StateEnum.INTERNAL_ERROR,
-                        e.getMessage()));
+                this.getRequest()
+                        .setDeferredException(new IppProcessingException(
+                                IppProcessingException.StateEnum.INTERNAL_ERROR,
+                                e.getMessage()));
             }
 
         } catch (Exception e) {
-            request.setDeferredException(new IppProcessingException(
-                    IppProcessingException.StateEnum.INTERNAL_ERROR,
-                    e.getMessage()));
+            this.getRequest()
+                    .setDeferredException(new IppProcessingException(
+                            IppProcessingException.StateEnum.INTERNAL_ERROR,
+                            e.getMessage()));
         } finally {
             if (isDbReadLock) {
                 ReadWriteLockEnum.DATABASE_READONLY.setReadLock(false);
@@ -196,52 +229,7 @@ public final class IppPrintJobOperation extends AbstractIppOperation {
         /*
          * Step 4: deferred exception? or not allowed to print?
          */
-        request.evaluateErrorState(isAuthorized());
-    }
-
-    /**
-     * Is the remoteAddr (client) and requesting user allowed to print?
-     *
-     * @return {@code true} if remoteAddr (client) and requesting user are
-     *         allowed to print to this queue.
-     */
-    public boolean isAuthorized() {
-        return hasClientIpAccessToQueue()
-                && (isTrustedQueue() || getTrustedIppClientUserId() != null)
-                && request.isTrustedUser();
-    }
-
-    /**
-     * Get the user id of the Person who is currently trusted on the IPP client.
-     *
-     * @return {@code null} if there is NO trusted user.
-     */
-    public String getTrustedIppClientUserId() {
-        return trustedIppClientUserId;
-    }
-
-    /**
-     * @return {@code true} if the trustedIppClientUserId overrules the
-     *         requesting user.
-     */
-    public boolean isTrustedUserAsRequester() {
-        return this.trustedUserAsRequester;
-    }
-
-    /**
-     *
-     * @return {@code true} if printed to trusted queue.
-     */
-    public boolean isTrustedQueue() {
-        return queue != null && queue.getTrusted();
-    }
-
-    /**
-     *
-     * @return {@code true} if remote client IP address has access to queue.
-     */
-    public boolean hasClientIpAccessToQueue() {
-        return clientIpAccessToQueue;
+        this.getRequest().evaluateErrorState(this);
     }
 
 }

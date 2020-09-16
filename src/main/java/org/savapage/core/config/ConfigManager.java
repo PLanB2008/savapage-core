@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -58,6 +61,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
+import java.util.StringTokenizer;
 
 import javax.mail.internet.InternetAddress;
 import javax.management.InstanceAlreadyExistsException;
@@ -88,7 +92,7 @@ import org.savapage.core.community.MemberCard;
 import org.savapage.core.concurrent.ReadLockObtainFailedException;
 import org.savapage.core.concurrent.ReadWriteLockEnum;
 import org.savapage.core.config.IConfigProp.Key;
-import org.savapage.core.config.IConfigProp.LdapType;
+import org.savapage.core.config.IConfigProp.LdapTypeEnum;
 import org.savapage.core.config.IConfigProp.Prop;
 import org.savapage.core.config.validator.EnumSetValidator;
 import org.savapage.core.config.validator.ValidationResult;
@@ -113,12 +117,14 @@ import org.savapage.core.jpa.tools.DbConnectionPoolEnum;
 import org.savapage.core.jpa.tools.DbTools;
 import org.savapage.core.jpa.tools.DbUpgManager;
 import org.savapage.core.jpa.tools.DbVersionInfo;
+import org.savapage.core.pdf.PdfDocumentFonts;
 import org.savapage.core.print.proxy.ProxyPrintJobStatusMonitor;
 import org.savapage.core.services.PrinterService;
 import org.savapage.core.services.ProxyPrintService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.ServiceFactory;
 import org.savapage.core.services.helpers.SOfficeConfigProps;
+import org.savapage.core.system.SystemInfo;
 import org.savapage.core.users.ActiveDirectoryUserSource;
 import org.savapage.core.users.IExternalUserAuthenticator;
 import org.savapage.core.users.IUserSource;
@@ -129,6 +135,8 @@ import org.savapage.core.users.conf.UserAliasList;
 import org.savapage.core.util.CurrencyUtil;
 import org.savapage.core.util.FileSystemHelper;
 import org.savapage.core.util.InetUtils;
+import org.savapage.ext.google.GoogleLdapClient;
+import org.savapage.ext.google.GoogleLdapUserSource;
 import org.savapage.lib.pgp.PGPBaseException;
 import org.savapage.lib.pgp.PGPHelper;
 import org.savapage.lib.pgp.PGPPublicKeyInfo;
@@ -225,6 +233,11 @@ public final class ConfigManager {
     public static final String SERVER_PROP_APP_DIR_LETTERHEADS =
             "app.dir.letterheads";
 
+    public static final String SERVER_PROP_APP_DIR_DOC_STORE_ARCHIVE =
+            "app.dir.doc.store.archive";
+    public static final String SERVER_PROP_APP_DIR_DOC_STORE_JOURNAL =
+            "app.dir.doc.store.journal";
+
     public static final String SERVER_PROP_SMARTSCHOOL_PRINT =
             "smartschool.print";
 
@@ -249,16 +262,6 @@ public final class ConfigManager {
     public static final String SERVER_PROP_CUPS_NOTIFIER = "cups.notifier";
     private static final String DEFAULT_CUPS_NOTIFIER = "savapage";
 
-    /*
-     *
-     */
-    private static final String SERVER_PROP_PRINT_PROXY_NOTIFICATION_METHOD =
-            "print.proxy.notification.method";
-    private static final String VAL_PRINT_PROXY_NOTIFICATION_METHOD_PUSH =
-            "push";
-    private static final String DEFAULT_PRINT_PROXY_NOTIFICATION_METHOD =
-            VAL_PRINT_PROXY_NOTIFICATION_METHOD_PUSH;
-
     private static final String SERVER_PROP_CUPS_SERVER_PORT =
             "cups.server.port";
 
@@ -268,9 +271,6 @@ public final class ConfigManager {
     public static final String SERVER_PROP_PRINTER_RAW_PORT =
             "server.print.port.raw";
     public static final String PRINTER_RAW_PORT_DEFAULT = "9100";
-
-    private static final String SERVER_PROP_IPP_PRINTER_UUID =
-            "ipp.printer-uuid";
 
     private static final String SERVER_PROP_OPENPGP_PUBLICKEY_FILE =
             "pgp.publickey.file";
@@ -285,9 +285,19 @@ public final class ConfigManager {
     private static final String SERVER_PROP_START_CLEANUP_DOCLOG =
             "start.cleanup-doclog";
 
+    /** */
+    private static final String SERVER_PROP_START_CLEANUP_USERHOME =
+            "start.cleanup-userhome";
+
+    /** */
+    private static final String SERVER_PROP_SYSTEM_CLEANUP_USERHOME_TEST =
+            "system.cleanup-userhome.test";
+
     // ========================================================================
     // Undocumented ad-hoc properties for testing purposes.
     // ========================================================================
+    private static final String SERVER_PROP_IPP_TRUST_IP_USER =
+            "ipp.trust.ip-user";
 
     // ========================================================================
 
@@ -303,6 +313,17 @@ public final class ConfigManager {
     /** */
     private static final String APP_OWNER =
             CommunityDictEnum.DATRAVERSE_BV.getWord();
+
+    /**
+     * Depth of a user home directory relative to root of all home directories.
+     */
+    private static final int USER_HOME_DEPTH_FROM_ROOT = 3;
+
+    /**
+     *
+     */
+    private static final Map<String, String> theTrustedUsersByIP =
+            new HashMap<>();
 
     /** */
     private final CryptoApp myCipher = new CryptoApp();
@@ -353,6 +374,21 @@ public final class ConfigManager {
     /** */
     private final DbConfig.HibernateInfo hibernateInfo =
             new DbConfig.HibernateInfo();
+
+    /**
+     * The SSL URL of the Admin WebApp.
+     */
+    private static URL theWebAppAdminSslUrl;
+
+    /**
+     * The SSL URL of the User WebApp.
+     */
+    private static URL theWebAppUserSslUrl;
+
+    /**
+     * Home of the IPP printer-icons.
+     */
+    private static String theIppPrinterIconsUrlPath;
 
     /** */
     private ConfigManager() {
@@ -722,8 +758,12 @@ public final class ConfigManager {
      */
     public static String getSafePagesHomeDir() {
 
-        String homeSafePages =
-                theServerProps.getProperty(SERVER_PROP_APP_DIR_SAFEPAGES);
+        String homeSafePages = null;
+
+        if (theServerProps != null) {
+            homeSafePages =
+                    theServerProps.getProperty(SERVER_PROP_APP_DIR_SAFEPAGES);
+        }
 
         if (homeSafePages == null) {
             homeSafePages =
@@ -735,13 +775,22 @@ public final class ConfigManager {
     }
 
     /**
+     * @return Depth of a user home directory relative to root of all home
+     *         directories.
+     */
+    public static int getUserHomeDepthFromRoot() {
+        return USER_HOME_DEPTH_FROM_ROOT;
+    }
+
+    /**
      * Returns the location where the user's SafePages are stored.
      * <p>
      * The SafePages home of all users defaults to the
      * {@link #SERVER_REL_PATH_SAFEPAGES_DEFAULT} relative to $(server.home).
      * Each user's home is a subdirectory in this location with path
      * {@code x/y/user} where {@code x} and {@code y} are the first characters
-     * of the md5sum of the {@code user}.
+     * of the md5sum of the {@code user}. See
+     * {@link #USER_HOME_DEPTH_FROM_ROOT}.
      * </p>
      *
      * @param user
@@ -779,7 +828,6 @@ public final class ConfigManager {
     }
 
     /**
-     *
      * @return
      */
     public static boolean isCleanUpDocLogAtStart() {
@@ -787,6 +835,26 @@ public final class ConfigManager {
                 theServerProps.getProperty(SERVER_PROP_START_CLEANUP_DOCLOG,
                         Boolean.TRUE.toString()))
                 .booleanValue();
+    }
+
+    /**
+     * @return
+     */
+    public static boolean isCleanUpUserHomeAtStart() {
+        return theServerProps != null && BooleanUtils.toBooleanObject(
+                theServerProps.getProperty(SERVER_PROP_START_CLEANUP_USERHOME,
+                        Boolean.TRUE.toString()))
+                .booleanValue();
+    }
+
+    /**
+     * @return
+     */
+    public static boolean isCleanUpUserHomeTest() {
+        return theServerProps != null
+                && BooleanUtils.toBooleanObject(theServerProps.getProperty(
+                        SERVER_PROP_SYSTEM_CLEANUP_USERHOME_TEST,
+                        Boolean.FALSE.toString())).booleanValue();
     }
 
     /**
@@ -798,11 +866,10 @@ public final class ConfigManager {
     }
 
     /**
-     *
-     * @return
+     * @return IPP printer UUID.
      */
     public static String getIppPrinterUuid() {
-        return theServerProps.getProperty(SERVER_PROP_IPP_PRINTER_UUID, "");
+        return instance().getConfigValue(Key.IPP_PRINTER_ATTR_PRINTER_UUID);
     }
 
     /**
@@ -818,13 +885,18 @@ public final class ConfigManager {
     }
 
     /**
-     * Returns the location where the public Letterheads are stored.
-     *
-     * @return
+     * @return Location where the public letterheads are stored.
      */
     public static String getLetterheadDir() {
-        return theServerProps.getProperty(SERVER_PROP_APP_DIR_LETTERHEADS,
-                getServerHome() + "/data/internal/letterheads");
+
+        String dir =
+                theServerProps.getProperty(SERVER_PROP_APP_DIR_LETTERHEADS);
+        if (dir == null) {
+            dir = Paths
+                    .get(getServerHome(), ServerPathEnum.LETTERHEADS.getPath())
+                    .toString();
+        }
+        return dir;
     }
 
     /**
@@ -897,16 +969,29 @@ public final class ConfigManager {
      * @return The directory path of the document store.
      */
     public static Path getDocStoreHome(final DocStoreTypeEnum store) {
+
+        final ServerPathEnum serverPath;
+        final String serverPathProp;
+
         switch (store) {
         case ARCHIVE:
-            return Paths.get(getServerHome(),
-                    ServerPathEnum.DOC_ARCHIVE.getPath());
+            serverPath = ServerPathEnum.DOC_ARCHIVE;
+            serverPathProp = theServerProps
+                    .getProperty(SERVER_PROP_APP_DIR_DOC_STORE_ARCHIVE);
+            break;
         case JOURNAL:
-            return Paths.get(getServerHome(),
-                    ServerPathEnum.DOC_JOURNAL.getPath());
+            serverPath = ServerPathEnum.DOC_JOURNAL;
+            serverPathProp = theServerProps
+                    .getProperty(SERVER_PROP_APP_DIR_DOC_STORE_JOURNAL);
+            break;
         default:
             throw new UnknownError(store.toString());
         }
+
+        if (serverPathProp != null) {
+            return Paths.get(serverPathProp);
+        }
+        return Paths.get(getServerHome(), serverPath.getPath());
     }
 
     /**
@@ -1158,7 +1243,40 @@ public final class ConfigManager {
      *            Server properties.
      */
     public static void setServerProps(final Properties props) {
+
         theServerProps = props;
+
+        if (theServerProps != null
+                && theServerProps.containsKey(SERVER_PROP_IPP_TRUST_IP_USER)) {
+
+            final StringTokenizer st = new StringTokenizer(
+                    theServerProps.getProperty(SERVER_PROP_IPP_TRUST_IP_USER));
+            String ip = null;
+            String user = null;
+            while (st.hasMoreTokens()) {
+                final String token = st.nextToken();
+                if (ip == null) {
+                    ip = token;
+                } else if (user == null) {
+                    user = token;
+                }
+                if (ip != null && user != null) {
+                    theTrustedUsersByIP.put(ip, user);
+                    ip = null;
+                    user = null;
+                }
+            }
+        }
+    }
+
+    /**
+     *
+     * @param remoteAddr
+     *            Remote IP address.
+     * @return Trusted user id, or {@code null} when not present.
+     */
+    public static String getTrustedUserByIP(final String remoteAddr) {
+        return theTrustedUsersByIP.get(remoteAddr);
     }
 
     /**
@@ -1196,24 +1314,26 @@ public final class ConfigManager {
     }
 
     /**
-     * The SSL URL of the Admin WebApp.
-     */
-    private static URL theWebAppAdminSslUrl;
-
-    /**
-     * Sets the path of the Admin WebApp.
+     * Sets the path of the User and Admin WebApp.
      * <p>
      * This method must be called after {@link #setServerProps(Properties)} .
      * </p>
      *
-     * @param path
-     *            The path of the Admin WebApp.
+     * @param pathAdmin
+     *            Path of the Admin WebApp.
+     * @param pathUser
+     *            Path of the User WebApp.
+     * @param pathIppPrinterIcons
+     *            The path of the IPP printer-icons.
      */
-    public static void setWebAppAdminPath(final String path) {
+    public static void setWebAppPaths(final String pathAdmin,
+            final String pathUser, final String pathIppPrinterIcons) {
         try {
-            theWebAppAdminSslUrl = new URL("https",
-                    InetUtils.getServerHostAddress(),
-                    Integer.valueOf(getServerSslPort()).intValue(), path);
+            final String host = InetUtils.getServerHostAddress();
+            final int port = Integer.valueOf(getServerSslPort()).intValue();
+            theWebAppAdminSslUrl = new URL("https", host, port, pathAdmin);
+            theWebAppUserSslUrl = new URL("https", host, port, pathUser);
+            theIppPrinterIconsUrlPath = pathIppPrinterIcons;
         } catch (NumberFormatException | MalformedURLException
                 | UnknownHostException e) {
             throw new SpException(e.getMessage(), e);
@@ -1221,12 +1341,24 @@ public final class ConfigManager {
     }
 
     /**
-     *
-     * @param url
-     *            The The SSL {@link URL} of the Admin WebApp.
+     * @return The SSL {@link URL} of the Admin WebApp.
      */
     public static URL getWebAppAdminSslUrl() {
         return theWebAppAdminSslUrl;
+    }
+
+    /**
+     * @return The SSL {@link URL} of the User WebApp.
+     */
+    public static URL getWebAppUserSslUrl() {
+        return theWebAppUserSslUrl;
+    }
+
+    /**
+     * @return URL Path of the IPP printer-icons.
+     */
+    public static String getIppPrinterIconsUrlPath() {
+        return theIppPrinterIconsUrlPath;
     }
 
     /**
@@ -1292,19 +1424,11 @@ public final class ConfigManager {
 
     /**
      *
-     * @return
+     * @return {@code true} if CUPS job status PUSH notification.
      */
     public static boolean isCupsPushNotification() {
-
-        String method = DEFAULT_PRINT_PROXY_NOTIFICATION_METHOD;
-
-        if (theServerProps != null) {
-            method = theServerProps.getProperty(
-                    SERVER_PROP_PRINT_PROXY_NOTIFICATION_METHOD,
-                    ConfigManager.DEFAULT_PRINT_PROXY_NOTIFICATION_METHOD);
-        }
-        return method
-                .equalsIgnoreCase(VAL_PRINT_PROXY_NOTIFICATION_METHOD_PUSH);
+        return instance().getConfigEnum(PullPushEnum.class,
+                Key.CUPS_IPP_NOTIFICATION_METHOD) == PullPushEnum.PUSH;
     }
 
     /**
@@ -1664,6 +1788,13 @@ public final class ConfigManager {
                                 key.getC3p0Key(), entry.getValue()));
             }
         }
+
+        // Fill cache.
+        SpInfo.instance()
+                .log(String.format(
+                        "PDF Standard Fonts: [%s] substitutes retrieved.",
+                        PdfDocumentFonts.Font.getStandardFontSubst().size()));
+
         //
         ServiceContext.getServiceFactory().start();
 
@@ -1672,6 +1803,16 @@ public final class ConfigManager {
 
         ProxyPrintJobStatusMonitor.init();
 
+        //
+        if (GoogleLdapClient.init()) {
+            SpInfo.instance().log(GoogleLdapClient.getCertCreateDateLogLine());
+            SpInfo.instance().log(GoogleLdapClient.getCertExpireDateLogLine());
+        }
+
+        //
+        SystemInfo.init();
+
+        //
         DbTools.checkSequences();
     }
 
@@ -1936,7 +2077,8 @@ public final class ConfigManager {
                 .getConfigPropertyDao().findByName(getConfigKey(key));
 
         if (prop != null) {
-            val = prop.getValue();
+            // Mantis #1105
+            val = StringUtils.defaultString(prop.getValue());
             if (isUserEncrypted(key)) {
                 val = CryptoUser.decrypt(val);
             }
@@ -2042,7 +2184,8 @@ public final class ConfigManager {
                 || key == Key.SMARTSCHOOL_1_SOAP_PRINT_ENDPOINT_PASSWORD
                 || key == Key.SMARTSCHOOL_2_SOAP_PRINT_ENDPOINT_PASSWORD
                 || key == Key.WEB_LOGIN_TTP_API_KEY
-                || key == Key.AUTH_MODE_YUBIKEY_API_SECRET_KEY;
+                || key == Key.AUTH_MODE_YUBIKEY_API_SECRET_KEY
+                || key == Key.EXT_TELEGRAM_BOT_TOKEN;
     }
 
     /**
@@ -2067,18 +2210,22 @@ public final class ConfigManager {
     /**
      *
      */
-    public IConfigProp.LdapType getConfigLdapType() {
+    public IConfigProp.LdapTypeEnum getConfigLdapType() {
 
         final String schema = myConfigProp.getString(Key.LDAP_SCHEMA_TYPE);
 
         if (schema.equals(IConfigProp.LDAP_TYPE_V_ACTIV)) {
-            return IConfigProp.LdapType.ACTD;
+            return IConfigProp.LdapTypeEnum.ACTD;
         } else if (schema.equals(IConfigProp.LDAP_TYPE_V_E_DIR)) {
-            return IConfigProp.LdapType.EDIR;
+            return IConfigProp.LdapTypeEnum.EDIR;
         } else if (schema.equals(IConfigProp.LDAP_TYPE_V_OPEN_LDAP)) {
-            return IConfigProp.LdapType.OPEN_LDAP;
+            return IConfigProp.LdapTypeEnum.OPEN_LDAP;
+        } else if (schema.equals(IConfigProp.LDAP_TYPE_V_FREE_IPA)) {
+            return IConfigProp.LdapTypeEnum.FREE_IPA;
+        } else if (schema.equals(IConfigProp.LDAP_TYPE_V_GOOGLE_CLOUD)) {
+            return IConfigProp.LdapTypeEnum.GOOGLE_CLOUD;
         }
-        return IConfigProp.LdapType.OPEN_DIR;
+        return IConfigProp.LdapTypeEnum.OPEN_DIR;
     }
 
     /**
@@ -2185,7 +2332,7 @@ public final class ConfigManager {
      *            The key of the property.
      * @return <code>null</code> when property is not found.
      */
-    public String getConfigValue(final IConfigProp.LdapType ldapType,
+    public String getConfigValue(final IConfigProp.LdapTypeEnum ldapType,
             final IConfigProp.Key key) {
         return myConfigProp.getString(ldapType, key);
     }
@@ -2199,7 +2346,7 @@ public final class ConfigManager {
      *            The key of the property.
      * @return <code>null</code> when property is not found.
      */
-    public Boolean isConfigValue(final IConfigProp.LdapType ldapType,
+    public Boolean isConfigValue(final IConfigProp.LdapTypeEnum ldapType,
             final IConfigProp.Key key) {
         return myConfigProp.getBoolean(ldapType, key);
     }
@@ -2358,6 +2505,16 @@ public final class ConfigManager {
     }
 
     /**
+     * @return {@code true} if SafePages overlay editor is enabled <i>and</i>
+     *         SVG to PDF converter is installed.
+     */
+    public static boolean isPdfOverlayEditorEnabled() {
+        return instance()
+                .isConfigValue(Key.WEBAPP_USER_PAGE_BROWSER_CANVAS_ENABLE)
+                && SystemInfo.isRSvgConvertInstalled();
+    }
+
+    /**
      *
      * @return
      */
@@ -2478,6 +2635,15 @@ public final class ConfigManager {
      */
     public static boolean isSysMaintenance() {
         return instance().isConfigValue(IConfigProp.Key.SYS_MAINTENANCE);
+    }
+
+    /**
+     * @return {@code true} if user row locking in database is to be applied to
+     *         serialize access to database or user file system (safe-pages).
+     */
+    public static boolean isUserWebAppDatabaseUserRowLocking() {
+        return instance().isConfigValue(
+                IConfigProp.Key.WEBAPP_USER_DATABASE_USER_ROW_LOCKING_ENABLED);
     }
 
     /**
@@ -2688,7 +2854,7 @@ public final class ConfigManager {
      */
     public IUserSource getUserSource() {
 
-        IUserSource source = null;
+        final IUserSource source;
 
         final String mode = myConfigProp.getString(IConfigProp.Key.AUTH_METHOD);
 
@@ -2702,13 +2868,21 @@ public final class ConfigManager {
 
         } else if (mode.equals(IConfigProp.AUTH_METHOD_V_LDAP)) {
 
-            final LdapType ldapType = getConfigLdapType();
+            final LdapTypeEnum ldapType = getConfigLdapType();
 
-            if (ldapType == LdapType.ACTD) {
+            switch (ldapType) {
+            case ACTD:
                 source = new ActiveDirectoryUserSource();
-            } else {
+                break;
+            case GOOGLE_CLOUD:
+                source = new GoogleLdapUserSource();
+                break;
+            default:
                 source = new LdapUserSource(ldapType);
+                break;
             }
+        } else {
+            source = null;
         }
         return source;
     }
@@ -2730,7 +2904,7 @@ public final class ConfigManager {
      */
     public IExternalUserAuthenticator getUserAuthenticator() {
 
-        IExternalUserAuthenticator auth = null;
+        final IExternalUserAuthenticator auth;
 
         final String mode = myConfigProp.getString(IConfigProp.Key.AUTH_METHOD);
 
@@ -2744,13 +2918,21 @@ public final class ConfigManager {
 
         } else if (mode.equals(IConfigProp.AUTH_METHOD_V_LDAP)) {
 
-            final LdapType ldapType = getConfigLdapType();
+            final LdapTypeEnum ldapType = getConfigLdapType();
 
-            if (ldapType == LdapType.ACTD) {
+            switch (ldapType) {
+            case ACTD:
                 auth = new ActiveDirectoryUserSource();
-            } else {
+                break;
+            case GOOGLE_CLOUD:
+                auth = new GoogleLdapUserSource();
+                break;
+            default:
                 auth = new LdapUserSource(ldapType);
+                break;
             }
+        } else {
+            auth = null;
         }
         return auth;
     }

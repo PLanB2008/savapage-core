@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -24,9 +27,10 @@ package org.savapage.core.dao.impl;
 import javax.persistence.NoResultException;
 import javax.persistence.Query;
 
+import org.apache.commons.lang3.StringUtils;
+import org.savapage.core.dao.IAttrDao;
 import org.savapage.core.dao.UserAttrDao;
 import org.savapage.core.dao.enums.UserAttrEnum;
-import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAttr;
 
 /**
@@ -35,7 +39,7 @@ import org.savapage.core.jpa.UserAttr;
  *
  */
 public final class UserAttrDaoImpl extends GenericDaoImpl<UserAttr>
-        implements UserAttrDao {
+        implements UserAttrDao, IAttrDao {
 
     @Override
     protected String getCountQuery() {
@@ -53,19 +57,19 @@ public final class UserAttrDaoImpl extends GenericDaoImpl<UserAttr>
             "%" + STATS_ROLLING + "%";
 
     @Override
-    public UserAttr findByName(final User user, final UserAttrEnum name) {
-        return this.findByName(user, name.getName());
+    public UserAttr findByName(final Long userDbKey, final UserAttrEnum name) {
+        return this.findByName(userDbKey, name.getName());
     }
 
     @Override
-    public UserAttr findByName(final User user, final String name) {
+    public UserAttr findByName(final Long userDbKey, final String name) {
 
         final String jpql = "SELECT A FROM UserAttr A JOIN A.user U "
                 + "WHERE U.id = :userId AND A.name = :name";
 
         final Query query = getEntityManager().createQuery(jpql);
 
-        query.setParameter("userId", user.getId());
+        query.setParameter("userId", userDbKey);
         query.setParameter("name", name);
 
         UserAttr result = null;
@@ -108,6 +112,20 @@ public final class UserAttrDaoImpl extends GenericDaoImpl<UserAttr>
         final Query query = getEntityManager().createQuery(jpql);
         query.setParameter("name", SQL_LIKE_STATS_ROLLING);
         query.executeUpdate();
+    }
+
+    @Override
+    public boolean getBooleanValue(final UserAttr attr) {
+        return attr != null && StringUtils.defaultString(attr.getValue(), V_NO)
+                .equalsIgnoreCase(V_YES);
+    }
+
+    @Override
+    public String getDbBooleanValue(final boolean value) {
+        if (value) {
+            return V_YES;
+        }
+        return V_NO;
     }
 
 }

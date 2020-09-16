@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -26,6 +29,8 @@ import java.io.IOException;
 
 import org.apache.commons.io.FilenameUtils;
 import org.savapage.core.SpException;
+import org.savapage.core.system.SystemInfo;
+import org.savapage.core.system.SystemInfo.ArgumentGS;
 
 /**
  * Converts a PDF file to grayscale PDF.
@@ -60,6 +65,11 @@ public final class PdfToGrayscale extends AbstractFileConverter
     }
 
     @Override
+    protected ExecType getExecType() {
+        return ExecType.ADVANCED;
+    }
+
+    @Override
     protected File getOutputFile(final File fileIn) {
 
         final StringBuilder builder = new StringBuilder(128);
@@ -88,8 +98,10 @@ public final class PdfToGrayscale extends AbstractFileConverter
             /*
              * See #598
              */
-            cmd.append("gs -sOutputFile=\"").append(fileOut.getCanonicalPath())
-                    .append("\" -sDEVICE=pdfwrite -dNOPAUSE -dBATCH")
+            cmd.append(SystemInfo.Command.GS.cmd()).append(" -sOutputFile=\"")
+                    .append(fileOut.getCanonicalPath())
+                    .append("\" -sDEVICE=pdfwrite -dNOPAUSE -dBATCH ")
+                    .append(ArgumentGS.STDOUT_TO_STDOUT.getArg())
                     .append(" -sColorConversionStrategy=Gray")
                     .append(" -sProcessColorModel=DeviceGray")
                     // Needed for gs 9.10
@@ -97,7 +109,7 @@ public final class PdfToGrayscale extends AbstractFileConverter
                     .append(" -dPDFUseOldCMS=false")
                     //
                     .append(" -dCompatibilityLevel=1.4 \"")
-                    .append(fileIn.getCanonicalPath()).append("\" < /dev/null");
+                    .append(fileIn.getCanonicalPath()).append("\"");
         } catch (IOException e) {
             throw new SpException(e.getMessage(), e);
         }
@@ -114,5 +126,10 @@ public final class PdfToGrayscale extends AbstractFileConverter
         } catch (DocContentToPdfException e) {
             throw new IOException(e.getMessage());
         }
+    }
+
+    @Override
+    protected void onStdout(final String stdout) {
+        // no code intended.
     }
 }

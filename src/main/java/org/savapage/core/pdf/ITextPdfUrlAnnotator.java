@@ -1,7 +1,10 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -14,13 +17,14 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
  */
 package org.savapage.core.pdf;
 
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -31,13 +35,19 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.itextpdf.awt.geom.Rectangle2D;
+import com.itextpdf.text.ExceptionConverter;
 import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.PdfAction;
 import com.itextpdf.text.pdf.PdfAnnotation;
 import com.itextpdf.text.pdf.PdfBorderDictionary;
+import com.itextpdf.text.pdf.PdfDictionary;
+import com.itextpdf.text.pdf.PdfName;
+import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfStamper;
+import com.itextpdf.text.pdf.parser.ContentByteUtils;
+import com.itextpdf.text.pdf.parser.FilteredTextRenderListener;
 import com.itextpdf.text.pdf.parser.ImageRenderInfo;
+import com.itextpdf.text.pdf.parser.PdfContentStreamProcessor;
 import com.itextpdf.text.pdf.parser.TextExtractionStrategy;
 import com.itextpdf.text.pdf.parser.TextRenderInfo;
 import com.itextpdf.text.pdf.parser.Vector;
@@ -45,7 +55,7 @@ import com.itextpdf.text.pdf.parser.Vector;
 /**
  * Creates {@link PdfAnnotation} on URL text.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
@@ -92,10 +102,15 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
     private static final String PATTERN_URL =
             "\\b(https?|ftp|file)://" + REGEX_URL_WITHOUT_SCHEME;
 
+    /** */
+    private static final float ANNOTATION_BORDER_WIDTH = 0.5f;
+
     /**
-     * No border by default.
+     * Percentage of text rectangle height used to calculate annotation
+     * rectangle padding. Note: this is a simulation/approximation of font
+     * ascend/descend.
      */
-    private final boolean addBorderStyle = false;
+    private static final float ANNOTATION_TEXT_PADDING_PERC = 0.25f;
 
     /**
      * Helper class.
@@ -150,38 +165,60 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
      */
     private final int nStamperPage;
 
+    /** */
+    private final boolean isPageSeenAsLandscape;
+
+    /** */
+    private final int pageRotation;
+
+    /** */
+    private final Rectangle pageRectangle;
+
     /**
-     * .
+     * Add annotation border style (or not).
      */
+    private final boolean addBorderStyle;
+
+    /** */
     private TextRenderInfo textRenderInfoStartWlk;
 
-    /**
-     * .
-     */
+    /** */
     private Rectangle rectangleFirstWlk;
 
-    /**
-     * .
-     */
+    /** */
     private Rectangle rectangleLastWlk;
 
-    /**
-     * .
-     */
+    /** */
     private StringBuilder collectedTextWlk = new StringBuilder();
 
     /**
      * Constructor.
      *
-     * @param stamper
+     * @param target
      *            The {@link PdfStamper} to annotate the PDF links on.
      * @param nPage
      *            The 1-based page ordinal of the stamper to add the annotation
      *            on.
      */
-    public ITextPdfUrlAnnotator(final PdfStamper stamper, final int nPage) {
-        this.stamper = stamper;
+    public ITextPdfUrlAnnotator(final PdfStamper target, final int nPage) {
+
+        this.stamper = target;
         this.nStamperPage = nPage;
+
+        // No border.
+        this.addBorderStyle = false;
+
+        try {
+            final PdfReader reader = this.stamper.getReader();
+
+            this.isPageSeenAsLandscape = PdfPageRotateHelper
+                    .isSeenAsLandscape(reader, this.nStamperPage);
+            this.pageRotation = reader.getPageRotation(nStamperPage);
+            this.pageRectangle = reader.getPageSize(this.nStamperPage);
+
+        } catch (IOException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
     }
 
     /**
@@ -213,8 +250,8 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
                 llx, lly, urx, ury, action);
 
         if (this.addBorderStyle) {
-            annLink.setBorderStyle(new PdfBorderDictionary(0.5f,
-                    PdfBorderDictionary.STYLE_SOLID));
+            annLink.setBorderStyle(new PdfBorderDictionary(
+                    ANNOTATION_BORDER_WIDTH, PdfBorderDictionary.STYLE_SOLID));
         }
 
         stamper.addAnnotation(annLink, this.nStamperPage);
@@ -262,9 +299,7 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
                         matcher.start(), matcher.end(), url));
             } catch (MalformedURLException e) {
                 // Log and ignore
-                if (LOGGER.isWarnEnabled()) {
-                    LOGGER.warn(e.getMessage());
-                }
+                LOGGER.warn(e.getMessage());
             }
         }
 
@@ -338,26 +373,119 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
     /**
      * Checks the collected text for links and adds annotations.
      */
-    public void checkCollectedText() {
+    private void checkCollectedText() {
 
         if (this.textRenderInfoStartWlk == null) {
             return;
         }
 
-        final TextRenderInfo info = this.textRenderInfoStartWlk;
-        final String text = this.collectedTextWlk.toString();
+        if (this.rectangleFirstWlk.getTop() < this.rectangleFirstWlk
+                .getBottom()) {
+            LOGGER.warn("Skip text: unsupported rotation.");
+            return;
+        }
 
-        // System.out.println("[" + text + "]");
+        /*
+         * Annotation coordinates must be converted from technical PDF text
+         * coordinates to the "logical" coordinates as perceived by user.
+         */
+        final float llx;
+        final float lly;
+        final float urx;
+        final float ury;
 
-        final float fontWidthTotal = info.getFont().getWidth(text);
+        // Padding
+        final float llxPadding;
+        final float llyPadding;
+        final float urxPadding;
+        final float uryPadding;
 
-        final Rectangle infoRectTotal =
-                new Rectangle(this.rectangleFirstWlk.getLeft(),
-                        this.rectangleFirstWlk.getBottom(),
-                        this.rectangleLastWlk.getRight(),
-                        this.rectangleLastWlk.getTop());
+        final float techPadding;
+
+        // Determine technical orientation of text.
+        final boolean textTechHorizontal = this.rectangleFirstWlk
+                .getLeft() < this.rectangleFirstWlk.getRight();
+
+        final boolean textSeenVertical;
+
+        if (textTechHorizontal) {
+
+            textSeenVertical =
+                    this.isPageSeenAsLandscape && this.pageRotation != 0;
+
+            if (textSeenVertical) {
+
+                if (this.pageRotation != PdfPageRotateHelper.ROTATION_90) {
+                    // TODO
+                    LOGGER.warn(
+                            "Page [{}] Rotation [{}] to Landscape: "
+                                    + "not implemented yet.",
+                            this.nStamperPage, this.pageRotation);
+                    return;
+                }
+
+                final float perceivedPageHeight = this.pageRectangle.getWidth();
+
+                llx = this.rectangleFirstWlk.getBottom();
+                lly = perceivedPageHeight - this.rectangleLastWlk.getRight();
+                urx = this.rectangleLastWlk.getTop();
+                ury = perceivedPageHeight - this.rectangleFirstWlk.getLeft();
+
+                techPadding = (urx - llx) * ANNOTATION_TEXT_PADDING_PERC;
+
+                llxPadding = -techPadding;
+                llyPadding = -techPadding;
+                urxPadding = techPadding;
+                uryPadding = techPadding;
+
+            } else {
+
+                llx = this.rectangleFirstWlk.getLeft();
+                lly = this.rectangleFirstWlk.getBottom();
+                urx = this.rectangleLastWlk.getRight();
+                ury = this.rectangleLastWlk.getTop();
+
+                techPadding = (ury - lly) * ANNOTATION_TEXT_PADDING_PERC;
+
+                llxPadding = -techPadding;
+                llyPadding = -techPadding;
+                urxPadding = techPadding;
+                uryPadding = techPadding;
+            }
+
+        } else {
+
+            textSeenVertical = false;
+
+            // PDF Text is technically vertical.
+            final float heightCorrection;
+
+            if (this.isPageSeenAsLandscape && this.pageRotation != 0) {
+                heightCorrection = this.pageRectangle.getWidth();
+            } else {
+                heightCorrection = this.pageRectangle.getHeight();
+            }
+
+            llx = this.rectangleFirstWlk.getBottom();
+            lly = heightCorrection - this.rectangleFirstWlk.getLeft();
+            urx = this.rectangleLastWlk.getTop();
+            ury = heightCorrection - this.rectangleLastWlk.getRight();
+
+            techPadding = (ury - lly) * ANNOTATION_TEXT_PADDING_PERC;
+
+            llxPadding = -techPadding;
+            llyPadding = -techPadding;
+            urxPadding = techPadding;
+            uryPadding = techPadding;
+        }
+
+        final Rectangle infoRectTotal = new Rectangle(llx, lly, urx, ury);
 
         //
+        final TextRenderInfo info = this.textRenderInfoStartWlk;
+        final String text = this.collectedTextWlk.toString();
+        final float fontWidthTotal = info.getFont().getWidth(text);
+
         for (final AnnotationMatch match : findLinks(text)) {
 
             final String prefix = text.substring(0, match.getStart());
@@ -370,34 +498,48 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
             final float fontWidthAnnotation =
                     info.getFont().getWidth(match.getText());
 
-            /*
-             * Convert text font width to PDF info width.
-             */
-            final float infoWidthPrefix =
-                    infoRectTotal.getWidth() * fontWidthPrefix / fontWidthTotal;
+            final float llxWlk;
+            final float llyWlk;
+            final float urxWlk;
+            final float uryWlk;
 
-            final float infoWidthAnnotation = infoRectTotal.getWidth()
-                    * fontWidthAnnotation / fontWidthTotal;
+            if (textSeenVertical) {
 
-            /*
-             * Calculate info x-left x-right of the annotation.
-             */
-            final float infoLeftWlk = infoRectTotal.getLeft() + infoWidthPrefix;
+                final float infoWidthPrefix = infoRectTotal.getHeight()
+                        * fontWidthPrefix / fontWidthTotal;
 
-            final float infoRightWlk = infoLeftWlk + infoWidthAnnotation;
+                final float infoWidthAnnotation = infoRectTotal.getHeight()
+                        * fontWidthAnnotation / fontWidthTotal;
 
-            /*
-             * The y-baseline.
-             */
-            final Rectangle2D.Float infoRectBaseline =
-                    info.getBaseline().getBoundingRectange();
+                final float infoTopWlk =
+                        infoRectTotal.getTop() - infoWidthPrefix;
+                final float infoBottomWlk = infoTopWlk - infoWidthAnnotation;
 
-            /*
-             * Add the annotation.
-             */
-            this.addAnnotation(infoLeftWlk, infoRectBaseline.y, infoRightWlk,
-                    infoRectBaseline.y + infoRectTotal.getHeight(),
-                    match.getUrl());
+                llxWlk = infoRectTotal.getLeft();
+                llyWlk = infoBottomWlk;
+                urxWlk = infoRectTotal.getRight();
+                uryWlk = infoTopWlk;
+
+            } else {
+
+                final float infoWidthPrefix = infoRectTotal.getWidth()
+                        * fontWidthPrefix / fontWidthTotal;
+
+                final float infoWidthAnnotation = infoRectTotal.getWidth()
+                        * fontWidthAnnotation / fontWidthTotal;
+
+                final float infoLeftWlk =
+                        infoRectTotal.getLeft() + infoWidthPrefix;
+                final float infoRightWlk = infoLeftWlk + infoWidthAnnotation;
+
+                llxWlk = infoLeftWlk;
+                llyWlk = infoRectTotal.getBottom();
+                urxWlk = infoRightWlk;
+                uryWlk = infoRectTotal.getBottom() + infoRectTotal.getHeight();
+            }
+
+            this.addAnnotation(llxWlk + llxPadding, llyWlk + llyPadding,
+                    urxWlk + urxPadding, uryWlk + uryPadding, match.getUrl());
         }
 
         this.textRenderInfoStartWlk = null;
@@ -417,10 +559,7 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
                 // same font
                 && info.getFont().getPostscriptFontName()
                         .equals(this.textRenderInfoStartWlk.getFont()
-                                .getPostscriptFontName())
-        //
-        ) {
-
+                                .getPostscriptFontName())) {
             /*
              * How to check same word consistently for all kind of PDFs?
              *
@@ -430,6 +569,28 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
              */
             final boolean sameWord =
                     (rectangle.getLeft() - rectangleLastWlk.getRight()) < info
+                            .getSingleSpaceWidth() / 2;
+
+            checkCollectedText = !sameWord;
+
+        } else if (this.textRenderInfoStartWlk != null //
+                // rotated
+                && rectangle.getLeft() > rectangle.getRight() //
+                // same rotated line
+                && rectangle.getLeft() == this.rectangleFirstWlk.getLeft()
+                // same font
+                && info.getFont().getPostscriptFontName()
+                        .equals(this.textRenderInfoStartWlk.getFont()
+                                .getPostscriptFontName())) {
+            /*
+             * How to check same word consistently for all kind of PDFs?
+             *
+             * For now, if y-bottom of this rendered text is less then half a
+             * space of y-top of the previous rendered text, we consider same
+             * word.
+             */
+            final boolean sameWord =
+                    (rectangle.getBottom() - rectangleLastWlk.getTop()) < info
                             .getSingleSpaceWidth() / 2;
 
             checkCollectedText = !sameWord;
@@ -450,7 +611,6 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
         this.collectedTextWlk.append(text);
 
         this.rectangleLastWlk = rectangle;
-
     }
 
     @Override
@@ -473,4 +633,52 @@ public final class ITextPdfUrlAnnotator implements TextExtractionStrategy {
         return this.collectedTextWlk.toString();
     }
 
+    /**
+     * Annotates URL links in PDF file.
+     *
+     * @param reader
+     *            PDF in.
+     * @param stamper
+     *            PDF out.
+     * @throws IOException
+     *             If IO error.
+     */
+    public static void annotate(final PdfReader reader,
+            final PdfStamper stamper) throws IOException {
+
+        final int pageCount = reader.getNumberOfPages();
+
+        for (int i = 1; i <= pageCount; i++) {
+
+            final ITextPdfUrlAnnotator delegate =
+                    new ITextPdfUrlAnnotator(stamper, i);
+
+            final FilteredTextRenderListener listener =
+                    new FilteredTextRenderListener(delegate);
+
+            final PdfContentStreamProcessor processor =
+                    new PdfContentStreamProcessor(listener);
+
+            final PdfDictionary pageDic = reader.getPageN(i);
+
+            final PdfDictionary resourcesDic =
+                    pageDic.getAsDict(PdfName.RESOURCES);
+
+            try {
+                final byte[] content =
+                        ContentByteUtils.getContentBytesForPage(reader, i);
+
+                processor.processContent(content, resourcesDic);
+
+            } catch (ExceptionConverter e) {
+                // TODO
+                LOGGER.warn(String.format("%s [%s]",
+                        e.getClass().getSimpleName(), e.getMessage()));
+            }
+
+            // Flush remaining text
+            delegate.checkCollectedText();
+        }
+
+    }
 }

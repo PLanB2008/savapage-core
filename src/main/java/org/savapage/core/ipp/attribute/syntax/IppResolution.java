@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -40,23 +43,21 @@ import org.savapage.core.ipp.encoding.IppValueTag;
  * <li>The SIGNED-BYTE contains the units.</li>
  * </ul>
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
+ *
  */
-public class IppResolution extends AbstractIppAttrSyntax {
+public final class IppResolution extends AbstractIppAttrSyntax {
 
-    /**
-     * The SingletonHolder is loaded on the first execution of
-     * {@link IppResolution#instance()} or the first access to
-     * {@link SingletonHolder#INSTANCE}, not before.
-     * <p>
-     * <a href=
-     * "http://en.wikipedia.org/wiki/Singleton_pattern#The_solution_of_Bill_Pugh"
-     * >The Singleton solution of Bill Pugh</a>
-     * </p>
-     */
+    /** */
     private static class SingletonHolder {
         public static final IppResolution INSTANCE = new IppResolution();
     }
+
+    /**
+     * String formatted 600x600 DPI.
+     */
+    public static final String DPI_600X600 =
+            IppResolution.format(600, 600, IppResolution.DPI);
 
     /**
      * Dots per inch.
@@ -96,7 +97,7 @@ public class IppResolution extends AbstractIppAttrSyntax {
      * @param z
      * @return
      */
-    private static String format(int x, int y, int z) {
+    public static String format(int x, int y, int z) {
         return String.format("%d%c%d %s", x, FORMAT_X, y,
                 (z == DPI ? FORMAT_DPI : FORMAT_DPC));
     }
@@ -121,12 +122,12 @@ public class IppResolution extends AbstractIppAttrSyntax {
     }
 
     @Override
-    public final IppValueTag getValueTag() {
+    public IppValueTag getValueTag() {
         return IppValueTag.RESOLUTION;
     }
 
     @Override
-    public final void write(final OutputStream ostr, final String value,
+    public void write(final OutputStream ostr, final String value,
             final Charset charset) throws IOException {
 
         int[] resolution = parse(value);
@@ -136,7 +137,6 @@ public class IppResolution extends AbstractIppAttrSyntax {
         IppEncoder.writeInt32(ostr, resolution[0]);
         IppEncoder.writeInt32(ostr, resolution[1]);
         IppEncoder.writeInt8(ostr, resolution[2]);
-
     }
 
     /**

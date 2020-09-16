@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -32,12 +35,15 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import org.apache.commons.codec.DecoderException;
+import org.apache.commons.codec.binary.Hex;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.doc.soffice.SOfficeHelper;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
+import org.savapage.core.system.SystemInfo;
 
 /**
  * Helper methods to determine content type of a document, file or data stream.
@@ -103,9 +109,32 @@ public final class DocContent {
     public static final String HEADER_PS = "%!PS";
 
     /**
-     * The first bytes (signature) of {@link DocContentTypeEnum#UNIRAST}.
+     * All PJL jobs begin and end with a UEL command (<ESC>%-12345X).
+     * <p>
+     * The Universal Exit Language (UEL) Command causes the printer to exit the
+     * active printer language. The printer then returns control to PJL. The UEL
+     * command is used at the beginning and end of every PJL job. See
+     * <a href="https://en.wikipedia.org/wiki/Printer_Job_Language">
+     * Printer_Job_Language</a> in Wikipedia.
+     * </p>
+     */
+    public static final String HEADER_PJL = "\u001b" + "%-12345X";
+
+    /**
+     * The first bytes (signature) of {@link DocContentTypeEnum#URF}.
      */
     public static final String HEADER_UNIRAST = "UNIR";
+
+    /**
+     * The first bytes (signature) of {@link DocContentTypeEnum#PWG}. Full
+     * signature: RaS2PwgRaster.
+     */
+    public static final String HEADER_PWGRAST = "RaS2";
+
+    /**
+     * The first 3 bytes (signature) of {@link DocContentTypeEnum#JPEG}
+     */
+    public static final byte[] HEADER_JPEG = decodeHex("FFD8FF");
 
     /** */
     public static final String FILENAME_EXT_PDF = "pdf";
@@ -133,6 +162,20 @@ public final class DocContent {
 
     /** */
     public static final String MIMETYPE_POSTSCRIPT = "application/postscript";
+
+    /**
+     * @param hex
+     *            A String containing hexadecimal digits. For example: "FFD8FF"
+     * @return A byte array containing binary data decoded from the supplied
+     *         char array.
+     */
+    private static byte[] decodeHex(final String hex) {
+        try {
+            return Hex.decodeHex(hex);
+        } catch (DecoderException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
+    }
 
     /**
      * The SingletonHolder is loaded on the first execution of
@@ -205,7 +248,8 @@ public final class DocContent {
 
         init(DocContentTypeEnum.TXT, "text/plain", "txt");
 
-        init(DocContentTypeEnum.UNIRAST, "image/urf", "urf");
+        init(DocContentTypeEnum.PWG, "image/pwg-raster", "pwg");
+        init(DocContentTypeEnum.URF, "image/urf", "urf");
 
         init(DocContentTypeEnum.VCARD, "text/x-vcard", "vcf");
 
@@ -421,7 +465,8 @@ public final class DocContent {
         for (DocContentTypeEnum contentType : new DocContentTypeEnum[] {
                 DocContentTypeEnum.JPEG, DocContentTypeEnum.PNG,
                 DocContentTypeEnum.GIF, DocContentTypeEnum.SVG,
-                DocContentTypeEnum.TIFF, DocContentTypeEnum.BMP }) {
+                DocContentTypeEnum.TIFF, DocContentTypeEnum.BMP,
+                DocContentTypeEnum.PWG, DocContentTypeEnum.URF }) {
 
             if (excludeTypes.contains(contentType)
                     || !isSupported(contentType)) {
@@ -475,7 +520,6 @@ public final class DocContent {
         case GIF:
         case JPEG:
         case PNG:
-        case SVG:
         case TIFF:
             return true;
 
@@ -499,6 +543,8 @@ public final class DocContent {
             return ConfigManager.instance()
                     .isConfigValue(Key.DOC_CONVERT_LIBRE_OFFICE_ENABLED)
                     && SOfficeHelper.lazyIsInstalled();
+        case SVG:
+            return SystemInfo.isRSvgConvertInstalled();
 
         case XPS:
             return ConfigManager.instance()
@@ -508,8 +554,11 @@ public final class DocContent {
         case CUPS_PDF_BANNER:
             return true;
 
+        case PWG:
+        case URF:
+            return true;
+
         case CUPS_COMMAND:
-        case UNIRAST:
         case VCARD:
         case WMF:
         default:
@@ -531,16 +580,19 @@ public final class DocContent {
             final DocContentTypeEnum contentType,
             final InternalFontFamilyEnum preferredOutputFont) {
 
+        /*
+         * Exempt image files that do NOT have stream converter but DO have a
+         * file converter.
+         */
+        if (contentType == DocContentTypeEnum.SVG
+                || contentType == DocContentTypeEnum.PWG
+                || contentType == DocContentTypeEnum.URF) {
+            return null;
+        }
+
         final IStreamConverter converter;
 
-        if (contentType == DocContentTypeEnum.SVG) {
-            /*
-             * Since SVG is an image, we make this exception: we have NO stream
-             * converter (though we DO have a file converter).
-             */
-            converter = null;
-
-        } else if (DocContent.isImage(contentType)) {
+        if (DocContent.isImage(contentType)) {
             converter = new ImageToPdf();
 
         } else if (contentType == DocContentTypeEnum.HTML) {
@@ -562,6 +614,7 @@ public final class DocContent {
         } else {
             converter = null;
         }
+
         return converter;
     }
 
@@ -579,9 +632,15 @@ public final class DocContent {
         case PS:
             return new PsToPdf();
         case SVG:
-            return new ConvertToPdf();
+            return new SvgToPdf();
         case XPS:
             return new XpsToPdf();
+        case JPEG:
+            return new JPEGToPdf();
+        case PWG:
+            return new PWGToPdf();
+        case URF:
+            return new URFToPdf();
 
         case RTF:
         case DOC:

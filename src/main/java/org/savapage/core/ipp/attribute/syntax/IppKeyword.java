@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -33,7 +36,7 @@ import org.savapage.core.ipp.encoding.IppValueTag;
  * @author Rijk Ravestein
  *
  */
-public class IppKeyword extends AbstractIppAttrSyntax {
+public final class IppKeyword extends AbstractIppAttrSyntax {
 
     /**
      * All pages.
@@ -140,6 +143,18 @@ public class IppKeyword extends AbstractIppAttrSyntax {
      */
     public static final String PRINT_COLOR_MODE_PROCESS_MONOCHROME =
             "process-monochrome";
+
+    // Enum value.
+    public static final String PRINT_QUALITY_HIGH = "5";
+
+    //
+    public static final String JOB_PASSWORD_ENCRYPTION_NONE = "none";
+    public static final String JOB_PASSWORD_ENCRYPTION_MD5 = "md5";
+    // and lots more encryption possible.
+
+    //
+    public static final String MULTIPLE_DOCUMENT_HANDLING_SINGLE =
+            "single-document";
 
     // ------------------------------------------------------------------------
     // sheet-collate (RFC 3381)
@@ -402,36 +417,26 @@ public class IppKeyword extends AbstractIppAttrSyntax {
     public static final String ORG_SAVAPAGE_ATTR_COVER_TYPE_PRINTBOTH_EXT_PFX =
             "printboth.ext.";
 
-    /**
-     * The SingletonHolder is loaded on the first execution of
-     * {@link IppKeyword#instance()} or the first access to
-     * {@link SingletonHolder#INSTANCE}, not before.
-     * <p>
-     * <a href=
-     * "http://en.wikipedia.org/wiki/Singleton_pattern#The_solution_of_Bill_Pugh"
-     * >The Singleton solution of Bill Pugh</a>
-     * </p>
-     */
+    /** */
     private static class SingletonHolder {
+        /** */
         public static final IppKeyword INSTANCE = new IppKeyword();
     }
 
     /**
-     * Gets the singleton instance.
-     *
-     * @return
+     * @return The singleton instance.
      */
     public static IppKeyword instance() {
         return SingletonHolder.INSTANCE;
     }
 
     @Override
-    public final IppValueTag getValueTag() {
+    public IppValueTag getValueTag() {
         return IppValueTag.KEYWORD;
     }
 
     @Override
-    public final void write(final OutputStream ostr, final String value,
+    public void write(final OutputStream ostr, final String value,
             final Charset charset) throws IOException {
         /*
          * Ignore the offered charset, use US_ASCII instead.

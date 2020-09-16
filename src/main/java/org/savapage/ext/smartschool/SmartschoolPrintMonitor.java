@@ -72,6 +72,7 @@ import org.savapage.core.jpa.IppQueue;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
 import org.savapage.core.msg.UserMsgIndicator;
+import org.savapage.core.pdf.IPdfPageProps;
 import org.savapage.core.pdf.PdfCreateInfo;
 import org.savapage.core.pdf.PdfPasswordException;
 import org.savapage.core.pdf.PdfSecurityException;
@@ -1454,7 +1455,7 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
         /*
          * Get the PDF properties to check security issues.
          */
-        final SpPdfPageProps pdfProps;
+        final IPdfPageProps pdfProps;
 
         try {
             pdfProps = SpPdfPageProps.create(downloadedFile.getCanonicalPath());
@@ -2715,8 +2716,6 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
         final DaoContext daoContext = ServiceContext.getDaoContext();
 
         try {
-            final UserDao userDao = ServiceContext.getDaoContext().getUserDao();
-
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug(String.format("Start %s printing of [%s] ...",
                         printReq.getPrintMode().toString(),
@@ -2725,7 +2724,7 @@ public final class SmartschoolPrintMonitor implements PaperCutPrintJobListener {
 
             daoContext.beginTransaction();
 
-            final User lockedUser = userDao.lock(user.getId());
+            final User lockedUser = USER_SERVICE.lockUser(user.getId());
 
             if (printReq.getPrintMode() == PrintModeEnum.HOLD) {
 

@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -25,13 +28,17 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Date;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 import org.savapage.core.OutOfBoundsException;
 import org.savapage.core.config.IConfigProp;
+import org.savapage.core.dao.IAttrDao;
+import org.savapage.core.dao.enums.ACLRoleEnum;
 import org.savapage.core.dao.enums.UserAttrEnum;
 import org.savapage.core.dto.UserDto;
+import org.savapage.core.dto.UserIdDto;
 import org.savapage.core.dto.UserPropertiesDto;
 import org.savapage.core.jpa.Account;
 import org.savapage.core.jpa.User;
@@ -318,6 +325,17 @@ public interface UserService {
     User findUserByNumberUuid(String number, UUID uuid);
 
     /**
+     * Checks if {@link User} has {@link UUID}.
+     *
+     * @param user
+     *            The user.
+     * @param uuid
+     *            The {@link UUID}.
+     * @return {@code true} when present.
+     */
+    boolean isUserUuidPresent(User user, UUID uuid);
+
+    /**
      * Add/Replace the Primary Card to/of the {@link User}.
      *
      * <ul>
@@ -491,6 +509,28 @@ public interface UserService {
     String getUserAttrValue(User user, UserAttrEnum attrEnum);
 
     /**
+     * Gets user roles.
+     *
+     * @param userID
+     *            Primary ID of User
+     * @return A map of enabled/disabled (value) user roles (key).
+     */
+    Map<ACLRoleEnum, Boolean> getUserRoles(Long userID);
+
+    /**
+     * Checks the {@link UserAttr#getValue()} from {@link User#getAttributes()}
+     * list.
+     *
+     * @param user
+     *            The {@link User}.
+     * @param attrEnum
+     *            The {@link UserAttrEnum} to search for.
+     * @return {@code true} if attribute is found and equal to
+     *         {@link IAttrDao#V_YES}.
+     */
+    boolean isUserAttrValue(User user, UserAttrEnum attrEnum);
+
+    /**
      * Removes an attribute from the User's list of attributes AND from the
      * database.
      *
@@ -531,18 +571,32 @@ public interface UserService {
     UUID lazyAddUserAttrUuid(User user);
 
     /**
-     * Reads the attribute value from the database.
+     * Generates a Primary ID number for a user if it does exist. <i>This method
+     * performs a database commit.</i>
      *
      * @param user
      *            The {@link User}.
+     * @return Primary ID number or {@code null} if generate did not succeed.
+     */
+    String lazyAddUserPrimaryIdNumber(User user);
+
+    /**
+     * Reads the attribute value from the database. Encrypted value is
+     * <b>not</b> decrypted.
+     *
+     * @param userDbKey
+     *            primary database key of {@link User}.
      * @param name
      *            The name of the {@link UserAttr}.
      * @return The attribute value or {@code null} when NOT found.
      */
-    String findUserAttrValue(User user, UserAttrEnum name);
+    String findUserAttrValue(Long userDbKey, UserAttrEnum name);
 
     /**
      * Creates or updates the attribute value to the database.
+     * <p>
+     * Value encryption is responsibility of client.
+     * </p>
      *
      * @param user
      *            The user.
@@ -552,6 +606,18 @@ public interface UserService {
      *            The value.
      */
     void setUserAttrValue(User user, UserAttrEnum attrEnum, String attrValue);
+
+    /**
+     * Creates or updates boolean attribute value to the database.
+     *
+     * @param user
+     *            The user.
+     * @param attrEnum
+     *            The name of the {@link UserAttr}.
+     * @param attrValue
+     *            The value.
+     */
+    void setUserAttrValue(User user, UserAttrEnum attrEnum, boolean attrValue);
 
     /**
      * Encrypts an (internal) user password.
@@ -669,6 +735,28 @@ public interface UserService {
     void lazyUserHomeDir(String userId) throws IOException;
 
     /**
+     * Finds the active {@link User} and locks database row.
+     *
+     * @param userId
+     *            The unique user id.
+     * @return {@code null} when not found (or logically deleted).
+     */
+    User lockByUserId(String userId);
+
+    /**
+     * Finds the {@link User} by primary key and locks database row.
+     * <p>
+     * Use this method to force serialization among transactions attempting to
+     * update {@link User} entity data.
+     * </p>
+     *
+     * @param id
+     *            The primary key.
+     * @return The {@link User} instance.
+     */
+    User lockUser(Long id);
+
+    /**
      * Gets the latest saved Job Ticket properties for a {@link User} from the
      * database or by supplying a default.
      *
@@ -677,6 +765,16 @@ public interface UserService {
      * @return The {@link JobTicketProperties}.
      */
     JobTicketProperties getJobTicketPropsLatest(User user);
+
+    /**
+     * Gets the latest saved Job Ticket properties for a {@link User} from the
+     * database or by supplying a default.
+     *
+     * @param dto
+     *            {@link UserIdDto}.
+     * @return The {@link JobTicketProperties}.
+     */
+    JobTicketProperties getJobTicketPropsLatest(UserIdDto dto);
 
     /**
      * Stores the latest properties of Job Ticket, created by a user, to the

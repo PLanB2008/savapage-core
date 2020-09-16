@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -31,22 +34,35 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Calendar;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 import javax.print.attribute.Size2DSyntax;
 import javax.print.attribute.standard.MediaSize;
 import javax.print.attribute.standard.MediaSizeName;
 
 import org.savapage.core.SpException;
+import org.savapage.core.UnavailableException;
 import org.savapage.core.community.CommunityDictEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.doc.DocContentToPdfException;
+import org.savapage.core.doc.DocContentTypeEnum;
+import org.savapage.core.doc.IDocFileConverter;
 import org.savapage.core.doc.PdfRepair;
+import org.savapage.core.doc.PdfToAnnotatedURL;
 import org.savapage.core.doc.PdfToBooklet;
 import org.savapage.core.doc.PdfToGrayscale;
+import org.savapage.core.doc.PdfToRotateAlignedPdf;
+import org.savapage.core.doc.SvgToPdf;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
 import org.savapage.core.i18n.PhraseEnum;
 import org.savapage.core.json.PdfProperties;
@@ -59,7 +75,6 @@ import com.itextpdf.awt.geom.AffineTransform;
 import com.itextpdf.text.BadElementException;
 import com.itextpdf.text.Document;
 import com.itextpdf.text.DocumentException;
-import com.itextpdf.text.ExceptionConverter;
 import com.itextpdf.text.Image;
 import com.itextpdf.text.PageSize;
 import com.itextpdf.text.Paragraph;
@@ -80,9 +95,6 @@ import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfStamper;
 import com.itextpdf.text.pdf.PdfWriter;
 import com.itextpdf.text.pdf.XfaForm;
-import com.itextpdf.text.pdf.parser.ContentByteUtils;
-import com.itextpdf.text.pdf.parser.FilteredTextRenderListener;
-import com.itextpdf.text.pdf.parser.PdfContentStreamProcessor;
 
 /**
  * PDF Creator using the iText AGPL version.
@@ -115,13 +127,26 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     private String targetPdfCopyFilePath;
     private Document targetDocument;
 
+    /** */
     private PdfCopy targetPdfCopy;
-    private int nPagesAdded2Target;
 
+    /**
+     * Zero-based page number walker in {@link #targetPdfCopy}.
+     */
+    private int targetPdfCopyPageWlk;
+
+    /**
+     * A set with one-based page numbers that need page orientation change to
+     * align to orientation of first page in overall PDF document.
+     */
+    private Set<Integer> targetPdfCopyPages2Align;
+
+    /** */
     private PdfStamper targetStamper;
 
     private PdfReader readerWlk;
     private PdfReader letterheadReader;
+    private List<PdfReader> overlayReaders;
 
     private StringBuilder jobRangesWlk;
 
@@ -143,7 +168,20 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     /**
      * Create URL links by default.
      */
-    private final boolean isAnnotateUrls = true;
+    private boolean isAnnotateUrls = true;
+
+    /** */
+    private boolean onExitAnnotateUrls = false;
+
+    /** */
+    private boolean onExitStampEncryption = false;
+
+    /** */
+    private PdfProperties.PdfAllow pdfAllow;
+    /** */
+    private String pdfOwnerPass;
+    /** */
+    private String pdfUserPass;
 
     /**
      * {@code true} if the created pdf is to be converted to grayscale onExit.
@@ -305,6 +343,23 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     }
 
     /**
+     * Gets the PageFormat from the media box {@link Rectangle}.
+     *
+     * @param mediabox
+     *            The mediabox {@link Rectangle}.
+     * @return The {@link PageFormat}.
+     */
+    private PageFormat createPageFormat(final Rectangle mediabox) {
+
+        final PageFormat pageFormat = new PageFormat();
+        final Paper paper = new Paper();
+
+        paper.setSize(mediabox.getWidth(), mediabox.getHeight());
+        pageFormat.setPaper(paper);
+        return pageFormat;
+    }
+
+    /**
      * Gets the PDF page properties from the media box {@link Rectangle}.
      *
      * @param mediabox
@@ -313,11 +368,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
      */
     private SpPdfPageProps createPageProps(final Rectangle mediabox) {
 
-        final PageFormat pageFormat = new PageFormat();
-        final Paper paper = new Paper();
-
-        paper.setSize(mediabox.getWidth(), mediabox.getHeight());
-        pageFormat.setPaper(paper);
+        final PageFormat pageFormat = this.createPageFormat(mediabox);
 
         // NOTE: the size in returned in PORTRAIT mode.
         final int[] size = MediaUtils.getMediaWidthHeight(pageFormat);
@@ -442,11 +493,21 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         this.onExitRepairPdf = this.isRepairPdf();
 
         this.targetPdfCopyFilePath = String.format("%s.tmp", this.pdfFile);
-        this.nPagesAdded2Target = 0;
+        this.targetPdfCopyPageWlk = 0;
+        if (this.isForPrinting() && this.isApplyLetterhead()) {
+            this.targetPdfCopyPages2Align = new HashSet<>();
+        }
+
         this.firstPageSeenAsLandscape = null;
 
-        try {
+        this.isAnnotateUrls =
+                !this.isForPrinting() && !this.onExitConvertToGrayscale
+                        && !this.onExitBookletPageOrder;
 
+        this.onExitAnnotateUrls = false;
+        this.onExitStampEncryption = false;
+
+        try {
             final OutputStream ostr =
                     new FileOutputStream(this.targetPdfCopyFilePath);
 
@@ -478,6 +539,34 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         if (this.onExitBookletPageOrder) {
             replaceWithConvertedPdf(pdfFile,
                     new PdfToBooklet().convert(pdfFile));
+        }
+
+        /*
+         * Ad-hoc rotate?
+         */
+        if (this.targetPdfCopyPages2Align != null
+                && this.targetPdfCopyPages2Align.size() > 0) {
+            replaceWithConvertedPdf(pdfFile,
+                    new PdfToRotateAlignedPdf(this.firstPageSeenAsLandscape,
+                            this.targetPdfCopyPages2Align).convert(pdfFile));
+        }
+
+        /*
+         * Annotate URLs including Letterhead. Note: optional PDF encryption is
+         * part of last action.
+         */
+        if (this.onExitAnnotateUrls) {
+
+            final PdfToAnnotatedURL converter;
+
+            if (this.onExitStampEncryption) {
+                converter = new PdfToAnnotatedURL(this.pdfAllow,
+                        this.pdfOwnerPass, this.pdfUserPass);
+            } else {
+                converter = new PdfToAnnotatedURL();
+            }
+
+            replaceWithConvertedPdf(pdfFile, converter.convert(pdfFile));
         }
     }
 
@@ -533,6 +622,57 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         return this.singleBlankPagePdfReader;
     }
 
+    /**
+     * @param nPage
+     *            One-based page number in resulting PDF document.
+     * @param pageRotationCur
+     *            Current page rotation.
+     * @param pageRotationUser
+     *            Rotation requested by user.
+     * @param alignedRotation
+     *            Rotation needed to become same orientation as 1st printed
+     *            page.
+     * @return Rotation to be applied for this page <b>now</b>.
+     * @throws IOException
+     *             When IO error.
+     */
+    private int onExitJobPagePrintAlign(final int nPage,
+            final int pageRotationCur, final int pageRotationUser,
+            final int alignedRotation) throws IOException {
+
+        if (this.isApplyLetterhead()) {
+
+            if (pageRotationUser == pageRotationCur) {
+                /*
+                 * If alignment is needed, perform later.
+                 */
+                if (alignedRotation != pageRotationCur) {
+                    this.targetPdfCopyPages2Align.add(Integer.valueOf(nPage));
+                }
+                /*
+                 * Use current orientation to correctly position letterhead.
+                 */
+                return pageRotationCur;
+            }
+
+            /*
+             * User requested a different orientation: perform alignment later
+             * and use user requested orientation to correctly position
+             * letterhead.
+             */
+            this.targetPdfCopyPages2Align.add(Integer.valueOf(nPage));
+
+            return pageRotationUser;
+
+        } else {
+            /*
+             * No letterhead: user requested orientation is irrelevant. Use
+             * aligned rotation.
+             */
+            return alignedRotation;
+        }
+    }
+
     @Override
     protected void onExitJob(final int blankPagesToAppend) throws Exception {
 
@@ -549,8 +689,12 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
                     .getPdfPageCTM(this.readerWlk, firstPage);
 
             final int page1Rotation = this.readerWlk.getPageRotation(firstPage);
-            final boolean page1Landscape = PdfPageRotateHelper
-                    .isLandscapePage(this.readerWlk.getPageSize(firstPage));
+            final Rectangle page1Size = this.readerWlk.getPageSize(firstPage);
+
+            final boolean page1Landscape =
+                    PdfPageRotateHelper.isLandscapePage(page1Size);
+
+            this.firstPageFormat = this.createPageFormat(page1Size);
 
             this.firstPageSeenAsLandscape =
                     PdfPageRotateHelper.isSeenAsLandscape(ctm, page1Rotation,
@@ -567,24 +711,31 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
          * Traverse pages.
          */
         for (int nPage =
-                1; nPage <= pages; nPage++, this.nPagesAdded2Target++) {
+                1; nPage <= pages; nPage++, this.targetPdfCopyPageWlk++) {
 
             final int pageRotationCur = this.readerWlk.getPageRotation(nPage);
+
+            final int pageRotationUser = PdfPageRotateHelper
+                    .applyUserRotate(pageRotationCur, this.jobUserRotateWlk);
+
+            // Page rotation to apply now.
             final int pageRotationNew;
 
-            if (this.isForPrinting() && this.nPagesAdded2Target > 0) {
+            if (this.isForPrinting() && this.targetPdfCopyPageWlk > 0) {
 
-                pageRotationNew = PdfPageRotateHelper.getAlignedRotation(
-                        this.readerWlk, this.firstPageSeenAsLandscape, nPage);
+                final int alignedRotation =
+                        PdfPageRotateHelper.getAlignedRotation(this.readerWlk,
+                                this.firstPageSeenAsLandscape, nPage);
+
+                pageRotationNew = this.onExitJobPagePrintAlign(
+                        this.targetPdfCopyPageWlk + 1, pageRotationCur,
+                        pageRotationUser, alignedRotation);
             } else {
-
-                pageRotationNew = PdfPageRotateHelper.applyUserRotate(
-                        pageRotationCur, this.jobUserRotateWlk);
+                pageRotationNew = pageRotationUser;
             }
 
-            final PdfDictionary pageDict = this.readerWlk.getPageN(nPage);
-
             if (pageRotationCur != pageRotationNew) {
+                final PdfDictionary pageDict = this.readerWlk.getPageN(nPage);
                 pageDict.put(PdfName.ROTATE, new PdfNumber(pageRotationNew));
             }
 
@@ -622,7 +773,8 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         }
 
         //
-        for (int i = 0; i < blankPagesToAppend; i++) {
+        for (int i =
+                0; i < blankPagesToAppend; i++, this.targetPdfCopyPageWlk++) {
             this.targetPdfCopy.addPage(this.targetPdfCopy.getImportedPage(
                     this.getBlankPageReader(this.targetPdfCopy.getPageSize()),
                     1));
@@ -647,7 +799,9 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     @Override
     protected void onStampLetterhead(final String pdfLetterhead)
             throws Exception {
-
+        this.letterheadReader = new PdfReader(pdfLetterhead);
+        this.onExitAnnotateUrls =
+                this.isAnnotateUrls && hasFonts(this.letterheadReader);
     }
 
     @Override
@@ -660,71 +814,25 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     }
 
     @Override
-    protected void onStampEncryptionForExport(final PdfProperties propPdf,
-            final String ownerPass, final String userPass,
-            final boolean hasVisitorText) {
+    protected void onStampEncryptionForExport(
+            final PdfProperties.PdfAllow allow, final String ownerPass,
+            final String userPass) {
 
-        PdfProperties.PdfAllow allow = propPdf.getAllow();
+        final int iPermissions = ITextHelperV5.getPermissions(allow);
 
-        int iPermissions = 0;
+        this.onExitStampEncryption = this.onExitAnnotateUrls;
 
-        boolean bStrength = true; // 128 bit: TODO
-
-        propPdf.getEncryption();
-
-        if (allow.getAssembly()) {
-            iPermissions |= PdfWriter.ALLOW_ASSEMBLY;
-        }
-        if (allow.getCopy()) {
-            iPermissions |= PdfWriter.ALLOW_COPY;
-        }
-        if (allow.getCopyForAccess()) {
-            iPermissions |= PdfWriter.ALLOW_SCREENREADERS;
-        }
-        if (allow.getFillin()) {
-            iPermissions |= PdfWriter.ALLOW_FILL_IN;
-        }
-        if (allow.getPrinting()) {
-            iPermissions |= PdfWriter.ALLOW_PRINTING;
-        }
-        if (allow.getDegradedPrinting()) {
-            iPermissions |= PdfWriter.ALLOW_DEGRADED_PRINTING;
-        }
-
-        if (!hasVisitorText) {
-            if (allow.getModifyContents()) {
-                iPermissions |= PdfWriter.ALLOW_MODIFY_CONTENTS;
+        if (this.onExitStampEncryption) {
+            this.pdfAllow = allow;
+            this.pdfOwnerPass = ownerPass;
+            this.pdfUserPass = userPass;
+        } else {
+            try {
+                this.targetStamper.setEncryption(true, userPass, ownerPass,
+                        iPermissions);
+            } catch (DocumentException e) {
+                throw new SpException(e);
             }
-            if (allow.getModifyAnnotations()) {
-                iPermissions |= PdfWriter.ALLOW_MODIFY_ANNOTATIONS;
-            }
-        }
-
-        try {
-            this.targetStamper.setEncryption(bStrength, userPass, ownerPass,
-                    iPermissions);
-        } catch (DocumentException e) {
-            throw new SpException(e);
-        }
-
-    }
-
-    @Override
-    protected void onStampEncryptionForPrinting() {
-        /*
-         * For security reasons, just printing is allowed.
-         */
-        int iPermissions = 0;
-        boolean bStrength = true; // 128 bit
-
-        iPermissions |= PdfWriter.ALLOW_PRINTING;
-        iPermissions |= PdfWriter.ALLOW_DEGRADED_PRINTING;
-
-        try {
-            this.targetStamper.setEncryption(bStrength, null, null,
-                    iPermissions);
-        } catch (DocumentException e) {
-            throw new SpException(e);
         }
     }
 
@@ -751,24 +859,18 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
             this.letterheadReader.close();
         }
 
+        if (this.overlayReaders != null) {
+            for (final PdfReader rdr : this.overlayReaders) {
+                rdr.close();
+            }
+        }
+
         if (this.readerWlk != null) {
             this.readerWlk.close();
             this.readerWlk = null;
         }
 
         new File(this.targetPdfCopyFilePath).delete();
-    }
-
-    /**
-     *
-     * @return The Creator string visible in the PDF properties of PDF Reader.
-     */
-    private String getCreatorString() {
-        return String.format("%s %s • %s • %s",
-                CommunityDictEnum.SAVAPAGE.getWord(),
-                ConfigManager.getAppVersion(),
-                CommunityDictEnum.SAVAPAGE_SLOGAN.getWord(),
-                CommunityDictEnum.SAVAPAGE_DOT_ORG.getWord());
     }
 
     @Override
@@ -792,14 +894,13 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
          * info.setModificationDate(now);
          */
 
-        info.put(PDF_INFO_KEY_CREATOR, this.getCreatorString());
+        info.put(PDF_INFO_KEY_CREATOR, getCreatorString());
 
         if (propPdf.getApply().getKeywords()) {
             info.put(PDF_INFO_KEY_KEYWORDS, propPdf.getDesc().getKeywords());
         }
 
         this.targetStamper.setMoreInfo(info);
-
     }
 
     @Override
@@ -812,7 +913,7 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
         info.put(PDF_INFO_KEY_SUBJECT, "FOR PRINTING PURPOSES ONLY");
         info.put(PDF_INFO_KEY_AUTHOR, CommunityDictEnum.SAVAPAGE.getWord());
 
-        info.put(PDF_INFO_KEY_CREATOR, this.getCreatorString());
+        info.put(PDF_INFO_KEY_CREATOR, getCreatorString());
 
         // info.setModificationDate(now);
         if (propPdf.getApply().getKeywords()) {
@@ -823,41 +924,129 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
     }
 
     @Override
-    protected void onStampRotateForPrinting() throws Exception {
-        /*
-         * No code intended: rotation is done in exitStamping.
-         */
-    }
-
-    @Override
     protected void onInitStamp() throws Exception {
         this.readerWlk = new PdfReader(this.targetPdfCopyFilePath);
         this.targetStamper =
                 new PdfStamper(this.readerWlk, new FileOutputStream(pdfFile));
     }
 
+    /**
+     *
+     * @param reader
+     *            PDF reader.
+     * @return {@code true} if PDF document contains fonts.
+     * @throws IOException
+     *             If IO error.
+     */
+    private static boolean hasFonts(final PdfReader reader) throws IOException {
+        return PdfDocumentFonts.create(reader).getFonts().size() > 0;
+    }
+
     @Override
-    protected void onExitStamp() throws Exception {
+    protected void onExitStamp(final Map<Integer, String> pageOverlay)
+            throws Exception {
 
         if (this.isRemoveGraphics) {
             minifyPdfImages();
         }
 
-        if (this.isAnnotateUrls && !isForPrinting()) {
-            annotateUrls();
+        if (!pageOverlay.isEmpty()) {
+            this.applyOverlay(pageOverlay);
         }
 
-        final boolean isLetterhead = myPdfFileLetterhead != null;
-
-        if (isLetterhead) {
+        if (this.isApplyLetterhead()) {
             applyLetterhead();
         }
+
+        if (this.isAnnotateUrls && !this.onExitAnnotateUrls) {
+            ITextPdfUrlAnnotator.annotate(this.readerWlk, this.targetStamper);
+        }
+    }
+
+    /**
+     * Applies the page overlays.
+     *
+     * @param pageOverlay
+     *            Base64 encoded SVG overlay (value) for one-based ordinal pages
+     *            (key) of the overall PDF document.
+     * @throws IOException
+     *             If IO error.
+     */
+    private void applyOverlay(final Map<Integer, String> pageOverlay)
+            throws IOException {
+
+        final IDocFileConverter converter = new SvgToPdf();
+
+        this.overlayReaders = new ArrayList<>();
+
+        final int nDocPages = this.readerWlk.getNumberOfPages();
+        int nPageWlk;
+
+        for (int i = 0; i < nDocPages; i++) {
+
+            nPageWlk = i + 1;
+
+            final String svg64 = pageOverlay.get(Integer.valueOf(nPageWlk));
+            if (svg64 == null) {
+                continue;
+            }
+
+            final File tempFileSVG = File.createTempFile("temp-", ".svg");
+
+            File tempFilePDF = null;
+            PdfReader overlayReader = null;
+
+            try (FileOutputStream fostr = new FileOutputStream(tempFileSVG)) {
+
+                fostr.write(Base64.getDecoder().decode(svg64));
+                fostr.close();
+
+                tempFilePDF =
+                        converter.convert(DocContentTypeEnum.SVG, tempFileSVG);
+
+                overlayReader = new PdfReader(tempFilePDF.getAbsolutePath());
+
+                final PdfImportedPage importedPage =
+                        this.targetStamper.getImportedPage(overlayReader, 1);
+
+                // Add overlay 'on top of' the page content.
+                final PdfContentByte contentByte =
+                        this.targetStamper.getOverContent(nPageWlk);
+
+                // ----------------------------------------------------
+                // SCALE + TRANSLATE
+                // ----------------------------------------------------
+                // a : sX (scale, in x-direction)
+                // b : 0
+                // c : 0
+                // d : sY (scale, in y-direction)
+                // e : tX (translate, moves e pixels in x-direction)
+                // f : tY (translate, moves f pixels in y-direction)
+                // ----------------------------------------------------
+                final float sX = 1.0f;
+                final float sY = sX;
+
+                contentByte.addTemplate(importedPage, sX, 0, 0, sY, 0, 0);
+
+            } catch (DocContentToPdfException | UnavailableException e) {
+                throw new SpException(e.getMessage());
+            } finally {
+                if (overlayReader != null) {
+                    this.overlayReaders.add(overlayReader);
+                }
+                tempFileSVG.delete();
+                if (tempFilePDF != null) {
+                    tempFilePDF.delete();
+                }
+            }
+        } // for-loop
     }
 
     /**
      * Applies the letterhead.
      *
      * @throws IOException
+     *             If IO error.
      */
     private void applyLetterhead() throws IOException {
 
@@ -866,18 +1055,19 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
 
         PdfImportedPage letterheadPage = null;
 
-        this.letterheadReader = new PdfReader(myPdfFileLetterhead);
         nLetterheadPageMax = myLetterheadJob.getPages();
 
         /*
          * Iterate over document's pages.
          */
-        int nDocPages = this.readerWlk.getNumberOfPages();
+        final int nDocPages = this.readerWlk.getNumberOfPages();
+
         Rectangle rectLetterheadPageWlk = null;
+        int nPageWlk;
 
-        for (int i = 0; i < nDocPages;) {
+        for (int i = 0; i < nDocPages; i++) {
 
-            ++i;
+            nPageWlk = i + 1;
 
             /*
              * If the letterhead document has more than one page, each page of
@@ -886,7 +1076,6 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
              * letterhead, then the final letterhead page is repeated across
              * these remaining pages of the output document.
              */
-
             if (nLetterheadPage < nLetterheadPageMax) {
 
                 nLetterheadPage++;
@@ -908,16 +1097,13 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
             final PdfContentByte contentByte;
 
             if (myLetterheadJob.getForeground()) {
-                contentByte = this.targetStamper.getOverContent(i);
+                contentByte = this.targetStamper.getOverContent(nPageWlk);
             } else {
-                contentByte = this.targetStamper.getUnderContent(i);
+                contentByte = this.targetStamper.getUnderContent(nPageWlk);
             }
 
-            /*
-             *
-             */
-            final Rectangle rectDocPage = this.readerWlk.getPageSize(i);
-            final int pageRotation = this.readerWlk.getPageRotation(i);
+            final Rectangle rectDocPage = this.readerWlk.getPageSize(nPageWlk);
+            final int pageRotation = this.readerWlk.getPageRotation(nPageWlk);
 
             final boolean swapWidhtHeight;
 
@@ -1087,52 +1273,6 @@ public final class ITextPdfCreator extends AbstractPdfCreator {
                 }
             }
         }
-    }
-
-    /**
-     *
-     * @throws IOException
-     */
-    private void annotateUrls() throws IOException {
-
-        final PdfReader reader = this.readerWlk;
-        final PdfStamper stamper = this.targetStamper;
-        int pageCount = reader.getNumberOfPages();
-
-        for (int i = 1; i <= pageCount; i++) {
-
-            final ITextPdfUrlAnnotator delegate =
-                    new ITextPdfUrlAnnotator(stamper, i);
-
-            final FilteredTextRenderListener listener =
-                    new FilteredTextRenderListener(delegate);
-
-            final PdfContentStreamProcessor processor =
-                    new PdfContentStreamProcessor(listener);
-
-            final PdfDictionary pageDic = reader.getPageN(i);
-
-            final PdfDictionary resourcesDic =
-                    pageDic.getAsDict(PdfName.RESOURCES);
-
-            try {
-                final byte[] content =
-                        ContentByteUtils.getContentBytesForPage(reader, i);
-
-                processor.processContent(content, resourcesDic);
-
-            } catch (ExceptionConverter e) {
-                // TODO
-                if (LOGGER.isWarnEnabled()) {
-                    LOGGER.warn(String.format("%s [%s]",
-                            e.getClass().getSimpleName(), e.getMessage()));
-                }
-            }
-
-            // Flush remaining text
-            delegate.checkCollectedText();
-        }
-
     }
 
 }

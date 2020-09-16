@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -27,8 +30,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
 import org.savapage.core.SpException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Provides information about the host system.
@@ -38,12 +39,158 @@ import org.slf4j.LoggerFactory;
  */
 public final class SystemInfo {
 
-    /** */
-    private static final Logger LOGGER =
-            LoggerFactory.getLogger(SystemInfo.class);
+    /**
+     * OS Commands.
+     */
+    public enum Command {
+        /**
+         * Part of Poppler.
+         */
+        PDFFONTS("pdffonts"),
+        /**
+         * Part of ImageMagick.
+         */
+        CONVERT("convert"),
+
+        /**
+         * Part of CUPS.
+         */
+        CUPSFILTER("cupsfilter"),
+
+        /**
+         * Part of LibreOffice.
+         */
+        LIBREOFFICE("libreoffice"),
+
+        /**
+         * Part of fontconfig (generic font configuration library).
+         */
+        FC_MATCH("fc-match"),
+
+        /**
+         * Part of Poppler.
+         *
+         * @deprecated Use {@link SystemInfo.Command#PDFTOCAIRO} instead (Mantis
+         *             #1079).
+         */
+        PDFTOPPM("pdftoppm"),
+
+        /**
+         * Part of Poppler.
+         */
+        PDFTOCAIRO("pdftocairo"),
+        /**
+         * Part of Ghostscript.
+         */
+        GS("gs"),
+        /**
+         * Part of Ghostscript.
+         */
+        PS2PDF("ps2pdf"),
+        /**
+         * .
+         */
+        QPDF("qpdf"),
+        /**
+         * Part of librsvg2-bin package.
+         */
+        RSVG_CONVERT("rsvg-convert"),
+        /**
+         * .
+         */
+        ULIMIT("ulimit"),
+        /**
+         * .
+         */
+        SYSCTL("/sbin/sysctl"),
+        /**
+         * .
+         */
+        WHICH("which"),
+        /**
+         * .
+         */
+        XPSTOPDF("xpstopdf");
+
+        /** */
+        private final String cmd;
+
+        /**
+         * @param command
+         *            OS Command.
+         */
+        Command(final String command) {
+            this.cmd = command;
+        }
+
+        /**
+         *
+         * @return OS command.
+         */
+        public String cmd() {
+            return this.cmd;
+        }
+
+        /**
+         * Create command line by concatenating argument to command.
+         *
+         * @param argument
+         *            Command line argument.
+         * @return OS command with argument.
+         */
+        public String cmdLine(final String argument) {
+            return String.format("%s %s", this.cmd, argument);
+        }
+
+        /**
+         * Create command line by concatenating arguments to command.
+         *
+         * @param args
+         *            Arguments.
+         * @return OS command with arguments.
+         */
+        public String cmdLineExt(final String... args) {
+            final StringBuilder line = new StringBuilder();
+            line.append(this.cmd);
+            for (final String arg : args) {
+                line.append(" ").append(arg);
+            }
+            return line.toString();
+        }
+    }
+
+    /**
+     * {@link Command#GS} CLI options.
+     *
+     */
+    public enum ArgumentGS {
+
+        /** */
+        EMBED_ALL_FONTS("-dEmbedAllFonts=true"),
+        /** */
+        STDOUT_TO_STDOUT("-sstdout=%stdout");
+
+        /** */
+        private final String arg;
+
+        /**
+         * @param argument
+         *            CLI argument.
+         */
+        ArgumentGS(final String argument) {
+            this.arg = argument;
+        }
+
+        /**
+         * @return The CLI argument.
+         */
+        public String getArg() {
+            return this.arg;
+        }
+    }
 
     /** */
-    public static enum SysctlEnum {
+    public enum SysctlEnum {
         /** */
         NET_CORE_RMEM_MAX("net.core.rmem_max"),
         /** */
@@ -62,8 +209,12 @@ public final class SystemInfo {
         NET_IPV4_TCP_SYNCOOKIES("net.ipv4.tcp_syncookies"),
         /** */
         NET_IPV4_IP_LOCAL_PORT_RANGE("net.ipv4.ip_local_port_range"),
-        /** */
+
+        /**
+         * Not present in Ubuntu 18.04.
+         */
         NET_IPV4_TCP_TW_RECYCLE("net.ipv4.tcp_tw_recycle"),
+
         /** */
         NET_IPV4_TCP_TW_REUSE("net.ipv4.tcp_tw_reuse"),
         /** */
@@ -79,7 +230,7 @@ public final class SystemInfo {
          * @param key
          *            Key.
          */
-        private SysctlEnum(final String key) {
+        SysctlEnum(final String key) {
             this.key = key;
         }
 
@@ -88,21 +239,71 @@ public final class SystemInfo {
         }
     }
 
+    /**
+     * Registry of one-time lazy captured {@link Command} versions (not
+     * refreshed).
+     */
+    public static final class CommandVersionRegistry {
+
+        /** */
+        private final String pdfToCairo;
+
+        /** */
+        private CommandVersionRegistry() {
+            pdfToCairo = SystemInfo.getPdfToCairoVersion();
+        }
+
+        /**
+         *
+         * @return The {@link Command#PDFTOCAIRO} version.
+         */
+        public String getPdfToCairo() {
+            return pdfToCairo;
+        }
+
+    }
+
+    /** */
+    private static class VersionRegistryHolder {
+        /**
+         * The singleton.
+         */
+        private static final CommandVersionRegistry INSTANCE =
+                new SystemInfo.CommandVersionRegistry();
+    }
+
+    /**
+     * Utility class.
+     */
     private SystemInfo() {
     }
 
     /**
-     * Retrieves the Poppler {@code pdftoppm} version from the system.
+     * @return {@link SystemInfo.CommandVersionRegistry}.
+     */
+    public static CommandVersionRegistry getCommandVersionRegistry() {
+        return VersionRegistryHolder.INSTANCE;
+    }
+
+    /**
+     * Initialize.
+     */
+    public static void init() {
+        getCommandVersionRegistry();
+    }
+
+    /**
+     * Retrieves the Poppler {@link Command#PDFTOPPM} version from the system.
      * <p>
      * <a href=
      * "http://poppler.freedesktop.org">http://poppler.freedesktop.org</a>
      * </p>
      *
-     * @return The version string(s) or {@code null} when not installed.
+     * @return The version string(s) or {@code null} if not installed.
      */
     public static String getPdfToPpmVersion() {
 
-        final String cmd = "pdftoppm -v";
+        final String cmd = Command.PDFTOPPM.cmdLine("-v");
 
         final ICommandExecutor exec = CommandExecutor.createSimple(cmd);
 
@@ -129,17 +330,17 @@ public final class SystemInfo {
     }
 
     /**
-     * Retrieves the Poppler {@code pdftocairo} version from the system.
+     * Retrieves the Poppler {@link Command#PDFTOCAIRO} version from the system.
      * <p>
      * <a href=
      * "http://poppler.freedesktop.org">http://poppler.freedesktop.org</a>
      * </p>
      *
-     * @return The version string(s) or {@code null} when not installed.
+     * @return The version string(s) or {@code null} if not installed.
      */
     public static String getPdfToCairoVersion() {
 
-        final String cmd = "pdftocairo -v";
+        final String cmd = Command.PDFTOCAIRO.cmdLine("-v");
 
         final ICommandExecutor exec = CommandExecutor.createSimple(cmd);
 
@@ -159,15 +360,48 @@ public final class SystemInfo {
             throw new SpException(e);
         }
     }
+
     /**
-     * Retrieves the ImageMagick version from the system.
+     * Retrieves the Poppler {@link Command#PDFFONTS} version from the system.
+     * <p>
+     * <a href=
+     * "http://poppler.freedesktop.org">http://poppler.freedesktop.org</a>
+     * </p>
      *
-     * @return The version string(s) or {@code null} when ImageMagick is not
-     *         installed.
+     * @return The version string(s) or {@code null} if not installed.
+     */
+    public static String getPdfFontsVersion() {
+
+        final String cmd = Command.PDFFONTS.cmdLine("-v");
+
+        final ICommandExecutor exec = CommandExecutor.createSimple(cmd);
+
+        try {
+            int rc = exec.executeCommand();
+
+            if (rc != 0 && rc != 99) {
+                return null;
+            }
+
+            /*
+             * Note: version is echoed on stderr.
+             */
+            return exec.getStandardError();
+
+        } catch (Exception e) {
+            throw new SpException(e);
+        }
+    }
+
+    /**
+     * Retrieves the ImageMagick {@link Command#CONVERT} version from the
+     * system.
+     *
+     * @return The version string(s) or {@code null} if not installed.
      */
     public static String getImageMagickVersion() {
 
-        final String cmd = "convert -version";
+        final String cmd = Command.CONVERT.cmdLine("-version");
 
         final ICommandExecutor exec = CommandExecutor.createSimple(cmd);
 
@@ -183,14 +417,36 @@ public final class SystemInfo {
     }
 
     /**
-     * Retrieves the Ghostscript version from the system.
+     * Retrieves the fontconfig {@link Command#FC_MATCH} version from the
+     * system.
      *
-     * @return The version string(s) or {@code null} when the Ghostscript is not
-     *         installed.
+     * @return The version string(s) or {@code null} if not installed.
+     */
+    public static String getFontConfigVersion() {
+
+        final String cmd = Command.FC_MATCH.cmdLine("--version");
+
+        final ICommandExecutor exec = CommandExecutor.createSimple(cmd);
+
+        try {
+            int rc = exec.executeCommand();
+            if (rc != 0) {
+                return null;
+            }
+            return exec.getStandardError();
+        } catch (Exception e) {
+            throw new SpException(e);
+        }
+    }
+
+    /**
+     * Retrieves the Ghostscript {@link Command.GS} version from the system.
+     *
+     * @return The version string(s) or {@code null} if not installed.
      */
     public static String getGhostscriptVersion() {
 
-        String cmd = "gs -version";
+        final String cmd = Command.GS.cmdLine("-version");
 
         ICommandExecutor exec = CommandExecutor.createSimple(cmd);
 
@@ -208,8 +464,12 @@ public final class SystemInfo {
     /** */
     private static volatile Boolean cachedQPdfInstallIndication = null;
 
+    /** */
+    private static volatile Boolean cachedRSvgConvertInstallIndication = null;
+
     /**
-     * Finds out if {@code qpdf} is installed using indication from cache.
+     * Finds out if {@link Command#QPDF} is installed using indication from
+     * cache.
      *
      * @return {@code true} if installed.
      */
@@ -222,15 +482,15 @@ public final class SystemInfo {
     }
 
     /**
-     * Retrieves the qpdf version from the system (and sets installed achache
-     * indication).
+     * Retrieves the {@link Command#QPDF} version from the system (and sets
+     * installed cache indication).
      *
-     * @return The version string(s) or {@code null} when the qpdf is not
-     *         installed.
+     * @return The version string(s) or {@code null} if not installed.
      */
     public static String getQPdfVersion() {
 
-        final String cmd = "qpdf --version";
+        final String cmd = Command.QPDF.cmdLine("--version");
+
         final ICommandExecutor exec = CommandExecutor.createSimple(cmd);
 
         String version = null;
@@ -249,11 +509,52 @@ public final class SystemInfo {
     }
 
     /**
+     * Finds out if {@link Command#RSVG_CONVERT} is installed using indication
+     * from cache.
+     *
+     * @return {@code true} if installed.
+     */
+    public static boolean isRSvgConvertInstalled() {
+
+        if (cachedRSvgConvertInstallIndication == null) {
+            getRSvgConvertVersion();
+        }
+        return cachedRSvgConvertInstallIndication.booleanValue();
+    }
+
+    /**
+     * Retrieves the {@link Command.RSVG_CONVERT} version from the system (and
+     * sets installed cache indication).
+     *
+     * @return The version string(s) or {@code null} if not installed.
+     */
+    public static String getRSvgConvertVersion() {
+
+        final String cmd = Command.RSVG_CONVERT.cmdLine("--version");
+
+        final ICommandExecutor exec = CommandExecutor.createSimple(cmd);
+
+        String version = null;
+
+        try {
+            if (exec.executeCommand() == 0) {
+                version = exec.getStandardOutput();
+            }
+        } catch (Exception e) {
+            throw new SpException(e);
+        }
+
+        cachedRSvgConvertInstallIndication = Boolean.valueOf(version != null);
+
+        return version;
+    }
+
+    /**
      * @return The output of the command: {@code ulimit -n}.
      */
     public static String getUlimitsNofile() {
 
-        final String cmd = "ulimit -n";
+        final String cmd = Command.ULIMIT.cmdLine("-n");
 
         final ICommandExecutor exec = CommandExecutor.createSimple(cmd);
 
@@ -269,15 +570,14 @@ public final class SystemInfo {
     }
 
     /**
-     * TODO: /sbin/sysctl
-     *
      * @param sysctl
      *            The {@link SysctlEnum}.
-     * @return The output of the command: {@code sysctl -n key}.
+     * @return The output of the command: {@code sysctl -n key}, or {@code null}
+     *         when value of key not found.
      */
     public static String getSysctl(final SysctlEnum sysctl) {
 
-        final String cmd = String.format("/sbin/sysctl -n %s", sysctl.getKey());
+        final String cmd = Command.SYSCTL.cmdLineExt("-n", sysctl.getKey());
 
         final ICommandExecutor exec = CommandExecutor.createSimple(cmd);
 
@@ -297,6 +597,13 @@ public final class SystemInfo {
      */
     public static long getUptime() {
         return ManagementFactory.getRuntimeMXBean().getUptime();
+    }
+
+    /**
+     * @return Start time of the Java virtual machine in milliseconds.
+     */
+    public static long getStarttime() {
+        return ManagementFactory.getRuntimeMXBean().getStartTime();
     }
 
     /**

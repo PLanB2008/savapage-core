@@ -1,7 +1,10 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
- * Authors: Rijk Ravestein.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2020 Datraverse B.V.
+ * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -14,7 +17,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -26,12 +29,16 @@ import org.savapage.core.jpa.IppQueue;
 /**
  * Reserved names for {@link IppQueue#getUrlPath()}.
  * <p>
- * Note for developers: do NOT change the name values, since it will invalidate
+ * The term "IPP" is due to legacy naming, and does not restrict these queues to
+ * Internet Printing Protocol (IPP).
+ * </p>
+ * <p>
+ * Note for Developers: do NOT change the name values, since it will invalidate
  * current database content.
  * </p>
  *
- * @author Datraverse B.V.
- * @since 0.9.6
+ * @author Rijk Ravestein
+ *
  */
 public enum ReservedIppQueueEnum {
 
@@ -41,9 +48,9 @@ public enum ReservedIppQueueEnum {
     AIRPRINT("airprint", "AirPrint", true),
 
     /**
-     * The default IPP queue for driver printing.
+     * The default IPP queue for driver printing. See Mantis #1105.
      */
-    IPP_PRINT("", "IPP Printer", true),
+    IPP_PRINT("/", "IPP Printer", true),
 
     /**
      * The default IPP queue for driver printing over public internet.
@@ -78,7 +85,12 @@ public enum ReservedIppQueueEnum {
     /**
      * The dedicated queue for driverless Web printing.
      */
-    WEBPRINT("webprint", "Web Printer", false);
+    WEBPRINT("webprint", "Web Printer", false),
+
+    /**
+     * The dedicated queue for driverless Web Service printing.
+     */
+    WEBSERVICE("webservice", "Web Service", false);
 
     /**
      * The URL path as used in the database.
@@ -146,6 +158,7 @@ public enum ReservedIppQueueEnum {
      */
     public boolean isNotTrusted() {
         return this == ReservedIppQueueEnum.AIRPRINT
-                || this == ReservedIppQueueEnum.IPP_PRINT_INTERNET;
+                || this == ReservedIppQueueEnum.IPP_PRINT_INTERNET
+                || this == ReservedIppQueueEnum.WEBSERVICE;
     }
 }

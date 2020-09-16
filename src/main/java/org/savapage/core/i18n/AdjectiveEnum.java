@@ -61,6 +61,9 @@ public enum AdjectiveEnum {
     REOPENED,
 
     /** */
+    REPAIRED,
+
+    /** */
     PREFERRED,
 
     /** */

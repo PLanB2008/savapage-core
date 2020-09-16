@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -71,6 +74,11 @@ public final class DateUtil {
      * A hundredth of a second in milliseconds.
      */
     public static final int MSEC_IN_HUNDREDTH_OF_SECOND = 10;
+
+    /**
+     * A tenth of a second in milliseconds.
+     */
+    public static final int MSEC_IN_DECI_SECOND = 100;
 
     /**
      * The number of seconds in a minute.
@@ -195,6 +203,23 @@ public final class DateUtil {
     public static String localizedShortTime(final Date date,
             final Locale locale) {
         return DateFormat.getTimeInstance(DateFormat.SHORT, locale)
+                .format(date);
+    }
+
+    /**
+     * Gets as localized (long)date/(medium)time string of a Date.
+     *
+     * @param date
+     *            The date.
+     * @param locale
+     *            The {@link Locale}.
+     * @return The localized date/time string. For example: "May 22, 2025
+     *         3:05:20 PM"
+     */
+    public static String localizedLongMediumDateTime(final Date date,
+            final Locale locale) {
+        return DateFormat
+                .getDateTimeInstance(DateFormat.LONG, DateFormat.MEDIUM, locale)
                 .format(date);
     }
 

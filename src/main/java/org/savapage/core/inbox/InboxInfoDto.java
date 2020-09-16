@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -21,10 +24,9 @@
  */
 package org.savapage.core.inbox;
 
-import java.io.IOException;
-import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.Map;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -32,8 +34,6 @@ import org.apache.commons.lang3.StringUtils;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
@@ -44,9 +44,54 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public final class InboxInfoDto {
 
     /**
-     *
+     * Can reuse, share globally.
      */
-    public final static class InboxJob {
+    private static ObjectMapper mapper = new ObjectMapper();
+
+    /** */
+    @JsonInclude(Include.NON_NULL)
+    public static final class PageOverlay {
+
+        /**
+         * Base64 encoded SVG overlay.
+         */
+        private String svg64;
+
+        /**
+         * Base64 encoded FabricJS JSON object of SVG overlay. If {@code null},
+         * SVG is a valid to restore HTML canvas.
+         */
+        private String fabric64;
+
+        public String getSvg64() {
+            return svg64;
+        }
+
+        public void setSvg64(String svg64) {
+            this.svg64 = svg64;
+        }
+
+        /**
+         * @return Optional Base64 encoded FabricJS JSON object of SVG overlay.
+         */
+        public String getFabric64() {
+            return fabric64;
+        }
+
+        /**
+         * @param fabric64
+         *            Optional Base64 encoded FabricJS JSON object of SVG
+         *            overlay.
+         */
+        public void setFabric64(String fabric64) {
+            this.fabric64 = fabric64;
+        }
+
+    }
+
+    /** */
+    @JsonInclude(Include.NON_NULL)
+    public static final class InboxJob {
 
         private String file;
         private Long createdTime;
@@ -55,6 +100,11 @@ public final class InboxInfoDto {
 
         private Boolean drm;
         private String media;
+
+        /**
+         * Optional page overlay (value) for zero-based pages (key).
+         */
+        private Map<Integer, PageOverlay> overlay;
 
         /**
          * {@code true} if the mediabox orientation of the first PDF page is
@@ -153,6 +203,21 @@ public final class InboxInfoDto {
          */
         public void setMedia(String media) {
             this.media = media;
+        }
+
+        /**
+         * @return Optional page overlay (value) for zero-based pages (key).
+         */
+        public Map<Integer, PageOverlay> getOverlay() {
+            return overlay;
+        }
+
+        /**
+         * @param overlay
+         *            Optional page overlay (value) for zero-based pages (key).
+         */
+        public void setOverlay(Map<Integer, PageOverlay> overlay) {
+            this.overlay = overlay;
         }
 
         /**
@@ -293,7 +358,8 @@ public final class InboxInfoDto {
     /**
      *
      */
-    public static class InboxJobRange {
+    @JsonInclude(Include.NON_NULL)
+    public static final class InboxJobRange {
 
         private Integer myJob;
         private String myRange;
@@ -315,7 +381,8 @@ public final class InboxInfoDto {
         }
     }
 
-    public static class InboxLetterhead {
+    @JsonInclude(Include.NON_NULL)
+    public static final class InboxLetterhead {
 
         private String id;
         private Boolean pub;
@@ -428,19 +495,13 @@ public final class InboxInfoDto {
     }
 
     /**
-     *
-     * @return
+     * @return Number of jobs.
      */
     @JsonIgnore
     public int jobCount() {
         // NOTE: Do NOT use getJobCount as method name
         return myJobs.size();
     }
-
-    /**
-     * Can reuse, share globally.
-     */
-    private static ObjectMapper mapper = new ObjectMapper();
 
     /**
      * Creates an instance from JSON string.
@@ -451,20 +512,6 @@ public final class InboxInfoDto {
      */
     public static InboxInfoDto create(final String json) throws Exception {
         return mapper.readValue(json, InboxInfoDto.class);
-    }
-
-    /**
-     *
-     * @return
-     * @throws IOException
-     */
-    public String prettyPrinted() throws IOException {
-        JsonFactory jsonFactory = new JsonFactory();
-        StringWriter sw = new StringWriter();
-        JsonGenerator jg = jsonFactory.createJsonGenerator(sw);
-        jg.useDefaultPrettyPrinter();
-        mapper.writeValue(jg, this);
-        return sw.toString();
     }
 
 }

@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -49,6 +52,7 @@ import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.UUID;
 
+import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.DateUtils;
 import org.savapage.core.OutOfBoundsException;
@@ -61,6 +65,7 @@ import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.crypto.CryptoUser;
 import org.savapage.core.dao.DaoContext;
 import org.savapage.core.dao.GenericDao;
+import org.savapage.core.dao.IAttrDao;
 import org.savapage.core.dao.UserAttrDao;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.UserEmailDao;
@@ -72,6 +77,7 @@ import org.savapage.core.dao.helpers.PGPPubRingKeyDto;
 import org.savapage.core.dto.UserAccountingDto;
 import org.savapage.core.dto.UserDto;
 import org.savapage.core.dto.UserEmailDto;
+import org.savapage.core.dto.UserIdDto;
 import org.savapage.core.dto.UserPropertiesDto;
 import org.savapage.core.i18n.AdverbEnum;
 import org.savapage.core.jpa.Account;
@@ -122,6 +128,9 @@ public final class UserServiceImpl extends AbstractService
     private static final Logger LOGGER =
             LoggerFactory.getLogger(UserServiceImpl.class);
 
+    /** */
+    private static final int MAX_USER_ID_NUMBER_GENERATE_TRIALS = 10;
+
     @Override
     public AbstractJsonRpcMethodResponse
             setUserProperties(final UserPropertiesDto dto) throws IOException {
@@ -136,9 +145,9 @@ public final class UserServiceImpl extends AbstractService
         }
 
         /*
-         * INVARIANT: Internal admin is a reserved user.
+         * INVARIANT: username MUST NOT be reserved.
          */
-        if (ConfigManager.isInternalAdmin(userid)) {
+        if (isReserverUserId(userid)) {
             return createError("msg-username-reserved", userid);
         }
 
@@ -427,7 +436,7 @@ public final class UserServiceImpl extends AbstractService
             boolean doUpdate;
 
             if (dto.getKeepPin()) {
-                doUpdate = this.findUserAttrValue(jpaUser,
+                doUpdate = this.findUserAttrValue(jpaUser.getId(),
                         UserAttrEnum.PIN) == null;
             } else {
                 doUpdate = true;
@@ -464,7 +473,7 @@ public final class UserServiceImpl extends AbstractService
             boolean doUpdate;
 
             if (dto.getKeepUuid()) {
-                doUpdate = this.findUserAttrValue(jpaUser,
+                doUpdate = this.findUserAttrValue(jpaUser.getId(),
                         UserAttrEnum.UUID) == null;
             } else {
                 doUpdate = true;
@@ -501,7 +510,7 @@ public final class UserServiceImpl extends AbstractService
             boolean doUpdate;
 
             if (dto.getKeepPassword()) {
-                doUpdate = (this.findUserAttrValue(jpaUser,
+                doUpdate = (this.findUserAttrValue(jpaUser.getId(),
                         UserAttrEnum.INTERNAL_PASSWORD) == null);
             } else {
                 doUpdate = true;
@@ -605,7 +614,7 @@ public final class UserServiceImpl extends AbstractService
          * PIN.
          */
         final String encryptedPin =
-                this.findUserAttrValue(user, UserAttrEnum.PIN);
+                this.findUserAttrValue(user.getId(), UserAttrEnum.PIN);
 
         String pin = "";
         if (encryptedPin != null) {
@@ -618,12 +627,16 @@ public final class UserServiceImpl extends AbstractService
          * UUID.
          */
         final String encryptedIppInternetUuid =
-                this.findUserAttrValue(user, UserAttrEnum.UUID);
+                this.findUserAttrValue(user.getId(), UserAttrEnum.UUID);
 
         String ippInternetUuid = "";
         if (encryptedIppInternetUuid != null) {
-            ippInternetUuid = CryptoUser.decryptUserAttr(user.getId(),
-                    encryptedIppInternetUuid);
+            try {
+                ippInternetUuid = CryptoUser.decryptUserAttr(user.getId(),
+                        encryptedIppInternetUuid);
+            } catch (Exception e) {
+                LOGGER.error(e.getMessage());
+            }
         }
 
         dto.setUuid(ippInternetUuid);
@@ -639,10 +652,53 @@ public final class UserServiceImpl extends AbstractService
         dto.setAccounting(accountingService().getUserAccounting(user));
 
         /*
-         * ACL Roles.
+         * Roles.
          */
-        UserAttr aclAttr =
-                userAttrDAO().findByName(user, UserAttrEnum.ACL_ROLES);
+        dto.setAclRoles(this.getUserRoles(user.getId()));
+
+        /*
+         * ACL.
+         */
+        dto.setAclOidsUser(ACLOidEnum.asMapPerms(
+                this.getAclOidMap(user.getId(), UserAttrEnum.ACL_OIDS_USER)));
+        dto.setAclOidsAdmin(ACLOidEnum.asMapPerms(
+                this.getAclOidMap(user.getId(), UserAttrEnum.ACL_OIDS_ADMIN)));
+        //
+        return dto;
+    }
+
+    /**
+     * @param userID
+     *            User key.
+     * @param attrEnum
+     *            Attribute type.
+     * @return map.
+     */
+    private Map<ACLOidEnum, Integer> getAclOidMap(final Long userID,
+            final UserAttrEnum attrEnum) {
+
+        final UserAttr aclAttr = userAttrDAO().findByName(userID, attrEnum);
+        Map<ACLOidEnum, Integer> aclOids;
+
+        if (aclAttr == null) {
+            aclOids = null;
+        } else {
+            aclOids = JsonHelper.createEnumIntegerMapOrNull(ACLOidEnum.class,
+                    aclAttr.getValue());
+        }
+
+        if (aclOids == null) {
+            aclOids = new HashMap<ACLOidEnum, Integer>();
+        }
+
+        return aclOids;
+    }
+
+    @Override
+    public Map<ACLRoleEnum, Boolean> getUserRoles(final Long userID) {
+
+        final UserAttr aclAttr =
+                userAttrDAO().findByName(userID, UserAttrEnum.ACL_ROLES);
 
         Map<ACLRoleEnum, Boolean> aclRoles;
 
@@ -657,46 +713,18 @@ public final class UserServiceImpl extends AbstractService
             aclRoles = new HashMap<ACLRoleEnum, Boolean>();
         }
 
-        dto.setAclRoles(aclRoles);
+        return aclRoles;
+    }
 
-        /*
-         * OIDS (User).
-         */
-        aclAttr = userAttrDAO().findByName(user, UserAttrEnum.ACL_OIDS_USER);
-        Map<ACLOidEnum, Integer> aclOids;
-
-        if (aclAttr == null) {
-            aclOids = null;
-        } else {
-            aclOids = JsonHelper.createEnumIntegerMapOrNull(ACLOidEnum.class,
-                    aclAttr.getValue());
-        }
-
-        if (aclOids == null) {
-            aclOids = new HashMap<ACLOidEnum, Integer>();
-        }
-
-        dto.setAclOidsUser(ACLOidEnum.asMapPerms(aclOids));
-
-        /*
-         * OIDS (Admin).
-         */
-        aclAttr = userAttrDAO().findByName(user, UserAttrEnum.ACL_OIDS_ADMIN);
-
-        if (aclAttr == null) {
-            aclOids = null;
-        } else {
-            aclOids = JsonHelper.createEnumIntegerMapOrNull(ACLOidEnum.class,
-                    aclAttr.getValue());
-        }
-
-        if (aclOids == null) {
-            aclOids = new HashMap<ACLOidEnum, Integer>();
-        }
-
-        dto.setAclOidsAdmin(ACLOidEnum.asMapPerms(aclOids));
-        //
-        return dto;
+    /**
+     *
+     * @param userid
+     *            Unique User ID.
+     * @return {@code true} when User ID is reserved.
+     */
+    private static boolean isReserverUserId(final String userid) {
+        return ConfigManager.isInternalAdmin(userid)
+                || userid.equalsIgnoreCase(User.ERASED_USER_ID);
     }
 
     @Override
@@ -711,7 +739,7 @@ public final class UserServiceImpl extends AbstractService
             return createError("msg-user-userid-is-empty");
         }
 
-        if (ConfigManager.isInternalAdmin(userid)) {
+        if (isReserverUserId(userid)) {
             return createError("msg-username-reserved", userid);
         }
 
@@ -813,7 +841,8 @@ public final class UserServiceImpl extends AbstractService
             jpaUser.setInternal(Boolean.TRUE);
 
             jpaUser.setUserId(userDto.getUserName());
-            jpaUser.setExternalUserName("");
+            // Mantis #1105
+            jpaUser.setExternalUserName(userDto.getUserName());
 
             final String password = userDto.getPassword();
 
@@ -1198,7 +1227,7 @@ public final class UserServiceImpl extends AbstractService
     private static void crudUserAttr(final UserAttrDao daoAttr, final User user,
             final UserAttrEnum attrEnum, final String attrValue) {
 
-        UserAttr attr = daoAttr.findByName(user, attrEnum);
+        UserAttr attr = daoAttr.findByName(user.getId(), attrEnum);
 
         if (attr == null) {
             if (attrValue != null) {
@@ -1255,14 +1284,14 @@ public final class UserServiceImpl extends AbstractService
             return createOkResult("msg-user-deleted-ok");
         }
 
-        return createOkResult("msg-user-deleted-ok-inc-safepages",
-                NumberUtil.humanReadableByteCount(nBytes, true));
+        return createOkResult("msg-user-deleted-ok-inc-safepages", NumberUtil
+                .humanReadableByteCountSI(ServiceContext.getLocale(), nBytes));
     }
 
     @Override
     public AbstractJsonRpcMethodResponse deleteUser(final String uid) {
 
-        final User user = userDAO().lockByUserId(uid);
+        final User user = this.lockByUserId(uid);
         if (user == null) {
             return createError("msg-user-not-found", uid);
         }
@@ -1291,7 +1320,7 @@ public final class UserServiceImpl extends AbstractService
     public AbstractJsonRpcMethodResponse eraseUser(final String uid) {
 
         // Erase active user.
-        final User user = userDAO().lockByUserId(uid);
+        final User user = this.lockByUserId(uid);
         if (user != null) {
             final AbstractJsonRpcMethodResponse rsp = this.deleteUser(user);
             if (rsp.isError()) {
@@ -1322,7 +1351,7 @@ public final class UserServiceImpl extends AbstractService
         }
 
         if (users.size() == 1) {
-            userDAO().lock(users.get(0).getId());
+            this.lockUser(users.get(0).getId());
         } else {
             LOGGER.warn(String.format(
                     "Inconsistency corrected when deleting user [%s]: "
@@ -1943,7 +1972,7 @@ public final class UserServiceImpl extends AbstractService
         if (user.getAttributes() != null) {
             for (final UserAttr attr : user.getAttributes()) {
                 if (attr.getName().equals(attrEnum.getName())) {
-                    if (attrEnum == UserAttrEnum.UUID) {
+                    if (attrEnum.isEncrypted()) {
                         return CryptoUser.decryptUserAttr(user.getId(),
                                 attr.getValue());
                     }
@@ -1955,9 +1984,32 @@ public final class UserServiceImpl extends AbstractService
     }
 
     @Override
-    public User findUserByNumberUuid(final String number, final UUID uuid) {
+    public boolean isUserAttrValue(final User user,
+            final UserAttrEnum attrEnum) {
+        return StringUtils.defaultString(this.getUserAttrValue(user, attrEnum),
+                IAttrDao.V_NO).equals(IAttrDao.V_YES);
+    }
 
-        final User user = this.findUserByNumber(number);
+    @Override
+    public User findUserByNumberUuid(final String number, final UUID uuid) {
+        return this.checkUserByUuid(this.findUserByNumber(number), uuid);
+    }
+
+    @Override
+    public boolean isUserUuidPresent(final User user, final UUID uuid) {
+        return this.checkUserByUuid(user, uuid) != null;
+    }
+
+    /**
+     * Checks if {@link User} has {@link UUID}.
+     *
+     * @param user
+     *            The user.
+     * @param uuid
+     *            The {@link UUID}.
+     * @return The User or {@code null} when not found.
+     */
+    private User checkUserByUuid(final User user, final UUID uuid) {
 
         if (user != null && user.getAttributes() != null) {
 
@@ -2357,8 +2409,8 @@ public final class UserServiceImpl extends AbstractService
 
         final String hexKeyID;
 
-        final UserAttr attr =
-                userAttrDAO().findByName(user, UserAttrEnum.PGP_PUBKEY_ID);
+        final UserAttr attr = userAttrDAO().findByName(user.getId(),
+                UserAttrEnum.PGP_PUBKEY_ID);
 
         if (attr == null) {
             hexKeyID = null;
@@ -2654,7 +2706,7 @@ public final class UserServiceImpl extends AbstractService
         user.setModifiedDate(trxDate);
 
         user.setUserId(User.ERASED_USER_ID);
-        user.setExternalUserName(User.ERASED_EXTERNAL_USER_NAME);
+        user.setExternalUserName(User.ERASED_USER_ID);
 
         user.setFullName(null);
         user.setDepartment(null);
@@ -2679,14 +2731,14 @@ public final class UserServiceImpl extends AbstractService
                 account.setModifiedBy(ServiceContext.getActor());
                 account.setModifiedDate(trxDate);
 
-                account.setName(Account.ERASED_ACCOUNT_NAME);
-                account.setNameLower(Account.ERASED_ACCOUNT_NAME);
+                account.setName(User.ERASED_USER_ID);
+                account.setNameLower(User.ERASED_USER_ID.toLowerCase());
                 account.setNotes(null);
                 account.setPin(null);
 
                 if (account.getSubName() != null) {
-                    account.setSubName(Account.ERASED_ACCOUNT_NAME);
-                    account.setSubNameLower(Account.ERASED_ACCOUNT_NAME);
+                    account.setSubName(User.ERASED_USER_ID);
+                    account.setSubNameLower(User.ERASED_USER_ID.toLowerCase());
                     account.setSubPin(null);
                 }
             }
@@ -2789,11 +2841,68 @@ public final class UserServiceImpl extends AbstractService
     }
 
     @Override
+    public String lazyAddUserPrimaryIdNumber(final User user) {
+
+        final String idNumber = this.getPrimaryIdNumber(user);
+
+        if (StringUtils.isNotBlank(idNumber)) {
+            return idNumber;
+        }
+
+        final ConfigManager cm = ConfigManager.instance();
+
+        if (!cm.isConfigValue(Key.USER_ID_NUMBER_GENERATE_ENABLE)) {
+            return null;
+        }
+
+        final int length = cm.getConfigInt(Key.USER_ID_NUMBER_GENERATE_LENGTH);
+
+        final DaoContext ctx = ServiceContext.getDaoContext();
+
+        for (int i = 0; i < MAX_USER_ID_NUMBER_GENERATE_TRIALS; i++) {
+
+            final String random = RandomStringUtils.randomNumeric(length);
+
+            if (userNumberDAO().findByNumber(random) == null) {
+                try {
+                    if (!ctx.isTransactionActive()) {
+                        ctx.beginTransaction();
+                    }
+                    this.assocPrimaryIdNumber(user, random);
+                    ctx.commit();
+                    if (i > 0) {
+                        LOGGER.warn("User [{}] Number ID generated: trial [{}]",
+                                user.getUserId(), i + 1);
+                    }
+                    return random;
+                } catch (Exception e) {
+                    // Highly unlikely duplicate collision.
+                } finally {
+                    ctx.rollback();
+                }
+            }
+        }
+
+        LOGGER.warn("User [{}] Number ID could not be generated: trial [{}]",
+                user.getUserId(), MAX_USER_ID_NUMBER_GENERATE_TRIALS);
+
+        return null;
+    }
+
+    @Override
     public void setUserAttrValue(final User user, final UserAttrEnum attrEnum,
             final String attrValue) {
 
-        this.setUserAttrValue(user, userAttrDAO().findByName(user, attrEnum),
-                attrEnum, attrValue);
+        this.setUserAttrValue(user,
+                userAttrDAO().findByName(user.getId(), attrEnum), attrEnum,
+                attrValue);
+    }
+
+    @Override
+    public void setUserAttrValue(final User user, final UserAttrEnum attrEnum,
+            final boolean attrValue) {
+        this.setUserAttrValue(user, attrEnum,
+                userAttrDAO().getDbBooleanValue(attrValue));
     }
 
     /**
@@ -2809,12 +2918,16 @@ public final class UserServiceImpl extends AbstractService
     private void setUserAttrValue(final User user, final String attrName,
             final String attrValue) {
 
-        this.setUserAttrValue(user, userAttrDAO().findByName(user, attrName),
-                attrName, attrValue);
+        this.setUserAttrValue(user,
+                userAttrDAO().findByName(user.getId(), attrName), attrName,
+                attrValue);
     }
 
     /**
      * Creates or updates a {@link UserAttr} value to the database.
+     * <p>
+     * Value encryption is responsibility of client.
+     * </p>
      *
      * @param user
      *            The {@link User}.
@@ -2835,6 +2948,9 @@ public final class UserServiceImpl extends AbstractService
 
     /**
      * Creates or updates a {@link UserAttr} value to the database.
+     * <p>
+     * Value encryption is responsibility of client.
+     * </p>
      *
      * @param user
      *            The {@link User}.
@@ -2871,14 +2987,12 @@ public final class UserServiceImpl extends AbstractService
     }
 
     @Override
-    public String findUserAttrValue(final User user, final UserAttrEnum name) {
-
-        final UserAttr attr = userAttrDAO().findByName(user, name);
-
+    public String findUserAttrValue(final Long userDbKey,
+            final UserAttrEnum name) {
+        final UserAttr attr = userAttrDAO().findByName(userDbKey, name);
         if (attr == null) {
             return null;
         }
-
         return attr.getValue();
     }
 
@@ -2977,7 +3091,7 @@ public final class UserServiceImpl extends AbstractService
                     + "] is not supported");
         }
 
-        final UserAttr attr = userAttrDAO().findByName(user, name);
+        final UserAttr attr = userAttrDAO().findByName(user.getId(), name);
 
         String json = null;
 
@@ -3035,7 +3149,7 @@ public final class UserServiceImpl extends AbstractService
                     + "] is not supported");
         }
 
-        final UserAttr attr = userAttrDAO().findByName(user, name);
+        final UserAttr attr = userAttrDAO().findByName(user.getId(), name);
 
         String json = null;
 
@@ -3074,7 +3188,7 @@ public final class UserServiceImpl extends AbstractService
             daoContext.beginTransaction();
 
             try {
-                userDAO().lock(user.getId());
+                this.lockUser(user.getId());
                 lazyUserHomeDir(uid);
             } finally {
                 /*
@@ -3267,7 +3381,8 @@ public final class UserServiceImpl extends AbstractService
     public PdfProperties getPdfProperties(final User user) {
 
         PdfProperties props = null;
-        String json = this.findUserAttrValue(user, UserAttrEnum.PDF_PROPS);
+        String json =
+                this.findUserAttrValue(user.getId(), UserAttrEnum.PDF_PROPS);
         try {
             if (json != null) {
                 props = PdfProperties.create(json);
@@ -3307,7 +3422,7 @@ public final class UserServiceImpl extends AbstractService
     public JobTicketProperties getJobTicketPropsLatest(final User user) {
 
         JobTicketProperties props = null;
-        String json = this.findUserAttrValue(user,
+        String json = this.findUserAttrValue(user.getId(),
                 UserAttrEnum.JOBTICKET_PROPS_LATEST);
         try {
             if (json != null) {
@@ -3319,6 +3434,31 @@ public final class UserServiceImpl extends AbstractService
             LOGGER.warn(
                     "JobTicket properties of user [{}] are reset, because: {}",
                     user.getUserId(), e.getMessage());
+        }
+
+        if (json == null) {
+            props = new JobTicketProperties();
+        }
+
+        return props;
+    }
+
+    @Override
+    public JobTicketProperties getJobTicketPropsLatest(final UserIdDto dto) {
+
+        JobTicketProperties props = null;
+        String json = this.findUserAttrValue(dto.getDbKey(),
+                UserAttrEnum.JOBTICKET_PROPS_LATEST);
+        try {
+            if (json != null) {
+                props = JobTicketProperties.create(json);
+            }
+        } catch (Exception e) {
+            // Be forgiving ...
+            json = null;
+            LOGGER.warn(
+                    "JobTicket properties of user [{}] are reset, because: {}",
+                    dto.getUserId(), e.getMessage());
         }
 
         if (json == null) {
@@ -3575,6 +3715,16 @@ public final class UserServiceImpl extends AbstractService
         return prunePreferredDelegateDbKeys(user,
                 UserAttrEnum.PROXY_PRINT_DELEGATE_ACCOUNTS_PREFERRED,
                 accountDAO());
+    }
+
+    @Override
+    public User lockByUserId(final String userId) {
+        return userDAO().lockByUserId(userId);
+    }
+
+    @Override
+    public User lockUser(final Long id) {
+        return userDAO().lock(id);
     }
 
 }

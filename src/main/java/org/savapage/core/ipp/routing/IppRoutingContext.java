@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -23,9 +26,11 @@ package org.savapage.core.ipp.routing;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.util.Date;
 
 import org.savapage.core.jpa.IppQueue;
+import org.savapage.core.pdf.IPdfPageProps;
 
 /**
  *
@@ -47,12 +52,17 @@ public interface IppRoutingContext {
     /**
      * @return URL path of {@link IppQueue#getUrlPath()}.
      */
-    String getUrlPath();
+    String getQueueName();
 
     /**
      * @return Proxy Printer CUPS name.
      */
     String getPrinterName();
+
+    /**
+     * @return Proxy Printer CUPS URI.
+     */
+    URI getPrinterURI();
 
     /**
      * @return Proxy Printer display name.
@@ -68,6 +78,11 @@ public interface IppRoutingContext {
      * @return Date of routing transaction.
      */
     Date getTransactionDate();
+
+    /**
+     * @return PDF page properties.
+     */
+    IPdfPageProps getPageProperties();
 
     /**
      * @return The PDF file to print.

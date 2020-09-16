@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -45,6 +48,9 @@ public abstract class AbstractFileConverter {
     private static final Logger LOGGER =
             LoggerFactory.getLogger(AbstractFileConverter.class);
 
+    /** */
+    private static final int MAX_ERROR_LEN = 512;
+
     /**
      * .
      */
@@ -65,24 +71,56 @@ public abstract class AbstractFileConverter {
     /**
      * .
      */
+    protected enum ExecType {
+        /**
+         * Uses separate threads for capturing stdout and stdin. This prevents
+         * deadlock when stdin and stdout fills up input stream buffers to the
+         * max.
+         */
+        ADVANCED,
+
+        /**
+         * Single thread capturing of stdout and stdin after OS process has
+         * finished.
+         * <p>
+         * <b>CAUTION</b>: this might lead to deadlock. <i>Use if you're
+         * absolutely sure stdin and stdout output is small.</i>
+         * </p>
+         */
+        SIMPLE
+    }
+
+    /** */
     private final ExecMode execMode;
+
+    /** */
+    private boolean hasStdout;
+
+    /** */
+    private boolean hasStderr;
 
     /**
      *
-     * @param mode
+     * @param emode
      *            The {@link ExecMode}.
+     * @param etype
+     *            The {@link ExecType}.
      */
-    protected AbstractFileConverter(final ExecMode mode) {
-        this.execMode = mode;
+    protected AbstractFileConverter(final ExecMode emode) {
+        this.execMode = emode;
     }
 
     /**
-     *
-     * @return
+     * @return {@link ExecMode}.
      */
     protected final ExecMode getExecMode() {
         return this.execMode;
     }
+
+    /**
+     * @return {@link ExecType}.
+     */
+    protected abstract ExecType getExecType();
 
     /**
      * Returns the OS shell command to perform the conversion.
@@ -132,6 +170,42 @@ public abstract class AbstractFileConverter {
     protected abstract File getOutputFile(File fileIn);
 
     /**
+     * Notifies output on stdout.
+     *
+     * @param stdout
+     *            Output on stdout.
+     */
+    protected abstract void onStdout(String stdout);
+
+    /**
+     * @return {@code true} if this converter gave stdout messages.
+     */
+    public boolean hasStdout() {
+        return this.hasStdout;
+    }
+
+    /**
+     * @return {@code true} if this converter gave stderr messages.
+     */
+    public boolean hasStderr() {
+        return this.hasStderr;
+    }
+
+    /**
+     * @return {@code true} if stdout messages must be reported.
+     */
+    protected boolean reportStdout() {
+        return true;
+    }
+
+    /**
+     * @return {@code true} if stderr messages must be reported.
+     */
+    protected boolean reportStderr() {
+        return true;
+    }
+
+    /**
      * Performs a conversion using an OS Command.
      *
      * @param contentType
@@ -155,7 +229,14 @@ public abstract class AbstractFileConverter {
 
         LOGGER.debug(command);
 
-        ICommandExecutor exec = CommandExecutor.createSimple(command);
+        final ICommandExecutor exec;
+
+        if (this.getExecType() == ExecType.SIMPLE) {
+            exec = CommandExecutor.createSimple(command);
+        } else {
+            exec = CommandExecutor.create(command);
+        }
+
         boolean pdfCreated = false;
 
         try {
@@ -169,40 +250,48 @@ public abstract class AbstractFileConverter {
                 rc = exec.executeCommand();
             }
 
-            if (rc == 0) {
+            final String stdout = exec.getStandardOutput();
+            final String stderr = exec.getStandardError();
 
-                pdfCreated = true;
+            this.hasStdout = StringUtils.isNotBlank(stdout);
+            this.hasStderr = StringUtils.isNotBlank(stderr);
 
-                final String stdout = exec.getStandardOutput();
-
-                if (StringUtils.isNotBlank(stdout)) {
-                    LOGGER.debug(stdout);
-                }
-
-                if (filePdf.exists()) {
-                    if (LOGGER.isDebugEnabled()) {
-                        LOGGER.debug("[" + pdfName + "] created.");
-                    }
-                } else {
-                    LOGGER.error("[" + pdfName + "] NOT created.");
-                    throw new DocContentToPdfException("PDF is not created");
-                }
-
-            } else {
-
-                final String stderr = exec.getStandardError();
-
-                String reason = "";
-
-                if (StringUtils.isNotBlank(stderr)) {
-                    reason = " [" + stderr + "]";
-                }
-
-                LOGGER.error("Command [" + command + "] failed." + reason);
-
-                throw new DocContentToPdfException(
-                        "PDF could not be created" + reason);
+            if (this.hasStdout && this.reportStdout()) {
+                LOGGER.debug("[{}] {}", command, stdout);
             }
+
+            final String stderrMsg;
+
+            if (this.hasStderr && this.reportStderr()) {
+                final StringBuilder msg = new StringBuilder();
+                msg.append(" ")
+                        .append(StringUtils.abbreviate(stderr, MAX_ERROR_LEN));
+                if (stderr.length() > MAX_ERROR_LEN) {
+                    msg.append(" (and more)");
+                }
+                stderrMsg = msg.toString();
+                LOGGER.error("[{}]{}", command, stderrMsg);
+            } else {
+                stderrMsg = "";
+            }
+
+            if (rc != 0) {
+                throw new DocContentToPdfException(
+                        "PDF could not be created" + stderrMsg);
+            }
+
+            pdfCreated = true;
+
+            if (filePdf.exists()) {
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("[" + pdfName + "] created.");
+                }
+            } else {
+                LOGGER.error("[" + pdfName + "] NOT created.");
+                throw new DocContentToPdfException("PDF is not created");
+            }
+
+            this.onStdout(stdout);
 
         } catch (IOException | InterruptedException e) {
             throw new SpException(e);

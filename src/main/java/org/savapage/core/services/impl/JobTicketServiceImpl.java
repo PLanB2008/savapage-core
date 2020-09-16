@@ -916,8 +916,10 @@ public final class JobTicketServiceImpl extends AbstractService
     public int cancelTickets(final Long userId) {
         int nRemoved = 0;
         for (final OutboxJobDto dto : filterTickets(userId, null, null)) {
-            if (cancelTicket(dto.getFile()) != null) {
-                nRemoved++;
+            if (StringUtils.isBlank(dto.getPrinterRedirect())) {
+                if (cancelTicket(dto.getFile()) != null) {
+                    nRemoved++;
+                }
             }
         }
         return nRemoved;
@@ -1424,7 +1426,7 @@ public final class JobTicketServiceImpl extends AbstractService
             extPrinterManager = null;
         }
 
-        final User lockedUser = userDAO().lock(dto.getUserId());
+        final User lockedUser = userService().lockUser(dto.getUserId());
 
         final OutboxJobDto dtoReturn;
 

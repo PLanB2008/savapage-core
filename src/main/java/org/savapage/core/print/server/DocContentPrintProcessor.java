@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -46,16 +49,21 @@ import org.savapage.core.cometd.PubTopicEnum;
 import org.savapage.core.config.ConfigManager;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
+import org.savapage.core.config.OnOffEnum;
 import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.enums.DocLogProtocolEnum;
 import org.savapage.core.dao.enums.IppRoutingEnum;
 import org.savapage.core.doc.DocContent;
+import org.savapage.core.doc.DocContentToPdfException;
 import org.savapage.core.doc.DocContentTypeEnum;
 import org.savapage.core.doc.DocInputStream;
 import org.savapage.core.doc.IDocFileConverter;
+import org.savapage.core.doc.IPostScriptConverter;
 import org.savapage.core.doc.IStreamConverter;
 import org.savapage.core.doc.PdfRepair;
 import org.savapage.core.doc.PdfToDecrypted;
+import org.savapage.core.doc.PdfToPrePress;
+import org.savapage.core.doc.PsToImagePdf;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
 import org.savapage.core.i18n.PhraseEnum;
 import org.savapage.core.ipp.routing.IppRoutingListener;
@@ -65,7 +73,9 @@ import org.savapage.core.jpa.IppQueue;
 import org.savapage.core.jpa.PrintIn;
 import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
+import org.savapage.core.pdf.IPdfPageProps;
 import org.savapage.core.pdf.PdfAbstractException;
+import org.savapage.core.pdf.PdfDocumentFonts;
 import org.savapage.core.pdf.PdfPasswordException;
 import org.savapage.core.pdf.PdfSecurityException;
 import org.savapage.core.pdf.PdfUnsupportedException;
@@ -80,6 +90,9 @@ import org.savapage.core.services.QueueService;
 import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.UserService;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
+import org.savapage.core.services.helpers.ExternalSupplierInfo;
+import org.savapage.core.services.helpers.PdfRepairEnum;
+import org.savapage.core.system.PdfFontsErrorValidator;
 import org.savapage.core.users.conf.UserAliasList;
 import org.savapage.core.util.FileSystemHelper;
 import org.savapage.core.util.Messages;
@@ -97,9 +110,7 @@ import com.itextpdf.text.ExceptionConverter;
  */
 public final class DocContentPrintProcessor {
 
-    /**
-     * The logger.
-     */
+    /** */
     private static final Logger LOGGER =
             LoggerFactory.getLogger(DocContentPrintProcessor.class);
 
@@ -122,14 +133,10 @@ public final class DocContentPrintProcessor {
     private static final UserService USER_SERVICE =
             ServiceContext.getServiceFactory().getUserService();
 
-    /**
-     *
-     */
+    /** */
     private static final int BUFFER_SIZE = 4096;
 
-    /**
-     *
-     */
+    /** */
     private java.util.UUID uuidJob = java.util.UUID.randomUUID();
 
     /**
@@ -137,58 +144,43 @@ public final class DocContentPrintProcessor {
      */
     private long inputByteCount = 0;
 
-    /**
-     *
-     */
+    /** */
     private byte[] readAheadInputBytes = null;
 
-    /**
-     *
-     */
-    private SpPdfPageProps pageProps = null;
+    /** */
+    private IPdfPageProps pageProps = null;
 
-    /**
-     *
-     */
+    /** */
     private boolean drmViolationDetected = false;
 
-    /**
-     *
-     */
+    /** */
     private boolean drmRestricted = false;
 
     /**
-     *
+     * {@code null} if no PDF document.
      */
-    private boolean pdfRepaired = false;
+    private PdfRepairEnum pdfRepair;
 
-    /**
-     *
-     */
+    /** */
+    private boolean pdfToCairo = false;
+
+    /** */
     private User userDb = null;
 
-    /**
-     *
-     */
+    /** */
     private String uidTrusted = null;
 
-    /**
-     *
-     */
+    /** */
     private String mimetype;
 
-    /**
-     *
-     */
+    /** */
     private String signatureString = null;
 
-    /**
-     *
-     */
+    /** */
     private final IppQueue queue;
 
     /**
-     *
+     * The authenticated WebApp user: {@code null} if not present.
      */
     private final String authWebAppUser;
 
@@ -197,40 +189,25 @@ public final class DocContentPrintProcessor {
      */
     private Exception deferredException = null;
 
-    /**
-     *
-     */
-    private String requestingUserId = null;
+    /** */
+    private String assignedUserId = null;
 
-    /**
-     *
-     */
+    /** */
     private String jobName;
 
-    /**
-     *
-     */
+    /** */
     private final String originatorIp;
 
     /** */
     private IppRoutingListener ippRoutinglistener;
 
-    /**
-     *
-     */
+    /** */
     private String originatorEmail;
 
     /**
-     *
+     * {@link DocLog} to attach {@link PrintIn} to. Can be {@code null}.
      */
-    @SuppressWarnings("unused")
-    private DocContentPrintProcessor() {
-        this.queue = null;
-        this.authWebAppUser = null;
-        this.jobName = null;
-        this.originatorIp = null;
-        this.originatorEmail = null;
-    }
+    private DocLog printInParent;
 
     /**
      * Creates a print server request.
@@ -320,7 +297,7 @@ public final class DocContentPrintProcessor {
 
             msg.append("Authorized [").append(authorized).append("] :");
 
-            msg.append(" Requesting User [").append(this.requestingUserId)
+            msg.append(" Assigned User [").append(this.assignedUserId)
                     .append("]");
 
             msg.append(" Trusted User [").append(this.uidTrusted).append("]");
@@ -353,69 +330,61 @@ public final class DocContentPrintProcessor {
     /**
      * Is the authenticated WebApp User present?
      *
-     * @return
+     * @return {@code true} if present.
      */
     public boolean isAuthWebAppUser() {
         return StringUtils.isNotBlank(this.authWebAppUser);
     }
 
     /**
-     * Processes the requesting user, i.e. checks whether he is trusted to print
-     * a job. Trust can either be direct, by alias, or by authenticated WebApp
+     * Processes the assigned user, i.e. checks whether he is trusted to print a
+     * job. Trust can either be direct, by alias, or by authenticated WebApp
      * User. The user (alias) must be a Person.
      * <p>
      * <b>Note</b>: On a trusted Queue (and lazy print enabled) a user is lazy
      * inserted. <i>This method has its own database transaction scope.</i>
      * </p>
      *
-     * @param requestingUserId
-     *            The name (id) of the requesting user. Can be {@code null} is
-     *            not available.
+     * @param assignedUser
+     *            Assigned user id. {@code null} if not available.
      * @return {@code true} if we have a trusted uid.
      */
-    public boolean processRequestingUser(final String requestingUserId) {
+    public boolean processAssignedUser(final String assignedUser) {
 
         final UserDao userDao = ServiceContext.getDaoContext().getUserDao();
 
-        this.requestingUserId = requestingUserId;
+        this.assignedUserId = assignedUser;
 
         String uid = null;
 
-        if (requestingUserId == null) {
-
+        if (assignedUser == null) {
             if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug(
-                        String.format("Requesting user id [%s] is unknown.",
-                                requestingUserId));
+                LOGGER.debug(String.format("Assigned user [%s] is unknown.",
+                        assignedUser));
             }
-
             this.userDb = null;
             this.uidTrusted = null;
 
         } else {
-            /*
-             * Get the alias (if present).
-             */
-            uid = UserAliasList.instance().getUserName(this.requestingUserId);
+            // Get the alias (if present).
+            uid = UserAliasList.instance().getUserName(this.assignedUserId);
 
-            if (!uid.equals(this.requestingUserId)) {
+            if (!uid.equals(this.assignedUserId)) {
                 if (LOGGER.isDebugEnabled()) {
-                    LOGGER.debug("using user [" + uid + "] for alias ["
-                            + this.requestingUserId + "]");
+                    LOGGER.debug(String.format(
+                            "Replaced assigned user [%s] alias by user [%s].",
+                            this.assignedUserId, uid));
                 }
             }
 
-            final ConfigManager cm = ConfigManager.instance();
-
-            /*
-             * Read (alias) user from database.
-             */
             this.userDb = userDao.findActiveUserByUserId(uid);
 
             /*
              * On a trusted queue (and lazy print enabled) we can lazy insert a
              * user...
              */
+            final ConfigManager cm = ConfigManager.instance();
+
             if (this.userDb == null && this.isTrustedQueue()
                     && cm.isUserInsertLazyPrint()) {
 
@@ -435,11 +404,8 @@ public final class DocContentPrintProcessor {
             }
         }
 
-        /*
-         * Do we have a (lazy inserted) database user?
-         */
+        // Do we have a (lazy inserted) database user?
         if (this.userDb == null) {
-
             /*
              * The user is not found in the database (no lazy insert). Try the
              * authenticated WebApp user (if present)...
@@ -451,9 +417,6 @@ public final class DocContentPrintProcessor {
             }
 
         } else {
-            /*
-             * The user is present in the database.
-             */
             this.uidTrusted = uid;
         }
 
@@ -464,7 +427,6 @@ public final class DocContentPrintProcessor {
         final String reason;
 
         if (this.userDb == null) {
-
             /*
              * No (trusted WepApp) database user.
              */
@@ -486,7 +448,6 @@ public final class DocContentPrintProcessor {
             } else {
                 reason = "is NOT a Person";
             }
-
         }
 
         if (isAuthorized) {
@@ -504,9 +465,6 @@ public final class DocContentPrintProcessor {
 
         } else {
 
-            /*
-             * Log the reason why not authorized.
-             */
             if (reason != null) {
 
                 if (this.uidTrusted != null && !this.uidTrusted.equals(uid)) {
@@ -520,15 +478,11 @@ public final class DocContentPrintProcessor {
 
                 } else {
                     if (LOGGER.isWarnEnabled()) {
-                        LOGGER.warn("Requesting user [" + uid + "] " + reason
-                                + ": print denied");
+                        LOGGER.warn("Requesting user [" + assignedUser + "] "
+                                + reason + ": print denied");
                     }
                 }
             }
-
-            /*
-             * Set uidTrusted as indicator for printing allowed.
-             */
             this.uidTrusted = null;
         }
 
@@ -585,7 +539,7 @@ public final class DocContentPrintProcessor {
             throws IOException, PostScriptDrmException {
 
         final boolean respectDRM = !ConfigManager.instance()
-                .isConfigValue(IConfigProp.Key.PRINT_IN_ALLOW_ENCRYPTED_PDF);
+                .isConfigValue(IConfigProp.Key.PRINT_IN_PDF_ENCRYPTED_ALLOW);
 
         BufferedReader reader = new BufferedReader(new InputStreamReader(istr));
         BufferedWriter writer =
@@ -610,6 +564,29 @@ public final class DocContentPrintProcessor {
     }
 
     /**
+     * @param signature
+     *            Signature bytes.
+     * @param reference
+     *            Reference bytes.
+     * @return {@code true} if signature matches reference.
+     */
+    private boolean isSignatureMatch(final byte[] signature,
+            final byte[] reference) {
+        final int max;
+        if (signature.length < reference.length) {
+            max = signature.length;
+        } else {
+            max = reference.length;
+        }
+        for (int i = 0; i < max; i++) {
+            if (signature[i] != reference[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Checks or assigns the content type of the job depending on the delivery
      * protocol.
      * <p>
@@ -625,6 +602,7 @@ public final class DocContentPrintProcessor {
      *            The content input stream.
      * @return The assigned content type.
      * @throws IOException
+     *             If IO error.
      */
     private DocContentTypeEnum checkJobContent(
             final DocLogProtocolEnum delivery,
@@ -642,20 +620,29 @@ public final class DocContentPrintProcessor {
             byte[] signature = new byte[4];
             content.read(signature);
 
-            setReadAheadInputBytes(signature);
+            this.setReadAheadInputBytes(signature);
 
             this.signatureString = new String(signature);
 
             if (this.signatureString.startsWith(DocContent.HEADER_PDF)) {
                 contentType = DocContentTypeEnum.PDF;
-            } else if (this.signatureString
-                    .startsWith(DocContent.HEADER_PDF_BANNER)) {
-                contentType = DocContentTypeEnum.CUPS_PDF_BANNER;
             } else if (this.signatureString.startsWith(DocContent.HEADER_PS)) {
+                contentType = DocContentTypeEnum.PS;
+            } else if (DocContent.HEADER_PJL.startsWith(this.signatureString)) {
+                // Note: HEADER_PJL string length is GT signatureString.
                 contentType = DocContentTypeEnum.PS;
             } else if (this.signatureString
                     .startsWith(DocContent.HEADER_UNIRAST)) {
-                contentType = DocContentTypeEnum.UNIRAST;
+                contentType = DocContentTypeEnum.URF;
+            } else if (this.signatureString
+                    .startsWith(DocContent.HEADER_PWGRAST)) {
+                contentType = DocContentTypeEnum.PWG;
+            } else if (this.isSignatureMatch(signature,
+                    DocContent.HEADER_JPEG)) {
+                contentType = DocContentTypeEnum.JPEG;
+            } else if (this.signatureString
+                    .startsWith(DocContent.HEADER_PDF_BANNER)) {
+                contentType = DocContentTypeEnum.CUPS_PDF_BANNER;
             } else if (CupsCommandFile.isSignatureStart(this.signatureString)) {
                 contentType = DocContentTypeEnum.CUPS_COMMAND;
             }
@@ -685,6 +672,17 @@ public final class DocContentPrintProcessor {
     private final static boolean SAVE_UNSUPPORTED_CONTENT = false;
 
     /**
+     * @return Hex representation of captured signature.
+     */
+    private String hexSignature() {
+        final StringBuilder strHex = new StringBuilder();
+        for (final byte ch : this.readAheadInputBytes) {
+            strHex.append(String.format("%02X ", ch));
+        }
+        return strHex.toString().trim();
+    }
+
+    /**
      * Evaluates assigned the DocContentType and throws an exception when
      * content is NOT supported.
      * <p>
@@ -704,18 +702,18 @@ public final class DocContentPrintProcessor {
 
         UnsupportedPrintJobContent formatException = null;
         FileOutputStream fostr = null;
+
         try {
             if (assignedContentType == DocContentTypeEnum.UNKNOWN) {
 
-                formatException = new UnsupportedPrintJobContent("header ["
-                        + StringUtils.defaultString(this.signatureString)
-                        + "] unknown");
+                formatException = new UnsupportedPrintJobContent(
+                        "header [" + this.hexSignature() + "] unknown");
 
                 if (SAVE_UNSUPPORTED_CONTENT) {
                     fostr = new FileOutputStream(
                             ConfigManager.getAppTmpDir() + "/" + delivery + "_"
                                     + System.currentTimeMillis() + ".unknown");
-                    fostr.write(readAheadInputBytes);
+                    fostr.write(this.readAheadInputBytes);
                     saveBinary(content, fostr);
                 }
 
@@ -739,6 +737,32 @@ public final class DocContentPrintProcessor {
     }
 
     /**
+     * @param cm
+     *            {@link ConfigManager}.
+     * @param tempDirApp
+     *            Directory for temporary files.
+     * @param isDriverPrint
+     *            {@code true} if Driver Print.
+     * @return {@link IPostScriptConverter}.
+     */
+    private IPostScriptConverter createPostScriptToImageConverter(
+            final ConfigManager cm, final String tempDirApp,
+            final boolean isDriverPrint) {
+
+        final int dpi;
+
+        if (isDriverPrint) {
+            dpi = cm.getConfigInt(Key.PRINT_IN_PS_DRIVER_IMAGES_DPI);
+        } else {
+            dpi = cm.getConfigInt(Key.PRINT_IN_PS_DRIVERLESS_IMAGES_DPI);
+        }
+
+        return new PsToImagePdf(new File(tempDirApp), dpi, this.jobName,
+                StringUtils.defaultString(this.getUserDb().getFullName(),
+                        this.assignedUserId));
+    }
+
+    /**
      * Processes content to be printed as offered on the input stream, writes a
      * {@link DocLog}, and places the resulting PDF in the user's inbox.
      * <p>
@@ -748,9 +772,11 @@ public final class DocContentPrintProcessor {
      *
      * @param istrContent
      *            The input stream containing the content to be printed.
+     * @param supplierInfo
+     *            {@link ExternalSupplierInfo} (can be {@code null}).
      * @param protocol
      *            The originating printing protocol.
-     * @param originatorEmail
+     * @param originatorEmailAddr
      *            MUST be present for {@link DocLogProtocolEnum#IMAP} and
      *            {@link DocLogProtocolEnum#GCP}. For all other protocols
      *            {@code null}.
@@ -765,7 +791,8 @@ public final class DocContentPrintProcessor {
      *             If IO errors.
      */
     public void process(final InputStream istrContent,
-            final DocLogProtocolEnum protocol, final String originatorEmail,
+            final ExternalSupplierInfo supplierInfo,
+            final DocLogProtocolEnum protocol, final String originatorEmailAddr,
             final DocContentTypeEnum contentTypeProvided,
             final InternalFontFamilyEnum preferredOutputFont)
             throws IOException {
@@ -774,16 +801,12 @@ public final class DocContentPrintProcessor {
             return;
         }
 
-        this.originatorEmail = originatorEmail;
-
-        this.readAheadInputBytes = null;
+        this.originatorEmail = originatorEmailAddr;
 
         final DocContentTypeEnum inputType =
                 checkJobContent(protocol, contentTypeProvided, istrContent);
 
-        /*
-         * Skip CUPS_COMMAND for now.
-         */
+        // Skip CUPS_COMMAND for now.
         if (inputType == DocContentTypeEnum.CUPS_COMMAND) {
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug(CupsCommandFile.FIRST_LINE_SIGNATURE + " ignored");
@@ -791,15 +814,11 @@ public final class DocContentPrintProcessor {
             return;
         }
 
-        /*
-         *
-         */
+        //
         final String homeDir = ConfigManager.getUserHomeDir(this.uidTrusted);
         final String tempDirApp = ConfigManager.getAppTmpDir();
 
-        /*
-         * Lazy create user home directory.
-         */
+        //
         USER_SERVICE.lazyUserHomeDir(userDb);
 
         FileOutputStream fostrContent = null;
@@ -808,6 +827,8 @@ public final class DocContentPrintProcessor {
 
         final List<File> filesCreated = new ArrayList<>();
         final List<File> files2Delete = new ArrayList<>();
+
+        final ConfigManager cm = ConfigManager.instance();
 
         try {
             /*
@@ -842,13 +863,27 @@ public final class DocContentPrintProcessor {
              */
             fostrContent = new FileOutputStream(contentFile);
 
+            final OnOffEnum detainPostScript;
+
+            if (inputType == DocContentTypeEnum.PS
+                    && protocol.isDriverPrint()) {
+                detainPostScript = cm.getConfigEnum(OnOffEnum.class,
+                        Key.PRINT_IN_PS_DRIVER_DETAIN);
+            } else {
+                detainPostScript = OnOffEnum.OFF;
+            }
+
             /*
              * Administer the just created file as created or 2delete.
              */
             if (inputType == DocContentTypeEnum.PDF) {
                 filesCreated.add(contentFile);
             } else {
-                files2Delete.add(contentFile);
+                // Wait for PDF conversion outcome:
+                // do not delete PostScript file yet.
+                if (detainPostScript == OnOffEnum.OFF) {
+                    files2Delete.add(contentFile);
+                }
             }
 
             /*
@@ -864,13 +899,16 @@ public final class DocContentPrintProcessor {
              */
             setDrmViolationDetected(false);
             setDrmRestricted(false);
-            setPdfRepaired(false);
+
+            this.pdfToCairo = false;
+            this.pdfRepair = null;
 
             /*
              * Document content converters are needed for non-PDF content.
              */
             IStreamConverter streamConverter = null;
             IDocFileConverter fileConverter = null;
+            IPostScriptConverter postScriptConverter = null;
 
             /*
              * Directly write (rest of) offered content to PostScript or PDF, or
@@ -878,19 +916,38 @@ public final class DocContentPrintProcessor {
              */
             if (inputType == DocContentTypeEnum.PDF) {
 
+                this.pdfRepair = PdfRepairEnum.NONE;
                 saveBinary(istrContent, fostrContent);
 
             } else if (inputType == DocContentTypeEnum.PS) {
-
                 /*
                  * An exception is throw upon a DRM violation.
                  */
                 savePostScript(istrContent, fostrContent);
 
-                /*
-                 * Always use a file converter,
-                 */
-                fileConverter = DocContent.createPdfFileConverter(inputType);
+                if (protocol.isDriverPrint()) {
+                    if (OnOffEnum.ON == cm.getConfigEnum(OnOffEnum.class,
+                            Key.PRINT_IN_PS_DRIVER_IMAGES_TRIGGER)) {
+                        postScriptConverter =
+                                this.createPostScriptToImageConverter(cm,
+                                        tempDirApp, true);
+                    }
+                } else {
+                    if (OnOffEnum.ON == cm.getConfigEnum(OnOffEnum.class,
+                            Key.PRINT_IN_PS_DRIVERLESS_IMAGES_TRIGGER)) {
+                        postScriptConverter =
+                                this.createPostScriptToImageConverter(cm,
+                                        tempDirApp, false);
+                    }
+                }
+
+                if (postScriptConverter == null) {
+                    /*
+                     * Always use a file converter,
+                     */
+                    fileConverter =
+                            DocContent.createPdfFileConverter(inputType);
+                }
 
             } else if (inputType == DocContentTypeEnum.CUPS_PDF_BANNER) {
 
@@ -899,8 +956,10 @@ public final class DocContentPrintProcessor {
 
             } else {
 
-                streamConverter = DocContent.createPdfStreamConverter(inputType,
-                        preferredOutputFont);
+                if (!protocol.isDriverPrint()) {
+                    streamConverter = DocContent.createPdfStreamConverter(
+                            inputType, preferredOutputFont);
+                }
 
                 if (streamConverter == null) {
 
@@ -912,12 +971,6 @@ public final class DocContentPrintProcessor {
                     }
                 }
             }
-
-            /*
-             * Path of the PDF file BEFORE it is moved to its final destination.
-             * As a DEFAULT we use the path of the streamed content.
-             */
-            String tempPathPdf = contentFile.getAbsolutePath();
 
             /*
              * Convert to PDF with a stream converter?
@@ -932,6 +985,12 @@ public final class DocContentPrintProcessor {
             }
 
             /*
+             * Path of the PDF file BEFORE it is moved to its final destination.
+             * As a DEFAULT we use the path of the streamed content.
+             */
+            String tempPathPdf = contentFile.getAbsolutePath();
+
+            /*
              * We're done with capturing the content input stream, so close the
              * file output stream.
              */
@@ -943,30 +1002,133 @@ public final class DocContentPrintProcessor {
              */
             if (fileConverter != null) {
                 this.inputByteCount = contentFile.length();
+
                 final File pdfOutputFile =
                         fileConverter.convert(inputType, contentFile);
+
+                /*
+                 * Retry with PostScript converter?
+                 */
+                if (inputType == DocContentTypeEnum.PS
+                        && fileConverter.hasStdErrMsg()) {
+
+                    if (protocol.isDriverPrint()) {
+                        if (OnOffEnum.AUTO == cm.getConfigEnum(OnOffEnum.class,
+                                Key.PRINT_IN_PS_DRIVER_IMAGES_TRIGGER)) {
+                            postScriptConverter =
+                                    this.createPostScriptToImageConverter(cm,
+                                            tempDirApp, true);
+                        }
+                    } else {
+                        if (OnOffEnum.AUTO == cm.getConfigEnum(OnOffEnum.class,
+                                Key.PRINT_IN_PS_DRIVERLESS_IMAGES_TRIGGER)) {
+                            postScriptConverter =
+                                    this.createPostScriptToImageConverter(cm,
+                                            tempDirApp, false);
+                        }
+                    }
+
+                    if (postScriptConverter == null) {
+                        filesCreated.add(pdfOutputFile);
+                    } else {
+                        pdfOutputFile.delete();
+                    }
+                }
+                tempPathPdf = pdfOutputFile.getAbsolutePath();
+            }
+
+            /*
+             * Convert to PDF with PostScript converter?
+             */
+            if (postScriptConverter != null) {
+                final File pdfOutputFile =
+                        postScriptConverter.convert(contentFile);
                 filesCreated.add(pdfOutputFile);
                 tempPathPdf = pdfOutputFile.getAbsolutePath();
             }
 
             /*
-             * Calculate number of pages, etc...
+             * Calculate number of pages, etc. and repair along the way.
              */
-            final SpPdfPageProps pdfPageProps =
+            final IPdfPageProps pdfPageProps =
                     this.createPdfPageProps(tempPathPdf);
 
             this.setPageProps(pdfPageProps);
 
+            //
+            if (inputType == DocContentTypeEnum.PDF) {
+                final File fileWrk = new File(tempPathPdf);
+                if (cm.isConfigValue(Key.PRINT_IN_PDF_FONTS_VERIFY)) {
+                    this.verifyPdfFonts(fileWrk);
+                }
+                if (!this.pdfToCairo
+                        && cm.isConfigValue(Key.PRINT_IN_PDF_FONTS_EMBED)) {
+                    this.embedPdfFonts(fileWrk);
+                }
+                if (!this.pdfToCairo
+                        && cm.isConfigValue(Key.PRINT_IN_PDF_CLEAN)) {
+                    this.cleanPdf(fileWrk);
+                }
+                if (cm.isConfigValue(Key.PRINT_IN_PDF_PREPRESS)) {
+                    this.cleanPdfPrepress(fileWrk);
+                }
+            } else if (fileConverter != null && (fileConverter.hasStdErrMsg()
+                    || detainPostScript == OnOffEnum.ON)) {
+
+                final StringBuilder msg = new StringBuilder();
+                msg.append("User \"").append(this.uidTrusted).append("\" ")
+                        .append(fileConverter.getClass().getSimpleName());
+
+                if (fileConverter.hasStdErrMsg()) {
+                    msg.append(" errors.");
+                } else {
+                    msg.append(".");
+                }
+
+                final PubLevelEnum pubLevel;
+
+                if (postScriptConverter == null) {
+                    if (detainPostScript == OnOffEnum.OFF) {
+                        pubLevel = PubLevelEnum.ERROR;
+                        msg.append(" Rendering invalid.");
+                    } else {
+                        pubLevel = PubLevelEnum.WARN;
+                    }
+                } else {
+                    pubLevel = PubLevelEnum.WARN;
+                    msg.append(" Pages rendered as images.");
+                }
+
+                if (detainPostScript == OnOffEnum.ON
+                        || (detainPostScript == OnOffEnum.AUTO
+                                && fileConverter.hasStdErrMsg())) {
+                    msg.append(" (PostScript file is detained).");
+                }
+                AdminPublisher.instance().publish(PubTopicEnum.USER, pubLevel,
+                        msg.toString());
+            }
+
+            // Check again...
+            if (detainPostScript == OnOffEnum.AUTO && (fileConverter == null
+                    || !fileConverter.hasStdErrMsg())) {
+                // No stderr: delete PostScript file after all.
+                files2Delete.add(contentFile);
+            }
+
             /*
              * STEP 1: Log in Database: BEFORE the file MOVE.
              */
-            final DocContentPrintInInfo printInInfo = this.logPrintIn(protocol);
+            final DocContentPrintInInfo printInInfo =
+                    this.logPrintIn(protocol, supplierInfo);
 
             /*
              * STEP 2: Optional IPP Routing.
              */
-            if (!this.processIppRouting(printInInfo, new File(tempPathPdf))) {
+            final File pdfIppRoutingFile = new File(tempPathPdf);
 
+            if (this.processIppRouting(printInInfo, pdfIppRoutingFile)) {
+                files2Delete.add(pdfIppRoutingFile);
+            } else {
                 /*
                  * Move to user safepages home.
                  */
@@ -981,9 +1143,8 @@ public final class DocContentPrintProcessor {
                  * Start task to create the shadow EcoPrint PDF file?
                  */
                 if (ConfigManager.isEcoPrintEnabled() && this.getPageProps()
-                        .getNumberOfPages() <= ConfigManager.instance()
-                                .getConfigInt(
-                                        Key.ECO_PRINT_AUTO_THRESHOLD_SHADOW_PAGE_COUNT)) {
+                        .getNumberOfPages() <= cm.getConfigInt(
+                                Key.ECO_PRINT_AUTO_THRESHOLD_SHADOW_PAGE_COUNT)) {
                     INBOX_SERVICE.startEcoPrintPdfTask(homeDir,
                             pathTarget.toFile(), this.uuidJob);
                 }
@@ -1005,9 +1166,17 @@ public final class DocContentPrintProcessor {
                  * We also need to log the rejected print-in, since we want to
                  * notify the result in the User WebApp.
                  */
-                this.logPrintIn(protocol);
+                this.logPrintIn(protocol, supplierInfo);
 
             } else {
+
+                if (e instanceof PdfValidityException) {
+                    if (this.pdfRepair == null
+                            || !this.pdfRepair.isRepairFail()) {
+                        this.pdfRepair = PdfRepairEnum.DOC_FAIL;
+                    }
+                    this.logPrintIn(protocol, supplierInfo);
+                }
                 /*
                  * Save the exception, so it can be thrown at the end of the
                  * parent operation.
@@ -1039,6 +1208,133 @@ public final class DocContentPrintProcessor {
     }
 
     /**
+     * Validates and optionally repairs PDF file for font errors.
+     *
+     * @param pdf
+     *            PDF file.
+     * @throws PdfValidityException
+     *             When font error(s) in PDF document.
+     * @throws IOException
+     *             When file IO error.
+     */
+    private void verifyPdfFonts(final File pdf)
+            throws PdfValidityException, IOException {
+
+        final PdfFontsErrorValidator validator =
+                new PdfFontsErrorValidator(pdf);
+
+        if (!validator.execute()) {
+
+            if (!this.pdfToCairo) {
+
+                final PdfRepair converter = new PdfRepair();
+
+                FileSystemHelper.replaceWithNewVersion(pdf,
+                        converter.convert(pdf));
+                // Try again.
+                if (validator.execute()) {
+                    this.pdfRepair = PdfRepairEnum.FONT;
+                    this.pdfToCairo = true;
+                    return;
+                }
+                this.pdfRepair = PdfRepairEnum.FONT_FAIL;
+            }
+            throw new PdfValidityException("Font errors.",
+                    PhraseEnum.PDF_INVALID.uiText(ServiceContext.getLocale()),
+                    PhraseEnum.PDF_INVALID);
+        }
+    }
+
+    /**
+     * Embeds non-standard fonts in PDF file.
+     *
+     * @param pdf
+     *            PDF file.
+     * @throws PdfValidityException
+     *             When embed font error(s).
+     */
+    private void embedPdfFonts(final File pdf) throws PdfValidityException {
+
+        final PdfDocumentFonts fonts;
+
+        try {
+            fonts = PdfDocumentFonts.create(pdf);
+        } catch (IOException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
+
+        if (fonts.isAllEmbeddedOrStandard()) {
+            return;
+        }
+
+        final PdfRepair converter = new PdfRepair();
+
+        try {
+            FileSystemHelper.replaceWithNewVersion(pdf, converter.convert(pdf));
+            this.pdfToCairo = true;
+            if (converter.hasStdout()) {
+                this.pdfRepair = PdfRepairEnum.DOC;
+            }
+        } catch (IOException e) {
+            this.pdfRepair = PdfRepairEnum.DOC_FAIL;
+            throw new PdfValidityException("Embed Font errors.",
+                    PhraseEnum.PDF_INVALID.uiText(ServiceContext.getLocale()),
+                    PhraseEnum.PDF_INVALID);
+        }
+    }
+
+    /**
+     * Cleans a PDF file.
+     *
+     * @param pdf
+     *            PDF file.
+     * @throws PdfValidityException
+     *             When error(s).
+     */
+    private void cleanPdf(final File pdf) throws PdfValidityException {
+
+        final PdfRepair converter = new PdfRepair();
+
+        try {
+            FileSystemHelper.replaceWithNewVersion(pdf, converter.convert(pdf));
+            this.pdfToCairo = true;
+            if (converter.hasStdout()) {
+                this.pdfRepair = PdfRepairEnum.DOC;
+            }
+        } catch (IOException e) {
+            this.pdfRepair = PdfRepairEnum.DOC_FAIL;
+            throw new PdfValidityException("PDF cleaning errors.",
+                    PhraseEnum.PDF_INVALID.uiText(ServiceContext.getLocale()),
+                    PhraseEnum.PDF_INVALID);
+        }
+    }
+
+    /**
+     * Cleans a PDF file by executing Ghostscript prepress.
+     *
+     * @param pdf
+     *            PDF file.
+     * @throws PdfValidityException
+     *             When error(s).
+     */
+    private void cleanPdfPrepress(final File pdf) throws PdfValidityException {
+
+        final PdfToPrePress converter = new PdfToPrePress();
+
+        try {
+            FileSystemHelper.replaceWithNewVersion(pdf, converter.convert(pdf));
+            if (converter.hasStdout()) {
+                this.pdfRepair = PdfRepairEnum.DOC;
+            }
+        } catch (IOException e) {
+            this.pdfRepair = PdfRepairEnum.DOC_FAIL;
+            throw new PdfValidityException("PDF prepress errors.",
+                    PhraseEnum.PDF_INVALID.uiText(ServiceContext.getLocale()),
+                    PhraseEnum.PDF_INVALID);
+        }
+    }
+
+    /**
      * Creates PDF page properties, and optionally repairs or decrypts PDF.
      *
      * @param tempPathPdf
@@ -1055,11 +1351,11 @@ public final class DocContentPrintProcessor {
      * @throws PdfUnsupportedException
      *             When unsupported PDF document.
      */
-    private SpPdfPageProps createPdfPageProps(final String tempPathPdf)
+    private IPdfPageProps createPdfPageProps(final String tempPathPdf)
             throws PdfValidityException, PdfSecurityException, IOException,
             PdfPasswordException, PdfUnsupportedException {
 
-        SpPdfPageProps pdfPageProps;
+        IPdfPageProps pdfPageProps;
 
         try {
 
@@ -1068,14 +1364,17 @@ public final class DocContentPrintProcessor {
         } catch (PdfValidityException e) {
 
             if (ConfigManager.instance().isConfigValue(
-                    IConfigProp.Key.PRINT_IN_REPAIR_PDF_ENABLE)) {
+                    IConfigProp.Key.PRINT_IN_PDF_INVALID_REPAIR)) {
+
+                this.pdfRepair = PdfRepairEnum.DOC_FAIL;
 
                 final File pdfFile = new File(tempPathPdf);
 
-                // Convert ...\
+                // Convert ...
                 try {
+                    final PdfRepair converter = new PdfRepair();
                     FileSystemHelper.replaceWithNewVersion(pdfFile,
-                            new PdfRepair().convert(pdfFile));
+                            converter.convert(pdfFile));
                 } catch (IOException ignore) {
                     throw new PdfValidityException(e.getMessage(),
                             PhraseEnum.PDF_REPAIR_FAILED
@@ -1085,7 +1384,8 @@ public final class DocContentPrintProcessor {
                 // and try again.
                 pdfPageProps = SpPdfPageProps.create(tempPathPdf);
 
-                this.setPdfRepaired(true);
+                this.pdfRepair = PdfRepairEnum.DOC;
+                this.pdfToCairo = true;
             } else {
                 throw e;
             }
@@ -1094,7 +1394,7 @@ public final class DocContentPrintProcessor {
 
             if (e.isPrintingAllowed()
                     && ConfigManager.instance().isConfigValue(
-                            IConfigProp.Key.PRINT_IN_ALLOW_ENCRYPTED_PDF)
+                            IConfigProp.Key.PRINT_IN_PDF_ENCRYPTED_ALLOW)
                     && PdfToDecrypted.isAvailable()) {
 
                 final File pdfFile = new File(tempPathPdf);
@@ -1112,6 +1412,7 @@ public final class DocContentPrintProcessor {
                 throw e;
             }
         }
+
         return pdfPageProps;
     }
 
@@ -1123,15 +1424,17 @@ public final class DocContentPrintProcessor {
      *
      * @param protocol
      *            The {@link DocLogProtocolEnum}.
+     * @param supplierInfo
+     *            {@link {@link ExternalSupplierInfo}} (can be {@code null}).
      * @return {@link DocContentPrintInInfo}.
      */
-    private DocContentPrintInInfo
-
-            logPrintIn(final DocLogProtocolEnum protocol) {
+    private DocContentPrintInInfo logPrintIn(final DocLogProtocolEnum protocol,
+            final ExternalSupplierInfo supplierInfo) {
 
         final DocContentPrintInInfo printInInfo = new DocContentPrintInInfo();
 
         printInInfo.setDrmRestricted(this.isDrmRestricted());
+        printInInfo.setPdfRepair(this.pdfRepair);
         printInInfo.setJobBytes(this.getJobBytes());
         printInInfo.setJobName(this.getJobName());
         printInInfo.setMimetype(this.getMimetype());
@@ -1139,9 +1442,15 @@ public final class DocContentPrintProcessor {
         printInInfo.setOriginatorIp(this.getOriginatorIp());
         printInInfo.setPageProps(this.getPageProps());
         printInInfo.setUuidJob(this.getUuidJob());
+        printInInfo.setSupplierInfo(supplierInfo);
 
-        DOC_LOG_SERVICE.logPrintIn(this.getUserDb(), this.getQueue(), protocol,
-                printInInfo);
+        if (this.printInParent == null) {
+            DOC_LOG_SERVICE.logPrintIn(this.getUserDb(), this.getQueue(),
+                    protocol, printInInfo);
+        } else {
+            DOC_LOG_SERVICE.attachPrintIn(this.printInParent, this.getUserDb(),
+                    this.getQueue(), protocol, printInInfo);
+        }
 
         return printInInfo;
     }
@@ -1167,7 +1476,14 @@ public final class DocContentPrintProcessor {
             return false;
         }
 
-        final IppRoutingEnum routing = QUEUE_SERVICE.getIppRouting(this.queue);
+        /*
+         * Use a new queue instance to prevent
+         * org.hibernate.LazyInitializationException.
+         */
+        final IppQueue queueWrk = ServiceContext.getDaoContext()
+                .getIppQueueDao().findById(this.queue.getId());
+
+        final IppRoutingEnum routing = QUEUE_SERVICE.getIppRouting(queueWrk);
 
         if (routing == null || routing == IppRoutingEnum.NONE) {
             return false;
@@ -1199,7 +1515,7 @@ public final class DocContentPrintProcessor {
         if (warnMsg != null) {
             final String msg =
                     String.format("IPP Routing of Queue /%s from %s %s",
-                            queue.getUrlPath(), this.originatorIp, warnMsg);
+                            queueWrk.getUrlPath(), this.originatorIp, warnMsg);
             AdminPublisher.instance().publish(PubTopicEnum.PROXY_PRINT,
                     PubLevelEnum.WARN, msg);
             LOGGER.warn(msg);
@@ -1207,7 +1523,7 @@ public final class DocContentPrintProcessor {
         }
 
         try {
-            PROXYPRINT_SERVICE.proxyPrintIppRouting(this.userDb, this.queue,
+            PROXYPRINT_SERVICE.proxyPrintIppRouting(this.userDb, queueWrk,
                     terminal.getPrinter(), printInInfo, pdfFile,
                     this.ippRoutinglistener);
         } catch (ProxyPrintException e) {
@@ -1218,7 +1534,15 @@ public final class DocContentPrintProcessor {
     }
 
     /**
-     *
+     * @param docLog
+     *            {@link DocLog} to attach {@link PrintIn} to. Can be
+     *            {@code null}.
+     */
+    public void setPrintInParent(final DocLog docLog) {
+        this.printInParent = docLog;
+    }
+
+    /**
      * @return
      */
     public java.util.UUID getUuidJob() {
@@ -1233,15 +1557,11 @@ public final class DocContentPrintProcessor {
         return inputByteCount;
     }
 
-    public void setJobBytes(long jobBytes) {
-        this.inputByteCount = jobBytes;
-    }
-
-    public SpPdfPageProps getPageProps() {
+    public IPdfPageProps getPageProps() {
         return pageProps;
     }
 
-    public void setPageProps(SpPdfPageProps pageProps) {
+    public void setPageProps(IPdfPageProps pageProps) {
         this.pageProps = pageProps;
     }
 
@@ -1280,11 +1600,7 @@ public final class DocContentPrintProcessor {
     }
 
     public boolean isPdfRepaired() {
-        return pdfRepaired;
-    }
-
-    public void setPdfRepaired(boolean pdfRepaired) {
-        this.pdfRepaired = pdfRepaired;
+        return this.pdfRepair != null && this.pdfRepair.isRepaired();
     }
 
     /**
@@ -1436,7 +1752,8 @@ public final class DocContentPrintProcessor {
                 pubMessage = exception.getMessage();
                 if ((exception instanceof //
                 org.xhtmlrenderer.util.XRRuntimeException)
-                        || (exception instanceof ExceptionConverter)) {
+                        || (exception instanceof ExceptionConverter)
+                        || (exception instanceof DocContentToPdfException)) {
                     LOGGER.warn("[{}] PDF error: {}", this.getJobName(),
                             pubMessage);
                     pubLevel = PubLevelEnum.WARN;
@@ -1451,7 +1768,7 @@ public final class DocContentPrintProcessor {
         String deniedUserId = userid;
 
         if (StringUtils.isBlank(deniedUserId)) {
-            deniedUserId = this.requestingUserId;
+            deniedUserId = this.assignedUserId;
         }
 
         AdminPublisher.instance().publish(PubTopicEnum.USER, pubLevel,

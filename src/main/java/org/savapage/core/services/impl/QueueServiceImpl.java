@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -26,10 +29,15 @@ import java.io.InputStream;
 import java.util.Date;
 import java.util.Map;
 
+import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.SpException;
 import org.savapage.core.UnavailableException;
+import org.savapage.core.UnavailableException.State;
+import org.savapage.core.cometd.AdminPublisher;
+import org.savapage.core.cometd.PubLevelEnum;
+import org.savapage.core.cometd.PubTopicEnum;
 import org.savapage.core.concurrent.ReadLockObtainFailedException;
 import org.savapage.core.concurrent.ReadWriteLockEnum;
 import org.savapage.core.config.ConfigManager;
@@ -44,7 +52,6 @@ import org.savapage.core.fonts.InternalFontFamilyEnum;
 import org.savapage.core.i18n.PhraseEnum;
 import org.savapage.core.jpa.IppQueue;
 import org.savapage.core.jpa.IppQueueAttr;
-import org.savapage.core.jpa.User;
 import org.savapage.core.json.JsonRollingTimeSeries;
 import org.savapage.core.json.TimeSeriesInterval;
 import org.savapage.core.print.server.DocContentPrintException;
@@ -287,7 +294,8 @@ public final class QueueServiceImpl extends AbstractService
                 || reservedQueue == ReservedIppQueueEnum.WEBPRINT
                 || reservedQueue == ReservedIppQueueEnum.GCP
                 || reservedQueue == ReservedIppQueueEnum.MAILPRINT
-                || reservedQueue == ReservedIppQueueEnum.IPP_PRINT_INTERNET) {
+                || reservedQueue == ReservedIppQueueEnum.IPP_PRINT_INTERNET
+                || reservedQueue == ReservedIppQueueEnum.WEBSERVICE) {
 
             /*
              * Force legacy queues to untrusted: reserved queues are untrusted
@@ -366,7 +374,9 @@ public final class QueueServiceImpl extends AbstractService
         final ReservedIppQueueEnum queueReserved =
                 this.getReservedQueue(queue.getUrlPath());
 
-        if (queueReserved == null || queueReserved.isDriverPrint()) {
+        if (queueReserved == null || queueReserved.isDriverPrint()
+                || queueReserved == ReservedIppQueueEnum.WEBSERVICE) {
+
             return !(queue.getDeleted().booleanValue()
                     || queue.getDisabled().booleanValue());
         }
@@ -390,16 +400,14 @@ public final class QueueServiceImpl extends AbstractService
         default:
             throw new IllegalStateException(String.format("%s is not handled.",
                     queueReserved.toString()));
-
         }
         return enabled;
     }
 
     @Override
     public DocContentPrintRsp printDocContent(
-            final ReservedIppQueueEnum reservedQueue, final User user,
-            final boolean isUserTrusted, final DocContentPrintReq printReq,
-            final InputStream istrContent)
+            final ReservedIppQueueEnum reservedQueue, final String userId,
+            final DocContentPrintReq printReq, final InputStream istrContent)
             throws DocContentPrintException, UnavailableException {
 
         final DocLogProtocolEnum protocol = printReq.getProtocol();
@@ -427,36 +435,37 @@ public final class QueueServiceImpl extends AbstractService
             ReadWriteLockEnum.DATABASE_READONLY.tryReadLock();
             isDbReadLock = true;
 
-            /*
-             * Get the Queue object.
-             */
             queue = ippQueueDAO().find(reservedQueue);
 
-            /*
-             * Create the request.
-             */
-            final String requestingUserId = user.getUserId();
+            if (!this.isActiveQueue(queue)) {
+                final StringBuilder msg = new StringBuilder();
+                msg.append("queue /").append(queue.getUrlPath());
+                if (BooleanUtils.isTrue(queue.getDeleted())) {
+                    msg.append(" is deleted.");
+                } else if (BooleanUtils.isTrue(queue.getDisabled())) {
+                    msg.append(" is disabled.");
+                }
+                throw new UnavailableException(State.PERMANENT, msg.toString());
+            }
 
-            final String authWebAppUser;
-
-            if (isUserTrusted) {
-                /*
-                 * Simulate an authenticated Web App user.
-                 */
-                authWebAppUser = requestingUserId;
-            } else {
-                authWebAppUser = null;
+            if (!this.hasClientIpAccessToQueue(queue, queue.getUrlPath(),
+                    printReq.getOriginatorIp())) {
+                final StringBuilder msg = new StringBuilder();
+                msg.append("IP ").append(printReq.getOriginatorIp())
+                        .append(" not allowed for queue /")
+                        .append(queue.getUrlPath());
+                throw new UnavailableException(State.PERMANENT, msg.toString());
             }
 
             processor = new DocContentPrintProcessor(queue, originatorIp, title,
-                    authWebAppUser);
+                    userId);
 
             /*
              * If we tracked the user down by his email address, we know he
              * already exists in the database, so a lazy user insert is no issue
              * (same argument for a Web Print).
              */
-            processor.processRequestingUser(requestingUserId);
+            processor.processAssignedUser(userId);
 
             isAuthorized = processor.isAuthorized();
 
@@ -465,16 +474,9 @@ public final class QueueServiceImpl extends AbstractService
                 if (contentType != null
                         && DocContent.isSupported(contentType)) {
 
-                    /*
-                     * Process content stream, write DocLog and move PDF to
-                     * inbox.
-                     */
-                    processor.process(istrContent, protocol, originatorEmail,
-                            contentType, preferredOutputFont);
+                    processor.process(istrContent, null, protocol,
+                            originatorEmail, contentType, preferredOutputFont);
 
-                    /*
-                     * Fill response.
-                     */
                     printRsp.setResult(PrintInResultEnum.OK);
                     printRsp.setDocumentUuid(processor.getUuidJob());
 
@@ -487,12 +489,14 @@ public final class QueueServiceImpl extends AbstractService
                 printRsp.setResult(PrintInResultEnum.USER_NOT_AUTHORIZED);
                 LOGGER.warn(
                         String.format("User [%s] not authorized for Queue [%s]",
-                                requestingUserId, reservedQueue.getUrlPath()));
+                                userId, reservedQueue.getUrlPath()));
             }
 
         } catch (ReadLockObtainFailedException e) {
             throw new DocContentPrintException(PhraseEnum.SYS_TEMP_UNAVAILABLE
                     .uiText(ServiceContext.getLocale()));
+        } catch (UnavailableException e) {
+            throw e;
         } catch (Exception e) {
             if (processor != null) {
                 processor.setDeferredException(e);
@@ -534,9 +538,6 @@ public final class QueueServiceImpl extends AbstractService
          */
         processor.evaluateErrorState(isAuthorized);
 
-        /*
-         * Throw deferred exception.
-         */
         if (printException != null) {
             throw printException;
         }
@@ -544,20 +545,17 @@ public final class QueueServiceImpl extends AbstractService
         if (processor.isPdfRepaired()) {
             LOGGER.warn("PDF [{}] is invalid and has been repaired.",
                     printReq.getFileName());
-        }
 
+            AdminPublisher.instance().publish(PubTopicEnum.USER,
+                    PubLevelEnum.WARN, String.format("User [%s] [%s] repaired.",
+                            userId, printReq.getFileName()));
+        }
         return printRsp;
     }
 
     @Override
     public boolean hasClientIpAccessToQueue(final IppQueue queue,
             final String printerNameForLogging, final String clientIpAddr) {
-
-        /*
-         * Assume remote host has NO access to printing.
-         */
-        boolean hasPrintAccessToQueue = false;
-        boolean isTrustedQueue = false;
 
         /*
          * Is IppQueue present ... and can it be used?
@@ -567,25 +565,11 @@ public final class QueueServiceImpl extends AbstractService
                     printerNameForLogging));
         }
 
-        if (queue.getDisabled()) {
-            throw new SpException(String.format("queue [%s] is disabled.",
-                    queue.getUrlPath()));
-        }
-
         /*
-         * Can the queue be trusted?
+         * Check if client IP address is in range of the allowed IP CIDR.
          */
-        isTrustedQueue = queue.getTrusted();
-
-        /*
-         * Check if client IP address is inrange of the allowed IP CIDR.
-         *
-         * A single IPv4 CIDR for now...
-         */
-        final String ipAllowed = queue.getIpAllowed();
-
-        hasPrintAccessToQueue =
-                InetUtils.isIp4AddrInCidrRanges(ipAllowed, clientIpAddr);
+        final boolean hasPrintAccessToQueue = InetUtils
+                .isIpAddrInCidrRanges(queue.getIpAllowed(), clientIpAddr);
 
         /*
          * Logging
@@ -596,7 +580,7 @@ public final class QueueServiceImpl extends AbstractService
 
             msg.append("Queue [").append(queue.getUrlPath()).append("] ");
 
-            if (isTrustedQueue) {
+            if (queue.getTrusted()) {
                 msg.append("TRUSTED");
             } else {
                 msg.append("NOT Trusted");
@@ -617,6 +601,11 @@ public final class QueueServiceImpl extends AbstractService
     @Override
     public boolean isQueueEnabled(final ReservedIppQueueEnum queue) {
         return !ippQueueDAO().find(queue).getDisabled();
+    }
+
+    @Override
+    public IppQueue lockQueue(final Long id) {
+        return ippQueueDAO().lock(id);
     }
 
 }

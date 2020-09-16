@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -26,6 +29,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.savapage.core.SpException;
 import org.savapage.core.UnavailableException;
 import org.savapage.core.config.IConfigProp;
 import org.savapage.core.dao.enums.IppQueueAttrEnum;
@@ -153,7 +157,8 @@ public interface QueueService {
     /**
      * Does {@link IppQueue} represent an active queue. A driver (regular and
      * reserved) queue is active when not deleted and not disabled. A driverless
-     * reserved queue is active when enabled by configuration.
+     * reserved queue is active when enabled either by configuration or queue
+     * setting (not deleted and not disabled).
      *
      * @param queue
      *            The {@link IppQueue} .
@@ -338,10 +343,8 @@ public interface QueueService {
      *
      * @param reservedQueue
      *            The {@link ReservedIppQueueEnum}.
-     * @param user
-     *            The {@link User} requesting the print.
-     * @param isUserTrusted
-     *            {@code true} when user is trusted.
+     * @param userId
+     *            The unique ID of the {@link User} requesting the print.
      * @param printReq
      *            The {@link DocContentPrintReq}.
      * @param istrContent
@@ -350,25 +353,14 @@ public interface QueueService {
      * @throws DocContentPrintException
      *             When something goes wrong during printing.
      * @throws UnavailableException
-     *             When PFD conversion is unavailable.
+     *             When PDF conversion is unavailable.
      */
     DocContentPrintRsp printDocContent(ReservedIppQueueEnum reservedQueue,
-            User user, boolean isUserTrusted, DocContentPrintReq printReq,
-            InputStream istrContent)
+            String userId, DocContentPrintReq printReq, InputStream istrContent)
             throws DocContentPrintException, UnavailableException;
 
     /**
-     * Checks if client IPv4 address has access to a queue.
-     * <p>
-     * Access is allowed if one of these conditions is met:
-     * <ol>
-     * <li>The queue is not deleted and not disabled.</li>
-     * <li>clientIpAddr is an allowed IP address for the queue.</li>
-     * <li>The queue is trusted, and the clientIpAddr is allowed to print to it.
-     * </li>
-     * <li>remoteAddr (client) has access to queue.</li>
-     * </ol>
-     * </p>
+     * Checks if remote client IP address has access to a queue.
      *
      * @param queue
      *            The queue.
@@ -376,8 +368,10 @@ public interface QueueService {
      *            The printer name used for logging when errors are encountered.
      * @param clientIpAddr
      *            The IP address of the requesting user.
-     * @return {@code true} when access to queue is allowed, {@code false} when
-     *         not.
+     * @return {@code true} when IP access to queue is allowed, {@code false}
+     *         when not.
+     * @throws SpException
+     *             If queue is deleted.
      */
     boolean hasClientIpAccessToQueue(IppQueue queue,
             String printerNameForLogging, String clientIpAddr);
@@ -390,5 +384,18 @@ public interface QueueService {
      * @return {@code true} when enabled.
      */
     boolean isQueueEnabled(ReservedIppQueueEnum queue);
+
+    /**
+     * Finds the {@link IppQueue} by primary key and locks database row.
+     * <p>
+     * Use this method to force serialization among transactions attempting to
+     * update {@link IppQueue} data.
+     * </p>
+     *
+     * @param id
+     *            The primary key.
+     * @return The {@link IppQueue} instance.
+     */
+    IppQueue lockQueue(Long id);
 
 }

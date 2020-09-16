@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -21,6 +24,7 @@
  */
 package org.savapage.core.users;
 
+import java.io.IOException;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -36,10 +40,11 @@ import javax.naming.directory.Attributes;
 import javax.naming.directory.SearchControls;
 import javax.naming.directory.SearchResult;
 import javax.naming.ldap.InitialLdapContext;
+import javax.naming.ldap.StartTlsResponse;
 
 import org.apache.commons.lang3.StringUtils;
 import org.savapage.core.config.IConfigProp.Key;
-import org.savapage.core.config.IConfigProp.LdapType;
+import org.savapage.core.config.IConfigProp.LdapTypeEnum;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -140,7 +145,7 @@ public final class ActiveDirectoryUserSource extends LdapUserSourceMixin {
      */
     public ActiveDirectoryUserSource() {
 
-        super(LdapType.ACTD);
+        super(LdapTypeEnum.ACTD);
 
         this.ldapDnField = getLdapConfigValue(Key.LDAP_SCHEMA_DN_FIELD);
 
@@ -251,7 +256,10 @@ public final class ActiveDirectoryUserSource extends LdapUserSourceMixin {
 
         NamingEnumeration<SearchResult> results = null;
 
+        StartTlsResponse tls = null;
+
         try {
+            tls = this.setInitialLdapStartTLS(ctx);
 
             final SearchControls controls = new SearchControls();
 
@@ -289,16 +297,16 @@ public final class ActiveDirectoryUserSource extends LdapUserSourceMixin {
                         groupDn, 1, formatted);
             }
 
-            closeResources(results, null);
+            closeResources(results, null, null);
             results = null;
 
-        } catch (NamingException e) {
+        } catch (IOException | NamingException e) {
 
             nestedGroupList.add(
                     "ERROR [" + e.getClass().getName() + "] " + e.getMessage());
 
         } finally {
-            closeResources(results, ctx);
+            closeResources(results, tls, ctx);
         }
 
         return nestedGroupList;
@@ -393,7 +401,7 @@ public final class ActiveDirectoryUserSource extends LdapUserSourceMixin {
                 }
 
             } finally {
-                closeResources(results, null);
+                closeResources(results, null, null);
             }
 
             hasNextPage = ldapPager.hasNextPage();

@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -26,6 +29,7 @@ import java.io.InputStream;
 
 import org.savapage.core.ipp.IppProcessingException;
 import org.savapage.core.ipp.attribute.IppAttrValue;
+import org.savapage.core.ipp.attribute.IppDictJobDescAttr;
 import org.savapage.core.jpa.User;
 import org.savapage.core.print.server.DocContentPrintProcessor;
 
@@ -36,10 +40,12 @@ import org.savapage.core.print.server.DocContentPrintProcessor;
  */
 public final class IppValidateJobReq extends AbstractIppRequest {
 
+    /** */
     private DocContentPrintProcessor printInReqHandler = null;
 
     @Override
-    protected void process(final InputStream istr) {
+    protected void process(final AbstractIppOperation operation,
+            final InputStream istr) {
         // no code intended
     }
 
@@ -47,48 +53,54 @@ public final class IppValidateJobReq extends AbstractIppRequest {
      * Just the attributes, not the print job data.
      *
      * @param operation
+     *            IPP operation
      * @param istr
+     *            IPP input stream
      * @throws Exception
+     *             If error.
      */
     public void processAttributes(final IppValidateJobOperation operation,
             final InputStream istr) throws IOException {
 
         final String authWebAppUser;
 
-        if (operation.isTrustedUserAsRequester()) {
-            authWebAppUser = null;
+        if (operation.isAuthUserIppRequester()) {
+            authWebAppUser = operation.getAuthenticatedUser();
         } else {
-            authWebAppUser = operation.getTrustedIppClientUserId();
+            authWebAppUser = null;
         }
 
         /*
-         * Create generic PrintIn handler. This should be a first action because
-         * this handler holds the deferred exception.
+         * Step 1: Create generic PrintIn handler.
+         *
+         * This should be a first action because this handler holds the deferred
+         * exception.
          */
-        printInReqHandler = new DocContentPrintProcessor(operation.getQueue(),
-                operation.getRemoteAddr(), null, authWebAppUser);
+        this.printInReqHandler =
+                new DocContentPrintProcessor(operation.getQueue(),
+                        operation.getRemoteAddr(), null, authWebAppUser);
 
         /*
-         * Then, read the IPP attributes.
+         * Step 2: Read the IPP attributes.
          */
-        readAttributes(istr);
+        readAttributes(operation, istr);
 
         /*
-         * Then, get the IPP requesting user.
+         * Then, assign user.
          */
-        final String requestingUserId;
+        final String assignedUserId;
 
-        if (operation.isTrustedUserAsRequester()) {
-            requestingUserId = operation.getTrustedIppClientUserId();
+        if (operation.isAuthUserIppRequester()) {
+            assignedUserId = operation.getAuthenticatedUser();
         } else {
-            requestingUserId = this.getRequestingUserName();
+            assignedUserId = this.getRequestingUserName();
         }
 
         /*
          * Check...
          */
-        printInReqHandler.setJobName(getJobName());
-        printInReqHandler.processRequestingUser(requestingUserId);
+        this.printInReqHandler.setJobName(this.getJobName());
+        this.printInReqHandler.processAssignedUser(assignedUserId);
     }
 
     /**
@@ -97,7 +109,8 @@ public final class IppValidateJobReq extends AbstractIppRequest {
      */
     public String getJobName() {
 
-        final IppAttrValue ippValue = getAttrValue("job-name");
+        final IppAttrValue ippValue =
+                getAttrValue(IppDictJobDescAttr.ATTR_JOB_NAME);
 
         if (ippValue == null || ippValue.getValues().isEmpty()) {
             return "";
@@ -112,7 +125,7 @@ public final class IppValidateJobReq extends AbstractIppRequest {
      * @return {@code null} when unknown.
      */
     public User getUserDb() {
-        return printInReqHandler.getUserDb();
+        return this.printInReqHandler.getUserDb();
     }
 
     /**
@@ -125,7 +138,7 @@ public final class IppValidateJobReq extends AbstractIppRequest {
     }
 
     public boolean hasDeferredException() {
-        return printInReqHandler.getDeferredException() != null;
+        return this.printInReqHandler.getDeferredException() != null;
     }
 
     public IppProcessingException getDeferredException() {

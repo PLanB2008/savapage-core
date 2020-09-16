@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -68,6 +71,11 @@ public final class PdfToDecrypted extends AbstractFileConverter
     }
 
     @Override
+    protected ExecType getExecType() {
+        return ExecType.ADVANCED;
+    }
+
+    @Override
     protected File getOutputFile(final File fileIn) {
 
         final StringBuilder builder = new StringBuilder(128);
@@ -96,9 +104,9 @@ public final class PdfToDecrypted extends AbstractFileConverter
             /*
              * See #598
              */
-            cmd.append("qpdf --decrypt \"").append(fileIn.getCanonicalPath())
-                    .append("\" \"").append(fileOut.getCanonicalPath()) //
-                    .append("\" < /dev/null");
+            cmd.append(SystemInfo.Command.QPDF.cmd()).append(" --decrypt \"")
+                    .append(fileIn.getCanonicalPath()).append("\" \"")
+                    .append(fileOut.getCanonicalPath()).append("\"");
         } catch (IOException e) {
             throw new SpException(e.getMessage(), e);
         }
@@ -115,6 +123,11 @@ public final class PdfToDecrypted extends AbstractFileConverter
         } catch (DocContentToPdfException e) {
             throw new IOException(e.getMessage());
         }
+    }
+
+    @Override
+    protected void onStdout(final String stdout) {
+        // no code intended.
     }
 
 }

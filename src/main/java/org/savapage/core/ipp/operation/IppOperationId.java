@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2017 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -29,16 +32,16 @@ import org.savapage.core.SpException;
  * <a href="http://tools.ietf.org/html/rfc2911#section-4.4.15">RFC2911</a>.
  * </p>
  * <p>
- * CUPS provides <a
- * href="http://www.cups.org/documentation.php/spec-ipp.html">16 extension
+ * CUPS provides
+ * <a href="http://www.cups.org/documentation.php/spec-ipp.html">16 extension
  * operations </a> in addition to most of the standard IPP and registered
  * extension operations.
  * </p>
+ *
+ * @author Rijk Ravestein
+ *
  */
 public enum IppOperationId {
-
-    // 0x0000 reserved, not used
-    // 0x0001 reserved, not used
 
     /**  */
     PRINT_JOB(0x02),
@@ -91,9 +94,8 @@ public enum IppOperationId {
     PURGE_JOBS(0x12),
 
     /*
-     * 0x0013-0x3FFF
-     *
-     * reserved for future IETF standards track operations (see section 6.4).
+     * 0x0013-0x3FFF : reserved for future IETF standards track operations (see
+     * section 6.4).
      */
 
     /**
@@ -149,10 +151,14 @@ public enum IppOperationId {
     IDENTIFY_PRINTER(0x3C),
 
     /*
-     * 0x4000-0x8FFF
-     *
-     * reserved for vendor extensions (see section 6.4)
+     * 0x4000-0x8FFF : IPP Vendor Operation Codes.
+     * https://www.pwg.org/ipp/opcodes/ippopcodes.html
      */
+
+    /**
+     * Observed when printing IPP/1.x from MS Windows. No documentation found.
+     */
+    MICROSOFT_UNDOCUMENTED(0x4000),
 
     /** CUPS 1.0 : Get the default destination. */
     CUPS_GET_DEFAULT(0x4001),
@@ -200,49 +206,43 @@ public enum IppOperationId {
     CUPS_GET_PPD(0x400F),
 
     /** CUPS 1.4 : Get a document file from a job. */
-    CUPS_GET_DOCUMENT(0x4027);
+    CUPS_GET_DOCUMENT(0x4027),
 
     /**
-     *
+     * CUPS 2.2 : Creates a local (temporary) print queue pointing to a remote
+     * IPP Everywhere printer.
      */
-    private int bitPattern = 0;
+    CUPS_CREATE_LOCAL_PRINTER(0x4028);
 
     /**
-    *
-    */
-    private static IppOperationId[] supported = new IppOperationId[] {
-            // ---------------------------------------
-            // REQUIRED
-            GET_PRINTER_ATTR,
-            // REQUIRED
-            PRINT_JOB,
-            // REQUIRED
-            GET_JOB_ATTR,
-            // REQUIRED
-            GET_JOBS,
-            // REQUIRED
-            CANCEL_JOB,
-            // REQUIRED
-            VALIDATE_JOB,
-    // ---------------------------------------
-    // IPP Everywhere
-    // TODO CREATE_JOB,
-    // IPP Everywhere
-    // TODO SEND_DOC,
-    // IPP Everywhere
-    // TODO CANCEL_MY_JOBS,
-    // IPP Everywhere
-    // TODO CLOSE_JOB,
-    // IPP Everywhere
-    // TODO IDENTIFY_PRINTER
-            };
+     * Operation code.
+     */
+    private int opcode = 0;
 
     /**
-    *
-    */
-    private static IppOperationId[] optional = new IppOperationId[] {
-            PRINT_URI, CREATE_JOB, PAUSE_PRINTER, RESUME_PRINTER, PURGE_JOBS,
-            SEND_DOC, SEND_URI, HOLD_JOB, RELEASE_JOB, RESTART_JOB };
+     * Supported IPP/1.x operations.
+     */
+    private static IppOperationId[] supportedV1 = new IppOperationId[] {
+            //
+            GET_PRINTER_ATTR, //
+            PRINT_JOB, //
+            GET_JOB_ATTR, //
+            GET_JOBS, //
+            CANCEL_JOB, //
+            VALIDATE_JOB //
+    };
+
+    /**
+     * Supported IPP/2.x operations.
+     */
+    private static IppOperationId[] supportedV2 = new IppOperationId[] {
+            //
+            IDENTIFY_PRINTER, //
+            CREATE_JOB, //
+            SEND_DOC, //
+            CANCEL_MY_JOBS, //
+            CLOSE_JOB //
+    };
 
     /**
      * Creates an enum value from an integer.
@@ -251,7 +251,7 @@ public enum IppOperationId {
      *            The integer.
      */
     IppOperationId(final int value) {
-        this.bitPattern = value;
+        this.opcode = value;
     }
 
     /**
@@ -260,14 +260,17 @@ public enum IppOperationId {
      * @return The integer.
      */
     public int asInt() {
-        return this.bitPattern;
+        return this.opcode;
     }
 
     /**
+     * Converts int to enum.
+     *
      * Note: these are only the values used by SavaPage in print server role.
      *
      * @param value
-     * @return
+     *            numeric code.
+     * @return {@link IppOperationId}.
      */
     public static IppOperationId asEnum(final int value) {
         if (value == IppOperationId.PRINT_JOB.asInt()) {
@@ -313,30 +316,23 @@ public enum IppOperationId {
         } else if (value == IppOperationId.CUPS_GET_DEFAULT.asInt()) {
             return CUPS_GET_DEFAULT;
         }
-
-        throw new SpException("value [" + value
-                + "] can not be converted to enum");
+        throw new SpException(
+                String.format("Value [%d] can not be converted to %s.", value,
+                        IppOperationId.class.getSimpleName()));
     }
 
     /**
-     *
-     * @return
+     * @return Supported IPP/1.x operations.
      */
-    public static IppOperationId[] supported() {
-        return supported;
+    public static IppOperationId[] supportedV1() {
+        return supportedV1;
     }
 
     /**
-     *
-     * @return
+     * @return Supported IPP/2.x operations.
      */
-    public static boolean isSupported(final IppOperationId operation) {
-        for (IppOperationId wlk : supported()) {
-            if (wlk.equals(operation)) {
-                return true;
-            }
-        }
-        return false;
+    public static IppOperationId[] supportedV2() {
+        return supportedV2;
     }
 
 }

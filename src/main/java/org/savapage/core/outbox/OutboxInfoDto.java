@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -21,13 +24,12 @@
  */
 package org.savapage.core.outbox;
 
-import java.io.IOException;
-import java.io.StringWriter;
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
@@ -46,8 +48,6 @@ import org.savapage.core.services.helpers.ProxyPrintCostDto;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonGenerator;
 
 /**
  *
@@ -422,6 +422,11 @@ public final class OutboxInfoDto extends AbstractDto {
         private String mediaSourceJobSheet;
 
         /**
+         * IPP RFC2911 "media" name.
+         */
+        private String media;
+
+        /**
          * {@code true} when one of the job pages has landscape orientation.
          * {@code null} when unknown.
          */
@@ -759,6 +764,21 @@ public final class OutboxInfoDto extends AbstractDto {
         }
 
         /**
+         * @return IPP RFC2911 "media" name.
+         */
+        public String getMedia() {
+            return media;
+        }
+
+        /**
+         * @param media
+         *            IPP RFC2911 "media" name.
+         */
+        public void setMedia(String media) {
+            this.media = media;
+        }
+
+        /**
          * @return {@code true} when first page is perceived as landscape
          *         orientation. {@code null} when unknown.
          */
@@ -869,8 +889,7 @@ public final class OutboxInfoDto extends AbstractDto {
         }
 
         /**
-         * @return {@code true} when this Job Ticket is charged to a single
-         *         account.
+         * @return {@code true} if this job is charged to a single account.
          */
         @JsonIgnore
         public boolean isSingleAccountPrint() {
@@ -889,11 +908,59 @@ public final class OutboxInfoDto extends AbstractDto {
         }
 
         /**
+         * @return {@code true} if this job is charged to a single User Group
+         *         account <i>including</i> individual group members.
+         */
+        @JsonIgnore
+        public boolean isSingleAccountUserGroupPrint() {
+            return this.getSingleAccountUserGroupMap().size() == 1;
+        }
+
+        /**
+         * @return A map of User Group Account key and name. If map is empty no
+         *         single account is present.
+         */
+        @JsonIgnore
+        public Map<Long, String> getSingleAccountUserGroupMap() {
+            final Map<Long, String> map = new HashMap<>();
+
+            if (this.accountTransactions == null) {
+                return map;
+            }
+
+            String groupName = null;
+            Long groupID = null;
+
+            for (final OutboxAccountTrxInfo trx : this.accountTransactions.transactions) {
+
+                if (StringUtils.isBlank(trx.getExtDetails())) {
+                    if (groupID == null) {
+                        groupID = trx.getAccountId();
+                    } else if (trx.getAccountId() != groupID.longValue()) {
+                        return map;
+                    }
+                } else {
+                    if (groupName == null) {
+                        groupName = trx.getExtDetails();
+                    } else if (!trx.getExtDetails().equals(groupName)) {
+                        return map;
+                    }
+                }
+            }
+
+            if (groupName != null && groupID != null) {
+                map.put(groupID, groupName);
+            }
+            return map;
+        }
+
+        /**
          * Sets number of printed copies for a single account print.
          *
          * @param copies
          *            Number of printed copies.
          */
+        @JsonIgnore
         public void setSingleAccountPrintCopies(final int copies) {
             if (!this.isSingleAccountPrint()) {
                 throw new IllegalStateException("not a single account.");
@@ -903,6 +970,31 @@ public final class OutboxInfoDto extends AbstractDto {
                 this.accountTransactions.setWeightTotal(copies);
                 this.accountTransactions.transactions.get(0).setWeight(copies);
             }
+        }
+
+        /**
+         * Sets number of printed copies for a single User Group account
+         * <i>and</i> including group members.
+         *
+         * @param singleAccount
+         *            A map of User Group Account key and name.
+         * @param copies
+         *            Number of printed copies.
+         */
+        @JsonIgnore
+        public void setSingleAccountUserGroupPrint(
+                final Map<Long, String> singleAccount, final int copies) {
+
+            this.setCopies(copies);
+
+            final OutboxCopiesEditor editor = new OutboxCopiesEditor(
+                    this.getAccountTransactions(), singleAccount);
+
+            final Entry<Long, String> entry =
+                    singleAccount.entrySet().iterator().next();
+
+            this.setAccountTransactions(
+                    editor.recalcGroupCopies(entry.getKey(), copies));
         }
 
         /**
@@ -967,6 +1059,17 @@ public final class OutboxInfoDto extends AbstractDto {
     }
 
     /**
+     *
+     * @param fileName
+     *            Job file name.
+     * @return {@code true} if this info contain job file name..
+     */
+    @JsonIgnore
+    public boolean containsJob(final String fileName) {
+        return this.jobs.containsKey(fileName);
+    }
+
+    /**
      * Adds a job.
      *
      * @param fileName
@@ -988,20 +1091,6 @@ public final class OutboxInfoDto extends AbstractDto {
      */
     public static OutboxInfoDto create(final String json) throws Exception {
         return getMapper().readValue(json, OutboxInfoDto.class);
-    }
-
-    /**
-     *
-     * @return
-     * @throws IOException
-     */
-    public String prettyPrinted() throws IOException {
-        final JsonFactory jsonFactory = new JsonFactory();
-        final StringWriter sw = new StringWriter();
-        final JsonGenerator jg = jsonFactory.createJsonGenerator(sw);
-        jg.useDefaultPrettyPrinter();
-        getMapper().writeValue(jg, this);
-        return sw.toString();
     }
 
 }

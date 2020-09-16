@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -57,9 +60,12 @@ import org.savapage.core.crypto.OneTimeAuthToken;
 import org.savapage.core.dao.enums.DeviceTypeEnum;
 import org.savapage.core.dao.enums.ReservedIppQueueEnum;
 import org.savapage.core.dao.impl.DaoBatchCommitterImpl;
+import org.savapage.core.dto.UserHomeStatsDto;
 import org.savapage.core.fonts.InternalFontFamilyEnum;
+import org.savapage.core.imaging.Pdf2ImgCairoCmd;
 import org.savapage.core.jpa.Account.AccountTypeEnum;
 import org.savapage.core.jpa.PrinterGroup;
+import org.savapage.core.jpa.UserNumber;
 import org.savapage.core.json.rpc.JsonRpcMethodName;
 import org.savapage.core.services.helpers.DocLogScopeEnum;
 import org.savapage.core.services.helpers.InboxSelectScopeEnum;
@@ -165,8 +171,10 @@ public interface IConfigProp {
 
     String LDAP_TYPE_V_APPLE = "APPLE_OPENDIR";
     String LDAP_TYPE_V_OPEN_LDAP = "OPEN_LDAP";
+    String LDAP_TYPE_V_FREE_IPA = "FREE_IPA";
     String LDAP_TYPE_V_E_DIR = "NOVELL_EDIRECTORY";
     String LDAP_TYPE_V_ACTIV = "ACTIVE_DIRECTORY";
+    String LDAP_TYPE_V_GOOGLE_CLOUD = "GOOGLE_CLOUD";
 
     String PAPERSIZE_V_SYSTEM = "";
     String PAPERSIZE_V_A4 = MediaSizeName.ISO_A4.toString();
@@ -571,6 +579,31 @@ public interface IConfigProp {
                 API_UPDATABLE_ON),
 
         /**
+         * Use STARTTLS for the LDAP connection.
+         */
+        AUTH_LDAP_USE_STARTTLS(//
+                "auth.ldap.use-starttls", BOOLEAN_VALIDATOR, V_NO,
+                API_UPDATABLE_ON),
+
+        /**
+         * The "DNS Name" in the SSL Certificate "Subject Alternative Name"
+         * group (RFC 6125). This is usually the fully qualified DNS hostname.
+         * For example: www.example.com
+         *
+         * When "DNS Name" is not present (self-signed certificates), the Common
+         * Name (CN) the certificate is "issued to" can be used (not RFC 6125).
+         */
+        AUTH_LDAP_STARTTLS_CERT_DNSNAME(//
+                "auth.ldap.starttls-cert-dnsname", API_UPDATABLE_ON),
+
+        /**
+         *
+         */
+        AUTH_LDAP_SSL_HOSTNAME_VERIFICATION_DISABLE(//
+                "auth.ldap.ssl.hostname-verification-disable",
+                BOOLEAN_VALIDATOR, V_NO, API_UPDATABLE_ON),
+
+        /**
          *
          */
         CARD_NUMBER_FORMAT(//
@@ -587,14 +620,6 @@ public interface IConfigProp {
                 new String[] { CARD_NUMBER_FIRSTBYTE_V_LSB,
                         CARD_NUMBER_FIRSTBYTE_V_MSB },
                 API_UPDATABLE_OFF),
-
-        /**
-         * IMPORTANT: the value of this key should be GT one (1) hour, since the
-         * renewal is Quartz scheduled with Key.ScheduleHourly.
-         */
-        CUPS_IPP_SUBSCR_NOTIFY_LEASE_DURATION(//
-                "cups.ipp.subscription.notify-lease-duration", NUMBER_VALIDATOR,
-                "4200", API_UPDATABLE_ON),
 
         /**
          * Max number of IPP connections per CUPS server.
@@ -647,19 +672,47 @@ public interface IConfigProp {
         /**
          * Cancel CUPS job when stopped.
          */
-        CUPS_JOBSTATE_CANCEL_IF_STOPPED_ENABLE(//
-                "cups.job-state.cancel-if-stopped.enable", BOOLEAN_VALIDATOR,
-                V_YES, API_UPDATABLE_ON),
+        CUPS_IPP_JOBSTATE_CANCEL_IF_STOPPED_ENABLE(//
+                "cups.ipp.job-state.cancel-if-stopped.enable",
+                BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+
+        /** */
+        CUPS_IPP_NOTIFICATION_METHOD(//
+                "cups.ipp.notification.method", PULL_PUSH_ENUM_VALIDATOR,
+                PullPushEnum.PUSH.toString(), API_UPDATABLE_ON),
+
+        /**
+         * Heartbeat (milliseconds) for monitoring pushed CUPS job id status
+         * notifications.
+         */
+        CUPS_IPP_NOTIFICATION_PUSH_HEARTBEAT_MSEC(//
+                "cups.ipp.notification.push.heartbeat-msec", NUMBER_VALIDATOR,
+                "4000"),
+
+        /**
+         * Number of milliseconds since the last pushed print job status
+         * notification by CUPS Notifier after which a job status update is
+         * pulled from CUPS.
+         */
+        CUPS_IPP_NOTIFICATION_PUSH_PULL_FALLBACK_MSEC(//
+                "cups.ipp.notification.push.pull-fallback-msec",
+                NUMBER_VALIDATOR, "30000"),
+
+        /**
+         * IMPORTANT: the value of this key should be GT one (1) hour, since the
+         * renewal is Quartz scheduled with Key.ScheduleHourly.
+         */
+        CUPS_IPP_NOTIFICATION_PUSH_NOTIFY_LEASE_DURATION(//
+                "cups.ipp.notification.push.notify-lease-duration",
+                NUMBER_VALIDATOR, "4200", API_UPDATABLE_ON),
 
         /**
          * Heartbeat (milliseconds) for performing a CUPS pull of job id status
-         * while monitoring CUPS notifications. When CUPS notifies (push) job id
-         * status in between, the heartbeat offset for this job id is reset to
-         * zero.
+         * while monitoring CUPS notifications.
          */
-        CUPS_NOTIFIER_JOB_STATUS_PULL_HEARTBEAT_MSEC(//
-                "cups.notifier.job-status-pull.heartbeat-msec",
-                NUMBER_VALIDATOR, "30000"),
+        CUPS_IPP_NOTIFICATION_PULL_HEARTBEAT_MSEC(//
+                "cups.ipp.notification.pull.heartbeat-msec", NUMBER_VALIDATOR,
+                "5000"),
 
         /**
          *
@@ -826,6 +879,23 @@ public interface IConfigProp {
                 CIDR_RANGES_VALIDATOR_OPT, API_UPDATABLE_OFF),
 
         /**
+         * Enable Telegram messaging.
+         */
+        EXT_TELEGRAM_ENABLE("ext.telegram.enable", BOOLEAN_VALIDATOR, V_NO,
+                API_UPDATABLE_ON),
+
+        /**
+         * Telegram BOT username of HTTP API.
+         */
+        EXT_TELEGRAM_BOT_USERNAME("ext.telegram.bot.username",
+                API_UPDATABLE_ON),
+
+        /**
+         * Secret token to access the Telegram HTTP API.
+         */
+        EXT_TELEGRAM_BOT_TOKEN("ext.telegram.bot.token", API_UPDATABLE_ON),
+
+        /**
          * The base URL, i.e. "protocol://authority" <i>without</i> the path, of
          * the Web API callback interface (no trailing slash) (optional).
          */
@@ -932,6 +1002,11 @@ public interface IConfigProp {
         IPP_ROUTING_ENABLE(//
                 "ipp.routing.enable", BOOLEAN_VALIDATOR, V_NO,
                 API_UPDATABLE_ON),
+
+        /** */
+        IPP_PRINTER_ATTR_PRINTER_UUID(//
+                "ipp.printer-attr.printer-uuid", UUID_VALIDATOR,
+                UUID.randomUUID().toString(), API_UPDATABLE_ON),
 
         /**
          * See this <a href=
@@ -1046,7 +1121,8 @@ public interface IConfigProp {
         LDAP_SCHEMA_TYPE(//
                 "ldap.schema.type", null, LDAP_TYPE_V_OPEN_LDAP,
                 new String[] { LDAP_TYPE_V_ACTIV, LDAP_TYPE_V_E_DIR,
-                        LDAP_TYPE_V_APPLE, LDAP_TYPE_V_OPEN_LDAP },
+                        LDAP_TYPE_V_APPLE, LDAP_TYPE_V_OPEN_LDAP,
+                        LDAP_TYPE_V_FREE_IPA, LDAP_TYPE_V_GOOGLE_CLOUD },
                 API_UPDATABLE_ON),
 
         /**
@@ -1912,24 +1988,100 @@ public interface IConfigProp {
         /**
          *
          */
-        PRINT_IN_ALLOW_ENCRYPTED_PDF(//
-                "print-in.allow-encrypted-pdf", BOOLEAN_VALIDATOR, V_YES),
+        PRINT_IN_PDF_ENCRYPTED_ALLOW(//
+                "print-in.pdf.encrypted.allow", BOOLEAN_VALIDATOR, V_YES,
+                API_UPDATABLE_ON),
 
         /**
          * Enable PDF "repair" option for print-in PDF documents (Web Print)
          * (boolean).
          */
-        PRINT_IN_REPAIR_PDF_ENABLE(//
-                "print-in.repair.pdf.enable", BOOLEAN_VALIDATOR, V_YES,
+        PRINT_IN_PDF_INVALID_REPAIR(//
+                "print-in.pdf.invalid.repair", BOOLEAN_VALIDATOR, V_YES,
+                API_UPDATABLE_ON),
+
+        /**
+         * Enable {@code pdffonts} validation/repair for print-in PDF documents
+         * (Web Print) (boolean).
+         */
+        PRINT_IN_PDF_FONTS_VERIFY(//
+                "print-in.pdf.fonts.verify", BOOLEAN_VALIDATOR, V_YES,
+                API_UPDATABLE_ON),
+
+        /**
+         * Enable embedding of all fonts (including standard PDF fonts) if
+         * non-embedded/non-standard fonts are present in print-in PDF document
+         * (Web Print) (boolean).
+         */
+        PRINT_IN_PDF_FONTS_EMBED(//
+                "print-in.pdf.fonts.embed", BOOLEAN_VALIDATOR, V_YES,
+                API_UPDATABLE_ON),
+
+        /**
+         * Enable/disable cleaning of print-in PDF documents (Web Print).
+         */
+        PRINT_IN_PDF_CLEAN(//
+                "print-in.pdf.clean", BOOLEAN_VALIDATOR, V_YES,
+                API_UPDATABLE_ON),
+
+        /**
+         * Enable/disable prepress of print-in PDF documents (Web Print).
+         */
+        PRINT_IN_PDF_PREPRESS(//
+                "print-in.pdf.prepress", BOOLEAN_VALIDATOR, V_NO,
+                API_UPDATABLE_ON),
+
+        /**
+         * Trigger to render all driver printed PostScript pages to images.
+         */
+        PRINT_IN_PS_DRIVER_IMAGES_TRIGGER(//
+                "print-in.ps.driver.images.trigger", ON_OFF_ENUM_VALIDATOR,
+                OnOffEnum.AUTO.toString(), API_UPDATABLE_ON),
+
+        /**
+         * Driver printed PostScript image DPI.
+         */
+        PRINT_IN_PS_DRIVER_IMAGES_DPI(//
+                "print-in.ps.driver.images.dpi", NUMBER_VALIDATOR, "300",
+                API_UPDATABLE_ON),
+
+        /**
+         * Temporarily detain driver printed PostScript file.
+         */
+        PRINT_IN_PS_DRIVER_DETAIN(//
+                "print-in.ps.driver.detain", ON_OFF_ENUM_VALIDATOR,
+                OnOffEnum.OFF.toString(), API_UPDATABLE_ON),
+
+        /**
+         * Trigger to render all driver printed PostScript pages to images.
+         */
+        PRINT_IN_PS_DRIVERLESS_IMAGES_TRIGGER(//
+                "print-in.ps.driverless.images.trigger", ON_OFF_ENUM_VALIDATOR,
+                OnOffEnum.AUTO.toString(), API_UPDATABLE_ON),
+
+        /**
+         * Driverless printed PostScript image DPI.
+         */
+        PRINT_IN_PS_DRIVERLESS_IMAGES_DPI(//
+                "print-in.ps.driverless.images.dpi", NUMBER_VALIDATOR, "300",
                 API_UPDATABLE_ON),
 
         /**
          * Number of minutes after which a print-in job expires. When zero (0)
          * there is NO expiry.
-         *
          */
         PRINT_IN_JOB_EXPIRY_MINS(//
-                "print-in.job-expiry.mins", NUMBER_VALIDATOR, V_ZERO),
+                "print-in.job-expiry.mins", NUMBER_VALIDATOR, V_ZERO,
+                API_UPDATABLE_ON),
+
+        /**
+         * Number of minutes added to print-in job expiry (if applicable) after
+         * which job is considered ignored. Ignored jobs are removed by a
+         * scheduled monitor task.
+         */
+        PRINT_IN_JOB_EXPIRY_IGNORED_MINS(//
+                "print-in.job-expiry-ignored.mins", NUMBER_VALIDATOR, "10",
+                API_UPDATABLE_ON),
 
         /**
          * Enable Copy Job option for Job Ticket (boolean). When {@code true} a
@@ -2313,10 +2465,31 @@ public interface IConfigProp {
                 "proxy-print.fast-expiry-mins", NUMBER_VALIDATOR, "10"),
 
         /**
-         *
+         * Number of minutes after which a Hold Print Job expires. When
+         * expiration is detected in an active User Web App session, the job is
+         * removed.
          */
         PROXY_PRINT_HOLD_EXPIRY_MINS(//
-                "proxy-print.hold-expiry-mins", NUMBER_VALIDATOR, "60"),
+                "proxy-print.hold-expiry-mins", NUMBER_VALIDATOR, "60",
+                API_UPDATABLE_ON),
+
+        /**
+         * Number of minutes added to current time to determine a new expiry
+         * time. If this time is after the current Hold Print Job expiry time,
+         * expiry can be set to this new time at the request of the user.
+         */
+        PROXY_PRINT_HOLD_EXTEND_MINS(//
+                "proxy-print.hold-extend-mins", NUMBER_VALIDATOR, "10",
+                API_UPDATABLE_ON),
+
+        /**
+         * Number of minutes added to Hold Print Job expiry after which job is
+         * considered ignored. Ignored jobs are removed by a scheduled monitor
+         * task.
+         */
+        PROXY_PRINT_HOLD_IGNORED_MINS(//
+                "proxy-print.hold-ignored-mins", NUMBER_VALIDATOR, "10",
+                API_UPDATABLE_ON),
 
         /**
          *
@@ -2345,7 +2518,10 @@ public interface IConfigProp {
 
         /**
          * Enable "repair" option for Proxy Print (boolean).
+         *
+         * @deprecated Use {@link #PRINT_IN_PDF_FONTS_EMBED} = Y.
          */
+        @Deprecated
         PROXY_PRINT_REPAIR_ENABLE(//
                 "proxy-print.repair.enable", BOOLEAN_VALIDATOR, V_NO,
                 API_UPDATABLE_ON),
@@ -2393,10 +2569,56 @@ public interface IConfigProp {
                 "schedule.auto-sync.user", BOOLEAN_VALIDATOR, V_YES),
 
         /**
+         * All print-in documents (day).
+         */
+        STATS_PRINT_IN_ROLLING_DAY_DOCS(//
+                "stats.print-in.rolling-day.docs", API_UPDATABLE_OFF),
+
+        /**
+         * All print-in PDF documents (day).
+         */
+        STATS_PRINT_IN_ROLLING_DAY_PDF(//
+                "stats.print-in.rolling-day.pdf", API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR(//
+                "stats.print-in.rolling-day.pdf.repair", API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR_FAIL(//
+                "stats.print-in.rolling-day.pdf.repair.fail",
+                API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR_FONT(//
+                "stats.print-in.rolling-day.pdf.repair.font",
+                API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR_FONT_FAIL(//
+                "stats.print-in.rolling-day.pdf.repair.font.fail",
+                API_UPDATABLE_OFF),
+
+        /**
          *
          */
         STATS_PRINT_IN_ROLLING_DAY_PAGES(//
                 "stats.print-in.rolling-day.pages", API_UPDATABLE_OFF),
+
+        /**
+         * All print-in documents (week).
+         */
+        STATS_PRINT_IN_ROLLING_WEEK_DOCS(//
+                "stats.print-in.rolling-week.docs", API_UPDATABLE_OFF),
+
+        /**
+         * All print-in PDF documents (week).
+         */
+        STATS_PRINT_IN_ROLLING_WEEK_PDF(//
+                "stats.print-in.rolling-week.pdf", API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR(//
+                "stats.print-in.rolling-week.pdf.repair", API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR_FAIL(//
+                "stats.print-in.rolling-week.pdf.repair.fail",
+                API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR_FONT(//
+                "stats.print-in.rolling-week.pdf.repair.font",
+                API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR_FONT_FAIL(//
+                "stats.print-in.rolling-week.pdf.repair.font.fail",
+                API_UPDATABLE_OFF),
 
         /**
          *
@@ -2409,6 +2631,29 @@ public interface IConfigProp {
          */
         STATS_PRINT_IN_ROLLING_WEEK_BYTES(//
                 "stats.print-in.rolling-week.bytes", API_UPDATABLE_OFF),
+
+        /**
+         * All print-in documents (month).
+         */
+        STATS_PRINT_IN_ROLLING_MONTH_DOCS(//
+                "stats.print-in.rolling-month.docs", API_UPDATABLE_OFF),
+
+        /**
+         * All print-in PDF documents (month).
+         */
+        STATS_PRINT_IN_ROLLING_MONTH_PDF(//
+                "stats.print-in.rolling-month.pdf", API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR(//
+                "stats.print-in.rolling-month.pdf.repair", API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR_FAIL(//
+                "stats.print-in.rolling-month.pdf.repair.fail",
+                API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR_FONT(//
+                "stats.print-in.rolling-month.pdf.repair.font",
+                API_UPDATABLE_OFF),
+        STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR_FONT_FAIL(//
+                "stats.print-in.rolling-month.pdf.repair.font.fail",
+                API_UPDATABLE_OFF),
 
         /**
          *
@@ -2513,53 +2758,83 @@ public interface IConfigProp {
                 "stats.total.reset-date",
                 String.valueOf(System.currentTimeMillis()), API_UPDATABLE_OFF),
 
+        STATS_TOTAL_RESET_DATE_PRINT_IN(//
+                "stats.total.reset-date.print-in",
+                String.valueOf(System.currentTimeMillis()), API_UPDATABLE_OFF),
+
         /**
          *
          */
         STATS_TOTAL_PDF_OUT_PAGES(//
-                "stats.total.pdf-out.pages", "0", API_UPDATABLE_OFF),
+                "stats.total.pdf-out.pages", V_ZERO, API_UPDATABLE_OFF),
 
         /**
          *
          */
         STATS_TOTAL_PDF_OUT_BYTES(//
-                "stats.total.pdf-out.bytes", "0", API_UPDATABLE_OFF),
+                "stats.total.pdf-out.bytes", V_ZERO, API_UPDATABLE_OFF),
+
+        /**
+        *
+        */
+        STATS_TOTAL_PRINT_IN_DOCS(//
+                "stats.total.print-in.docs", V_ZERO, API_UPDATABLE_OFF),
+
+        STATS_TOTAL_PRINT_IN_PDF(//
+                "stats.total.print-in.pdf", V_ZERO, API_UPDATABLE_OFF),
+        STATS_TOTAL_PRINT_IN_PDF_REPAIR(//
+                "stats.total.print-in.pdf.repair", V_ZERO, API_UPDATABLE_OFF),
+        STATS_TOTAL_PRINT_IN_PDF_REPAIR_FAIL(//
+                "stats.total.print-in.pdf.repair.fail", V_ZERO,
+                API_UPDATABLE_OFF),
+        STATS_TOTAL_PRINT_IN_PDF_REPAIR_FONT(//
+                "stats.total.print-in.pdf.repair.font", V_ZERO,
+                API_UPDATABLE_OFF),
+        STATS_TOTAL_PRINT_IN_PDF_REPAIR_FONT_FAIL(//
+                "stats.total.print-in.pdf.repair.font.fail", V_ZERO,
+                API_UPDATABLE_OFF),
 
         /**
          *
          */
         STATS_TOTAL_PRINT_IN_PAGES(//
-                "stats.total.print-in.pages", "0", API_UPDATABLE_OFF),
+                "stats.total.print-in.pages", V_ZERO, API_UPDATABLE_OFF),
 
         /**
          *
          */
         STATS_TOTAL_PRINT_IN_BYTES(//
-                "stats.total.print-in.bytes", "0", API_UPDATABLE_OFF),
+                "stats.total.print-in.bytes", V_ZERO, API_UPDATABLE_OFF),
 
         /**
          *
          */
         STATS_TOTAL_PRINT_OUT_PAGES(//
-                "stats.total.print-out.pages", "0", API_UPDATABLE_OFF),
+                "stats.total.print-out.pages", V_ZERO, API_UPDATABLE_OFF),
 
         /**
          *
          */
         STATS_TOTAL_PRINT_OUT_SHEETS(//
-                "stats.total.print-out.sheets", "0", API_UPDATABLE_OFF),
+                "stats.total.print-out.sheets", V_ZERO, API_UPDATABLE_OFF),
 
         /**
          *
          */
         STATS_TOTAL_PRINT_OUT_ESU(//
-                "stats.total.print-out.esu", "0", API_UPDATABLE_OFF),
+                "stats.total.print-out.esu", V_ZERO, API_UPDATABLE_OFF),
 
         /**
          *
          */
         STATS_TOTAL_PRINT_OUT_BYTES(//
-                "stats.total.print-out.bytes", "0", API_UPDATABLE_OFF),
+                "stats.total.print-out.bytes", V_ZERO, API_UPDATABLE_OFF),
+
+        /**
+         * JSON string of {@link UserHomeStatsDto}.
+         */
+        STATS_USERHOME(//
+                "stats.userhome", API_UPDATABLE_OFF),
 
         /**
          * Make a backup before a database schema upgrade.
@@ -2571,7 +2846,7 @@ public interface IConfigProp {
          * Time in milliseconds when last backup was run.
          */
         SYS_BACKUP_LAST_RUN_TIME(//
-                "system.backup.last-run-time", NUMBER_VALIDATOR, "0"),
+                "system.backup.last-run-time", NUMBER_VALIDATOR, V_ZERO),
 
         /**
          *
@@ -2620,7 +2895,7 @@ public interface IConfigProp {
          * </p>
          */
         SYS_SCHEMA_VERSION_MINOR(//
-                "system.schema-version-minor", "0", API_UPDATABLE_OFF),
+                "system.schema-version-minor", V_ZERO, API_UPDATABLE_OFF),
 
         /**
          * Do NOT set a value since it is present in installation database.
@@ -2630,9 +2905,9 @@ public interface IConfigProp {
         /**
          * Enable CUPS job status synchronization at startup.
          */
-        SYS_STARTUP_CUPS_SYNC_PRINT_JOBS_ENABLE(//
-                "system.startup.cups.sync-print-jobs.enable", BOOLEAN_VALIDATOR,
-                V_YES, API_UPDATABLE_ON),
+        SYS_STARTUP_CUPS_IPP_SYNC_PRINT_JOBS_ENABLE(//
+                "system.startup.cups.ipp.sync-print-jobs.enable",
+                BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
         /**
          * When system is in maintenance mode, only admins can login to Web Apps
@@ -2646,6 +2921,13 @@ public interface IConfigProp {
         SYS_MONITOR_HEARTBEAT_SEC("system.monitor.heartbeat-sec",
                 NUMBER_VALIDATOR, "120"),
 
+        /**
+         *
+         */
+        SYS_HOST_CMD_PDFTOCAIRO_IMG_STRATEGY(
+                "system.host.cmd.pdftocairo.img.strategy",
+                new EnumValidator<>(Pdf2ImgCairoCmd.Strategy.class),
+                Pdf2ImgCairoCmd.Strategy.AUTO.toString(), API_UPDATABLE_ON),
         /**
          *
          */
@@ -2670,6 +2952,19 @@ public interface IConfigProp {
          */
         USER_ID_NUMBER_LENGTH_MIN(//
                 "user.id-number-length-min", NUMBER_VALIDATOR, "4"),
+
+        /**
+         *
+         */
+        USER_ID_NUMBER_GENERATE_ENABLE(//
+                "user.id-number-generate.enable", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         *
+         */
+        USER_ID_NUMBER_GENERATE_LENGTH(//
+                "user.id-number-generate.length",
+                USER_ID_NUMBER_LENGTH_VALIDATOR, "8"),
 
         /**
          * Insert users ad-hoc after successful authentication at the login
@@ -2701,6 +2996,25 @@ public interface IConfigProp {
          */
         USER_SOURCE_UPDATE_USER_DETAILS(//
                 "user-source.update-user-details", BOOLEAN_VALIDATOR, V_YES),
+
+        /**
+         * Enable sending User TOTP 2FA code via Telegram bot.
+         */
+        USER_EXT_TELEGRAM_TOTP_ENABLE("user.ext.telegram.totp.enable",
+                BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
+
+        /**
+         * Enable TOTP 2FA authentication.
+         */
+        USER_TOTP_ENABLE("user.totp.enable", BOOLEAN_VALIDATOR, V_YES,
+                API_UPDATABLE_ON),
+
+        /**
+         * Overwrite for Community Member name as issuer in
+         * "otpauth://totp/[issuer]" URI.
+         *
+         */
+        USER_TOTP_ISSUER("user.totp.issuer", "", API_UPDATABLE_ON),
 
         /**
          * Client IP addresses (CIDR) that are allowed to use the User Client
@@ -2764,7 +3078,8 @@ public interface IConfigProp {
          * the shadow is not created.
          */
         ECO_PRINT_AUTO_THRESHOLD_SHADOW_PAGE_COUNT(//
-                "eco-print.auto-threshold.page-count", NUMBER_VALIDATOR, "0"),
+                "eco-print.auto-threshold.page-count", NUMBER_VALIDATOR,
+                V_ZERO),
 
         /**
          * .
@@ -2872,6 +3187,11 @@ public interface IConfigProp {
                 "webapp.jobtickets.reopen.enable", BOOLEAN_VALIDATOR, V_NO,
                 API_UPDATABLE_ON),
 
+        /** */
+        WEBAPP_JOBTICKETS_COPIES_EDIT_ENABLE(//
+                "webapp.jobtickets.copies-edit.enable.1", BOOLEAN_VALIDATOR,
+                V_NO, API_UPDATABLE_ON),
+
         /**
          * Number of job tickets to show in the list. A value of zero means all
          * available tickets are shown.
@@ -2913,6 +3233,13 @@ public interface IConfigProp {
         WEBAPP_USER_GDPR_ENABLE(//
                 "webapp.user.gdpr.enable", BOOLEAN_VALIDATOR, V_YES,
                 API_UPDATABLE_ON),
+
+        /**
+         * Is HTML5 canvas enabled in User Web App Page Browser.
+         */
+        WEBAPP_USER_PAGE_BROWSER_CANVAS_ENABLE(//
+                "webapp.user.page-browser-canvas.enable.1", BOOLEAN_VALIDATOR,
+                V_NO, API_UPDATABLE_ON),
 
         /**
          * Contact email address for GDPR (erase) requests.
@@ -2979,6 +3306,10 @@ public interface IConfigProp {
                 "webapp.user.doc.store.archive.out.print.prompt",
                 BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
 
+        /** */
+        WEBAPP_USER_DATABASE_USER_ROW_LOCKING_ENABLED(//
+                "webapp.user.database-user-row-locking.enabled",
+                BOOLEAN_VALIDATOR, V_YES, API_UPDATABLE_ON),
         /**
          * User WebApp: enable a fixed inbox clearing scope after a proxy print
          * job is issued.
@@ -3075,9 +3406,8 @@ public interface IConfigProp {
          * User WebApp: must text of navigation buttons on main window be shown?
          */
         WEBAPP_USER_MAIN_NAV_BUTTON_TEXT(//
-                "webapp.user.main.nav-button-text",
-                new EnumValidator<>(OnOffEnum.class), OnOffEnum.AUTO.toString(),
-                API_UPDATABLE_ON),
+                "webapp.user.main.nav-button-text", ON_OFF_ENUM_VALIDATOR,
+                OnOffEnum.AUTO.toString(), API_UPDATABLE_ON),
 
         /**
          * User WebApp: show environmental effect?
@@ -3382,7 +3712,28 @@ public interface IConfigProp {
          */
         WEB_PRINT_LIMIT_IP_ADDRESSES(//
                 "web-print.limit-ip-addresses", CIDR_RANGES_VALIDATOR_OPT,
-                API_UPDATABLE_ON);
+                API_UPDATABLE_ON),
+
+        /**
+         * Use X-Forwarded-For (XFF) HTTP header to retrieve Client IP address?
+         */
+        WEBSERVER_HTTP_HEADER_XFF_ENABLE(//
+                "webserver.http.header.xff.enable", BOOLEAN_VALIDATOR, V_NO,
+                API_UPDATABLE_ON),
+
+        /**
+         *
+         */
+        WEBSERVER_HTTP_HEADER_XFF_DEBUG(//
+                "webserver.http.header.xff.debug", BOOLEAN_VALIDATOR, V_NO,
+                API_UPDATABLE_ON),
+
+        /**
+         * If empty all XFF proxies are allowed.
+         */
+        WEBSERVER_HTTP_HEADER_XFF_PROXIES_ALLOWED(//
+                "webserver.http.header.xff.proxies.allowed",
+                CIDR_RANGES_VALIDATOR_OPT, API_UPDATABLE_ON);
 
         /**
          * Prefix for Web App theme keys.
@@ -3699,6 +4050,11 @@ public interface IConfigProp {
             Integer.valueOf(MAX_FINANCIAL_DECIMALS_IN_DB).longValue(), false);
 
     /** */
+    NumberValidator USER_ID_NUMBER_LENGTH_VALIDATOR = new NumberValidator(6L,
+            Integer.valueOf(UserNumber.COL_ID_NUMBER_LENGTH).longValue(),
+            false);
+
+    /** */
     InternalFontFamilyValidator INTERNAL_FONT_FAMILY_VALIDATOR =
             new InternalFontFamilyValidator();
 
@@ -3707,6 +4063,14 @@ public interface IConfigProp {
     /** */
     CronExpressionDaysOfWeekValidator CRON_EXPR_DAY_OF_WEEK_VALIDATOR =
             new CronExpressionDaysOfWeekValidator();
+
+    /** */
+    ConfigPropValidator ON_OFF_ENUM_VALIDATOR =
+            new EnumValidator<>(OnOffEnum.class);
+
+    /** */
+    ConfigPropValidator PULL_PUSH_ENUM_VALIDATOR =
+            new EnumValidator<>(PullPushEnum.class);
 
     /**
      * .
@@ -3946,7 +4310,7 @@ public interface IConfigProp {
      * @author rijk
      *
      */
-    enum LdapType {
+    enum LdapTypeEnum {
 
         /**
          * OpenLDAP.
@@ -3964,9 +4328,19 @@ public interface IConfigProp {
         EDIR,
 
         /**
+         * FreeIPA
+         */
+        FREE_IPA,
+
+        /**
          * Microsoft Active Directory.
          */
         ACTD,
+
+        /**
+         * Google Cloud Directory.
+         */
+        GOOGLE_CLOUD
     };
 
     /**
@@ -3976,7 +4350,7 @@ public interface IConfigProp {
      */
     static class LdapProp {
 
-        private LdapType ldapType;
+        private LdapTypeEnum ldapType;
         private Key key;
         private String value;
 
@@ -3984,18 +4358,18 @@ public interface IConfigProp {
         private LdapProp() {
         }
 
-        public LdapProp(final LdapType ldapType, final Key key,
+        public LdapProp(final LdapTypeEnum ldapType, final Key key,
                 final String value) {
             this.ldapType = ldapType;
             this.key = key;
             this.value = value;
         }
 
-        public LdapType getLdapType() {
+        public LdapTypeEnum getLdapType() {
             return ldapType;
         }
 
-        public void setLdapType(LdapType ldapType) {
+        public void setLdapType(LdapTypeEnum ldapType) {
             this.ldapType = ldapType;
         }
 
@@ -4130,7 +4504,7 @@ public interface IConfigProp {
      *            The key.
      * @return The string value or {@code null} when not found.
      */
-    String getString(LdapType ldapType, Key key);
+    String getString(LdapTypeEnum ldapType, Key key);
 
     /**
      * Gets the value of an LDAP configuration key as Boolean.
@@ -4141,7 +4515,7 @@ public interface IConfigProp {
      *            The key.
      * @return The boolean value or {@code null} when not found.
      */
-    Boolean getBoolean(LdapType ldapType, Key key);
+    Boolean getBoolean(LdapTypeEnum ldapType, Key key);
 
     /**
      * Gets the value of a configuration key as double.

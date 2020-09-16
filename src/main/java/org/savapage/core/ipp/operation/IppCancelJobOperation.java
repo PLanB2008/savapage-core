@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -21,31 +24,102 @@
  */
 package org.savapage.core.ipp.operation;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.savapage.core.ipp.attribute.IppAttrGroup;
+import org.savapage.core.ipp.attribute.IppAttrValue;
 
 /**
- * This REQUIRED operation allows a client to cancel a Print Job from the time
- * the job is created up to the time it is completed, canceled, or aborted.
- * <p>
- * Since a Job might already be printing by the time a Cancel-Job is received,
- * some media sheet pages might be printed before the job is actually
- * terminated.
- * </p>
- * <p>
- * The IPP object MUST accept or reject the request based on the job's current
- * state and transition the job to the indicated new state as follows:
- * </p>
- * <p>
- * ...
- * </p>
+ *
+ * @author Rijk Ravestein
+ *
  */
-public class IppCancelJobOperation extends AbstractIppOperation {
+public final class IppCancelJobOperation extends AbstractIppOperation {
+
+    /** */
+    private static final class IppCancelJobRequest extends AbstractIppRequest {
+
+        @Override
+        public void process(final AbstractIppOperation operation,
+                final InputStream istr) throws IOException {
+            this.readAttributes(operation, istr);
+        }
+
+    }
+
+    /** */
+    private static final class IppCancelJobResponse
+            extends AbstractIppResponse {
+
+        /** */
+        IppCancelJobResponse() {
+        }
+
+        /**
+         *
+         * @param operation
+         *            IPP operation.
+         * @param request
+         *            IPP request.
+         * @param ostr
+         *            IPP output stream.
+         * @throws IOException
+         *             If error.
+         */
+        public void process(final IppCancelJobOperation operation,
+                final IppCancelJobRequest request, final OutputStream ostr)
+                throws IOException {
+
+            IppStatusCode ippStatusCode =
+                    this.determineStatusCode(operation, request);
+
+            final List<IppAttrGroup> attrGroups = new ArrayList<>();
+
+            /**
+             * Group 1: Operation Attributes
+             */
+            attrGroups.add(this.createOperationGroup());
+
+            if (ippStatusCode == IppStatusCode.OK) {
+                // All submitted jobs are inherently completed, so this cancel
+                // operation is not possible.
+                ippStatusCode = IppStatusCode.CLI_NOTPOS;
+            }
+
+            this.writeHeaderAndAttributes(operation, ippStatusCode, attrGroups,
+                    ostr, request.getAttributesCharset());
+        }
+
+    }
+
+    /** */
+    private final IppCancelJobRequest request;
+    /** */
+    private final IppCancelJobResponse response;
+
+    /** */
+    public IppCancelJobOperation() {
+        super();
+        this.request = new IppCancelJobRequest();
+        this.response = new IppCancelJobResponse();
+    }
+
+    /**
+     * @return {@link IppAttrValue}.
+     */
+    public IppAttrValue getRequestedAttributes() {
+        return request.getRequestedAttributes();
+    }
 
     @Override
-    protected final void process(final InputStream istr,
-            final OutputStream ostr) {
-        // no code intended
+    protected void process(final InputStream istr, final OutputStream ostr)
+            throws IOException {
+        request.process(this, istr);
+        response.process(this, request, ostr);
     }
 
 }

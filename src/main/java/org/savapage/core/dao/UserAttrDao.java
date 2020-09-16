@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -40,24 +43,24 @@ public interface UserAttrDao extends GenericDao<UserAttr> {
     /**
      * Finds a {@link UserAttr} of a {@link User} by attribute id.
      *
-     * @param user
-     *            The {@link User}.
+     * @param userDbKey
+     *            The primary database key of {@link User}.
      * @param name
      *            The {@link UserAttrEnum}.
      * @return The {@link UserAttr} or {@code null} when not found.
      */
-    UserAttr findByName(User user, UserAttrEnum name);
+    UserAttr findByName(Long userDbKey, UserAttrEnum name);
 
     /**
      * Finds a {@link UserAttr} of a {@link User} by attribute name.
      *
-     * @param user
-     *            The {@link User}.
+     * @param userDbKey
+     *            The primary database key of {@link User}.
      * @param name
      *            The {@link UserAttr#getName()}.
      * @return The {@link UserAttr} or {@code null} when not found.
      */
-    UserAttr findByName(User user, String name);
+    UserAttr findByName(Long userDbKey, String name);
 
     /**
      * Finds the unique {@link UserAttr} combination of a {@link UserAttrEnum}
@@ -76,4 +79,22 @@ public interface UserAttrDao extends GenericDao<UserAttr> {
      */
     void deleteRollingStats();
 
+    /**
+     * Returns attribute value as boolean.
+     *
+     * @see {@link UserAttr#getValue()}.
+     * @param attr
+     *            The {@link UserAttr} ({@code null} is allowed).
+     * @return {@code true} When value is {@code true}.
+     */
+    boolean getBooleanValue(UserAttr attr);
+
+    /**
+     * Returns the database value of a boolean value.
+     *
+     * @param value
+     *            The value.
+     * @return The string representation of a boolean value
+     */
+    String getDbBooleanValue(boolean value);
 }

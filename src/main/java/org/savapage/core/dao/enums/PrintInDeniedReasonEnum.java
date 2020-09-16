@@ -1,7 +1,10 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -14,7 +17,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -28,7 +31,7 @@ import org.savapage.core.jpa.PrintIn;
  * Enum encapsulation of database field: see
  * {@link PrintIn#setDeniedReason(String)}.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
 public enum PrintInDeniedReasonEnum {
@@ -36,7 +39,12 @@ public enum PrintInDeniedReasonEnum {
     /**
      * Denied because of DRM restrictions.
      */
-    DRM("DRM");
+    DRM("DRM"),
+
+    /**
+     * Denied because document format is invalid.
+     */
+    INVALID("INVALID");
 
     /**
      * The value as used in the database.
@@ -74,9 +82,12 @@ public enum PrintInDeniedReasonEnum {
 
             if (value.equals(PrintInDeniedReasonEnum.DRM.toDbValue())) {
                 theEnum = PrintInDeniedReasonEnum.DRM;
+            }
+            if (value.equals(PrintInDeniedReasonEnum.INVALID.toDbValue())) {
+                theEnum = PrintInDeniedReasonEnum.INVALID;
             } else {
-                throw new SpException("Reason [" + value
-                        + "] cannot be converted to enum");
+                throw new SpException(
+                        "Reason [" + value + "] cannot be converted to enum");
             }
         }
 

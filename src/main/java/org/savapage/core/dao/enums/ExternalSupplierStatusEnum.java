@@ -1,7 +1,10 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -14,7 +17,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -31,8 +34,8 @@ import org.savapage.ext.smartschool.SmartschoolPrintStatusEnum;
  * Generic status of (proxy) print request from External Supplier. Also see
  * {@link SmartschoolPrintStatusEnum}.
  * <ul>
- * <li>Do NOT changes enum text since they are stored in the database.</li>
- * <li>Enum key must fit the size of the
+ * <li>Do NOT changes enum names since they are stored in the database.</li>
+ * <li>Enum names must fit the size of the
  * {@link DocLog#setExternalStatus(String)} column.</li>
  * </ul>
  *
@@ -78,8 +81,8 @@ public enum ExternalSupplierStatusEnum {
     PENDING_CANCEL,
 
     /**
-     * The {@link #PENDING} status is changed by the release of a User (Hold)
-     * or Job Ticket.
+     * The {@link #PENDING} status is changed by the release of a User (Hold) or
+     * Job Ticket.
      * <p>
      * NOTE: This is an <i>intermediate</i> (technical) status, picked up by a
      * monitor, communicated to the external supplier, and finalized to status

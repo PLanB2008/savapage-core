@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -52,7 +55,6 @@ import org.savapage.core.ipp.attribute.IppDictJobTemplateAttr;
 import org.savapage.core.ipp.client.IppConnectException;
 import org.savapage.core.ipp.client.IppNotificationRecipient;
 import org.savapage.core.ipp.helpers.IppOptionMap;
-import org.savapage.core.ipp.operation.IppStatusCode;
 import org.savapage.core.ipp.routing.IppRoutingListener;
 import org.savapage.core.jpa.CostChange;
 import org.savapage.core.jpa.Device;
@@ -64,6 +66,7 @@ import org.savapage.core.jpa.Printer;
 import org.savapage.core.jpa.User;
 import org.savapage.core.jpa.UserAccount;
 import org.savapage.core.jpa.UserGroup;
+import org.savapage.core.json.JsonPrinter;
 import org.savapage.core.json.JsonPrinterDetail;
 import org.savapage.core.json.JsonPrinterList;
 import org.savapage.core.json.rpc.AbstractJsonRpcMessage;
@@ -174,6 +177,16 @@ public interface ProxyPrintService {
     URL getCupsPrinterUrl(String printerName);
 
     /**
+     * Gets the CUPS printer device URI.
+     *
+     * @param printerName
+     *            The printer name.
+     * @return The URI or {@code null} if the printer is not present in CUPS and
+     *         not part of the printer cache.
+     */
+    URI getCupsPrinterURI(String printerName);
+
+    /**
      * Gets the CUPS Web Interface Administration URL.
      *
      * @return The URL.
@@ -204,19 +217,6 @@ public interface ProxyPrintService {
      * @return The {@link IppNotificationRecipient}.
      */
     IppNotificationRecipient notificationRecipient();
-
-    /**
-     *
-     * @param requestingUser
-     * @param subscriptionId
-     * @param response
-     *            The output response.
-     * @return The IPP status code after sending the request.
-     * @throws IppConnectException
-     *             When an connection error occurs.
-     */
-    IppStatusCode getNotifications(String requestingUser, String subscriptionId,
-            List<IppAttrGroup> response) throws IppConnectException;
 
     /**
      * Checks if PPD is present in CUPS for printer.
@@ -495,6 +495,20 @@ public interface ProxyPrintService {
      *             When a syntax error.
      */
     JsonPrinterList getUserPrinterList(Device terminal, String userName)
+            throws IppConnectException, IppSyntaxException;
+
+    /**
+     * Gets a simple list of all printers regardless of status.
+     * {@link JsonPrinter} objects on the list contain basic information only,
+     * like "name", "alias" and "location".
+     *
+     * @throws IppConnectException
+     *             When a connection error occurs.
+     * @throws IppSyntaxException
+     *             When a syntax error.
+     * @return The sorted {@link JsonPrinterList}.
+     */
+    JsonPrinterList getSimplePrinterList()
             throws IppConnectException, IppSyntaxException;
 
     /**
@@ -883,35 +897,39 @@ public interface ProxyPrintService {
             throws IppConnectException, EcoPrintPdfTaskPendingException;
 
     /**
-     * Creates a CUPS event subscription. This is an idempotent operation: when
-     * the subscription already exists it is renewed.
+     * Starts a CUPS push event subscription, if CUPS push notification is
+     * configured/enabled in SavaPage. This is an idempotent operation: when the
+     * subscription already exists it is renewed.
      *
-     * @param requestingUserName
-     *            The requesting user. If {@code null} the current CUPS user is
-     *            used.
+     * @return {@code false} if CUPS Push notification is not enabled.
      *
      * @throws IppConnectException
      *             When a connection error occurs.
      * @throws IppSyntaxException
      *             When a syntax error.
      */
-    void startSubscription(String requestingUserName)
+    boolean startCUPSPushEventSubscription()
             throws IppConnectException, IppSyntaxException;
 
     /**
-     * Cancels a CUPS event subscription. This is an idempotent operation: when
-     * the subscription does not exists, the cancel is not executed.
+     * Stops any active CUPS event subscription that was started with
+     * {@link #startCUPSPushEventSubscription()}. This is an idempotent
+     * operation: when the subscription does not exists, it is not stopped.
      *
-     * @param requestingUserName
-     *            The requesting user. If {@code null} the current CUPS user is
-     *            used.
      * @throws IppConnectException
      *             When a connection error occurs.
      * @throws IppSyntaxException
      *             When a syntax error.
      */
-    void stopSubscription(String requestingUserName)
+    void stopCUPSEventSubscription()
             throws IppConnectException, IppSyntaxException;
+
+    /**
+     * @param fileName
+     *            PPD extension file name.
+     * @return PPD extension {@link File}.
+     */
+    File getPPDExtFile(String fileName);
 
     /**
      * Checks if the printer URI resides on local CUPS.

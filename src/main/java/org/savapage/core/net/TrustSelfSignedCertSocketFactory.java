@@ -21,14 +21,7 @@
  */
 package org.savapage.core.net;
 
-import java.io.IOException;
-import java.net.InetAddress;
-import java.net.Socket;
-import java.net.UnknownHostException;
-
 import javax.net.SocketFactory;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSocketFactory;
 
 import org.savapage.core.util.InetUtils;
 
@@ -49,12 +42,8 @@ import org.savapage.core.util.InetUtils;
  * @author Rijk Ravestein
  *
  */
-public final class TrustSelfSignedCertSocketFactory extends SSLSocketFactory {
-
-    /**
-     * The wrapped instance.
-     */
-    private final SSLSocketFactory wrappedFactory;
+public final class TrustSelfSignedCertSocketFactory
+        extends SSLSocketFactoryWrapper {
 
     /**
      * Returns the default SSL socket factory.
@@ -74,51 +63,7 @@ public final class TrustSelfSignedCertSocketFactory extends SSLSocketFactory {
      *
      */
     public TrustSelfSignedCertSocketFactory() {
-        final SSLContext ctx = InetUtils.createSslContextTrustSelfSigned();
-        this.wrappedFactory = ctx.getSocketFactory();
-    }
-
-    @Override
-    public Socket createSocket(final String host, final int port)
-            throws IOException, UnknownHostException {
-        return wrappedFactory.createSocket(host, port);
-    }
-
-    @Override
-    public Socket createSocket(final String host, final int port,
-            final InetAddress localHost, final int localPort)
-            throws IOException, UnknownHostException {
-        return wrappedFactory.createSocket(host, port, localHost, localPort);
-    }
-
-    @Override
-    public Socket createSocket(final InetAddress host, final int port)
-            throws IOException {
-        return wrappedFactory.createSocket(host, port);
-    }
-
-    @Override
-    public Socket createSocket(final InetAddress address, final int port,
-            final InetAddress localAddress, final int localPort)
-            throws IOException {
-        return wrappedFactory.createSocket(address, port, localAddress,
-                localPort);
-    }
-
-    @Override
-    public String[] getDefaultCipherSuites() {
-        return wrappedFactory.getDefaultCipherSuites();
-    }
-
-    @Override
-    public String[] getSupportedCipherSuites() {
-        return wrappedFactory.getSupportedCipherSuites();
-    }
-
-    @Override
-    public Socket createSocket(final Socket s, final String host,
-            final int port, final boolean autoClose) throws IOException {
-        return wrappedFactory.createSocket(s, host, port, autoClose);
+        super(InetUtils.createSslContextTrustSelfSigned().getSocketFactory());
     }
 
 }

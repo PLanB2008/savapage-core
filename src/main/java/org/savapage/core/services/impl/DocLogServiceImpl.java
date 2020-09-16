@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -33,6 +36,7 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.apache.commons.lang3.EnumUtils;
 import org.apache.commons.lang3.time.DateUtils;
@@ -71,8 +75,8 @@ import org.savapage.core.jpa.UserAccount;
 import org.savapage.core.json.JsonRollingTimeSeries;
 import org.savapage.core.json.TimeSeriesInterval;
 import org.savapage.core.msg.UserMsgIndicator;
+import org.savapage.core.pdf.IPdfPageProps;
 import org.savapage.core.pdf.PdfCreateInfo;
-import org.savapage.core.pdf.SpPdfPageProps;
 import org.savapage.core.print.proxy.JsonProxyPrintJob;
 import org.savapage.core.print.proxy.ProxyPrintJobStatusMonitor;
 import org.savapage.core.services.DocLogService;
@@ -80,6 +84,7 @@ import org.savapage.core.services.ServiceContext;
 import org.savapage.core.services.helpers.AccountTrxInfoSet;
 import org.savapage.core.services.helpers.DocContentPrintInInfo;
 import org.savapage.core.services.helpers.ExternalSupplierInfo;
+import org.savapage.core.services.helpers.PdfRepairEnum;
 import org.savapage.core.util.DateUtil;
 import org.savapage.ext.smartschool.SmartschoolPrintInData;
 
@@ -106,8 +111,11 @@ public final class DocLogServiceImpl extends AbstractService
      */
     private static final int TIME_SERIES_INTERVAL_MONTH_MAX_POINTS = 5;
 
+    /** */
+    private static final Integer INTEGER_ONE = Integer.valueOf(1);
+
     @Override
-    public final String generateSignature(final DocLog docLog) {
+    public String generateSignature(final DocLog docLog) {
 
         final String message = DateUtil.dateAsIso8601(docLog.getCreatedDate())
                 + docLog.getUser().getUserId() + docLog.getTitle()
@@ -268,7 +276,7 @@ public final class DocLogServiceImpl extends AbstractService
             if (userDAO().isLocked(user)) {
                 lockedUser = user;
             } else {
-                lockedUser = userDAO().lock(user.getId());
+                lockedUser = userService().lockUser(user.getId());
             }
 
             /*
@@ -586,8 +594,13 @@ public final class DocLogServiceImpl extends AbstractService
      *
      * @param docLog
      *            The {@link DocLog} with the numbers.
+     * @param pdfRepair
+     *            {@code null} if no PDF document.
+     * @param isAccepted
+     *            {@code true} if print-in is accepted (valid document).
      */
-    private void commitPrintInStatsGlobal(final DocLog docLog) {
+    private void commitPrintInStatsGlobal(final DocLog docLog,
+            final PdfRepairEnum pdfRepair, final boolean isAccepted) {
 
         final DaoContext daoContext = ServiceContext.getDaoContext();
 
@@ -614,55 +627,234 @@ public final class DocLogServiceImpl extends AbstractService
 
             IConfigProp.Key key = null;
 
+            JsonRollingTimeSeries<Integer> statsDocs = null;
             JsonRollingTimeSeries<Integer> statsPages = null;
             JsonRollingTimeSeries<Long> statsBytes = null;
 
             /*
              * .
              */
-            statsPages = new JsonRollingTimeSeries<>(TimeSeriesInterval.DAY,
-                    TIME_SERIES_INTERVAL_DAY_MAX_POINTS, 0);
-            statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_DAY_PAGES, now,
-                    docLog.getNumberOfPages());
+            TimeSeriesInterval intervalWlk = TimeSeriesInterval.DAY;
+            int intervalPointWlk = TIME_SERIES_INTERVAL_DAY_MAX_POINTS;
+
+            if (isAccepted) {
+                statsPages = new JsonRollingTimeSeries<>(intervalWlk,
+                        intervalPointWlk, 0);
+                statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_DAY_PAGES,
+                        now, docLog.getNumberOfPages());
+            }
+
+            statsDocs = new JsonRollingTimeSeries<>(intervalWlk,
+                    intervalPointWlk, 0);
+            statsDocs.addDataPoint(Key.STATS_PRINT_IN_ROLLING_DAY_DOCS, now,
+                    INTEGER_ONE);
+
+            if (pdfRepair != null) {
+                statsDocs = new JsonRollingTimeSeries<>(intervalWlk,
+                        intervalPointWlk, 0);
+                statsDocs.addDataPoint(Key.STATS_PRINT_IN_ROLLING_DAY_PDF, now,
+                        INTEGER_ONE);
+
+                final Key keyInc;
+
+                switch (pdfRepair) {
+                case DOC:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR;
+                    break;
+                case DOC_FAIL:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR_FAIL;
+                    break;
+                case FONT:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR_FONT;
+                    break;
+                case FONT_FAIL:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR_FONT_FAIL;
+                    break;
+                case NONE:
+                    keyInc = null;
+                    break;
+                default:
+                    throw new SpException(
+                            pdfRepair.toString().concat(" not handled."));
+                }
+                if (keyInc != null) {
+                    statsDocs = new JsonRollingTimeSeries<>(intervalWlk,
+                            intervalPointWlk, 0);
+                    statsDocs.addDataPoint(keyInc, now, INTEGER_ONE);
+                }
+            }
 
             /*
              * .
              */
-            statsPages = new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
-                    TIME_SERIES_INTERVAL_WEEK_MAX_POINTS, 0);
-            statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_WEEK_PAGES, now,
-                    docLog.getNumberOfPages());
-            //
-            statsBytes = new JsonRollingTimeSeries<>(TimeSeriesInterval.WEEK,
-                    TIME_SERIES_INTERVAL_WEEK_MAX_POINTS, 0L);
-            statsBytes.addDataPoint(Key.STATS_PRINT_IN_ROLLING_WEEK_BYTES, now,
-                    docLog.getNumberOfBytes());
+            intervalWlk = TimeSeriesInterval.WEEK;
+            intervalPointWlk = TIME_SERIES_INTERVAL_WEEK_MAX_POINTS;
+
+            if (isAccepted) {
+                statsPages = new JsonRollingTimeSeries<>(intervalWlk,
+                        intervalPointWlk, 0);
+                statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_WEEK_PAGES,
+                        now, docLog.getNumberOfPages());
+                //
+                statsBytes = new JsonRollingTimeSeries<>(intervalWlk,
+                        intervalPointWlk, 0L);
+                statsBytes.addDataPoint(Key.STATS_PRINT_IN_ROLLING_WEEK_BYTES,
+                        now, docLog.getNumberOfBytes());
+            }
+
+            statsDocs = new JsonRollingTimeSeries<>(intervalWlk,
+                    intervalPointWlk, 0);
+            statsDocs.addDataPoint(Key.STATS_PRINT_IN_ROLLING_WEEK_DOCS, now,
+                    INTEGER_ONE);
+
+            if (pdfRepair != null) {
+                statsDocs = new JsonRollingTimeSeries<>(intervalWlk,
+                        intervalPointWlk, 0);
+                statsDocs.addDataPoint(Key.STATS_PRINT_IN_ROLLING_WEEK_PDF, now,
+                        INTEGER_ONE);
+
+                final Key keyInc;
+
+                switch (pdfRepair) {
+                case DOC:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR;
+                    break;
+                case DOC_FAIL:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR_FAIL;
+                    break;
+                case FONT:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR_FONT;
+                    break;
+                case FONT_FAIL:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR_FONT_FAIL;
+                    break;
+                case NONE:
+                    keyInc = null;
+                    break;
+                default:
+                    throw new SpException(
+                            pdfRepair.toString().concat(" not handled."));
+                }
+
+                if (keyInc != null) {
+                    statsDocs = new JsonRollingTimeSeries<>(intervalWlk,
+                            intervalPointWlk, 0);
+                    statsDocs.addDataPoint(keyInc, now, INTEGER_ONE);
+                }
+            }
 
             /*
              * .
              */
-            statsPages = new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
-                    TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0);
-            statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_PAGES, now,
-                    docLog.getNumberOfPages());
-            //
-            statsBytes = new JsonRollingTimeSeries<>(TimeSeriesInterval.MONTH,
-                    TIME_SERIES_INTERVAL_MONTH_MAX_POINTS, 0L);
-            statsBytes.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_BYTES, now,
-                    docLog.getNumberOfBytes());
+            intervalWlk = TimeSeriesInterval.MONTH;
+            intervalPointWlk = TIME_SERIES_INTERVAL_MONTH_MAX_POINTS;
+
+            if (isAccepted) {
+                statsPages = new JsonRollingTimeSeries<>(intervalWlk,
+                        intervalPointWlk, 0);
+                statsPages.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_PAGES,
+                        now, docLog.getNumberOfPages());
+                //
+                statsBytes = new JsonRollingTimeSeries<>(intervalWlk,
+                        intervalPointWlk, 0L);
+                statsBytes.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_BYTES,
+                        now, docLog.getNumberOfBytes());
+            }
+
+            statsDocs = new JsonRollingTimeSeries<>(intervalWlk,
+                    intervalPointWlk, 0);
+            statsDocs.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_DOCS, now,
+                    INTEGER_ONE);
+
+            if (pdfRepair != null) {
+                statsDocs = new JsonRollingTimeSeries<>(intervalWlk,
+                        intervalPointWlk, 0);
+                statsDocs.addDataPoint(Key.STATS_PRINT_IN_ROLLING_MONTH_PDF,
+                        now, INTEGER_ONE);
+
+                final Key keyInc;
+
+                switch (pdfRepair) {
+                case DOC:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR;
+                    break;
+                case DOC_FAIL:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR_FAIL;
+                    break;
+                case FONT:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR_FONT;
+                    break;
+                case FONT_FAIL:
+                    keyInc = Key.STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR_FONT_FAIL;
+                    break;
+                case NONE:
+                    keyInc = null;
+                    break;
+                default:
+                    throw new SpException(
+                            pdfRepair.toString().concat(" not handled."));
+                }
+
+                if (keyInc != null) {
+                    statsDocs = new JsonRollingTimeSeries<>(intervalWlk,
+                            intervalPointWlk, 0);
+                    statsDocs.addDataPoint(keyInc, now, INTEGER_ONE);
+                }
+            }
 
             /*
              *
              */
             final ConfigManager cm = ConfigManager.instance();
 
-            key = Key.STATS_TOTAL_PRINT_IN_PAGES;
-            cm.updateConfigKey(key,
-                    cm.getConfigLong(key) + docLog.getNumberOfPages(), actor);
-            //
-            key = Key.STATS_TOTAL_PRINT_IN_BYTES;
-            cm.updateConfigKey(key,
-                    cm.getConfigLong(key) + docLog.getNumberOfBytes(), actor);
+            if (isAccepted) {
+
+                key = Key.STATS_TOTAL_PRINT_IN_PAGES;
+                cm.updateConfigKey(key,
+                        cm.getConfigLong(key) + docLog.getNumberOfPages(),
+                        actor);
+
+                key = Key.STATS_TOTAL_PRINT_IN_BYTES;
+                cm.updateConfigKey(key,
+                        cm.getConfigLong(key) + docLog.getNumberOfBytes(),
+                        actor);
+            }
+
+            key = Key.STATS_TOTAL_PRINT_IN_DOCS;
+            cm.updateConfigKey(key, cm.getConfigLong(key) + 1, actor);
+
+            if (pdfRepair != null) {
+                key = Key.STATS_TOTAL_PRINT_IN_PDF;
+                cm.updateConfigKey(key, cm.getConfigLong(key) + 1, actor);
+
+                final Key keyInc;
+
+                switch (pdfRepair) {
+                case DOC:
+                    keyInc = Key.STATS_TOTAL_PRINT_IN_PDF_REPAIR;
+                    break;
+                case DOC_FAIL:
+                    keyInc = Key.STATS_TOTAL_PRINT_IN_PDF_REPAIR_FAIL;
+                    break;
+                case FONT:
+                    keyInc = Key.STATS_TOTAL_PRINT_IN_PDF_REPAIR_FONT;
+                    break;
+                case FONT_FAIL:
+                    keyInc = Key.STATS_TOTAL_PRINT_IN_PDF_REPAIR_FONT_FAIL;
+                    break;
+                case NONE:
+                    keyInc = null;
+                    break;
+                default:
+                    throw new SpException(
+                            pdfRepair.toString().concat(" not handled."));
+                }
+
+                if (keyInc != null) {
+                    cm.updateConfigKey(keyInc, cm.getConfigLong(keyInc) + 1,
+                            actor);
+                }
+            }
 
             /*
              * Commit
@@ -722,8 +914,8 @@ public final class DocLogServiceImpl extends AbstractService
             /*
              * Printer LOCK.
              */
-            final Printer lockedPrinter = printerDAO()
-                    .lock(docOut.getPrintOut().getPrinter().getId());
+            final Printer lockedPrinter = printerService()
+                    .lockPrinter(docOut.getPrintOut().getPrinter().getId());
 
             printerService().addJobTotals(lockedPrinter,
                     docLog.getCreatedDate(), printOutPages,
@@ -774,7 +966,8 @@ public final class DocLogServiceImpl extends AbstractService
             rollbackTrx = true;
 
             // Queue LOCK.
-            final IppQueue ippQueueLocked = ippQueueDAO().lock(queue.getId());
+            final IppQueue ippQueueLocked =
+                    queueService().lockQueue(queue.getId());
 
             queueService().addJobTotals(ippQueueLocked, docLog.getCreatedDate(),
                     docLog.getNumberOfPages(), docLog.getNumberOfBytes());
@@ -797,16 +990,76 @@ public final class DocLogServiceImpl extends AbstractService
     }
 
     @Override
+    public DocLog logIppCreateJob(final User userDb,
+            final ExternalSupplierInfo supplierInfo, final String jobName) {
+
+        final DocLog docLog = new DocLog();
+
+        this.applyCreationDate(docLog, ServiceContext.getTransactionDate());
+
+        docLog.setUser(userDb);
+        docLog.setTitle(jobName);
+        docLog.setUuid(UUID.randomUUID().toString());
+        docLog.setDeliveryProtocol(DocLogProtocolEnum.IPP.getDbName());
+        docLog.setNumberOfBytes(0L);
+
+        docLog.setExternalId(supplierInfo.getId());
+        docLog.setExternalStatus(supplierInfo.getStatus());
+        docLog.setExternalSupplier(supplierInfo.getSupplier().toString());
+        docLog.setExternalData(supplierInfo.getData().dataAsString());
+
+        final DaoContext daoContext = ServiceContext.getDaoContext();
+        boolean rollbackTrx = false;
+
+        try {
+            daoContext.beginTransaction();
+            rollbackTrx = true;
+
+            daoContext.getDocLogDao().create(docLog);
+
+            daoContext.commit();
+            rollbackTrx = false;
+
+        } finally {
+            if (rollbackTrx) {
+                daoContext.rollback();
+            }
+        }
+
+        return docLog;
+    }
+
+    @Override
     public void logPrintIn(final User userDb, final IppQueue queue,
             final DocLogProtocolEnum protocol,
             final DocContentPrintInInfo printInInfo) {
 
+        this.logPrintIn(null, userDb, queue, protocol, printInInfo);
+    }
+
+    @Override
+    public void attachPrintIn(final DocLog docLog, final User userDb,
+            final IppQueue queue, final DocLogProtocolEnum protocol,
+            final DocContentPrintInInfo printInInfo) {
+
+        this.logPrintIn(docLog, userDb, queue, protocol, printInInfo);
+    }
+
+    /**
+     *
+     * @param docLogExisting
+     * @param userDb
+     * @param queue
+     * @param protocol
+     * @param printInInfo
+     */
+    private void logPrintIn(final DocLog docLogExisting, final User userDb,
+            final IppQueue queue, final DocLogProtocolEnum protocol,
+            final DocContentPrintInInfo printInInfo) {
+
         final Date perfStartTime = PerformanceLogger.startTime();
 
-        final DaoContext daoContext = ServiceContext.getDaoContext();
-
-        final SpPdfPageProps pageProps = printInInfo.getPageProps();
-
+        final IPdfPageProps pageProps = printInInfo.getPageProps();
         final boolean isPrinted = pageProps != null;
 
         PrintInDeniedReasonEnum deniedReason = null;
@@ -815,10 +1068,20 @@ public final class DocLogServiceImpl extends AbstractService
             deniedReason = PrintInDeniedReasonEnum.DRM;
         }
 
+        if (printInInfo.isPdfRepairFail()) {
+            deniedReason = PrintInDeniedReasonEnum.INVALID;
+        }
+
         /*
          * DocLog
          */
-        final DocLog docLog = new DocLog();
+        final DocLog docLog;
+
+        if (docLogExisting == null) {
+            docLog = new DocLog();
+        } else {
+            docLog = docLogExisting;
+        }
 
         this.applyCreationDate(docLog, ServiceContext.getTransactionDate());
 
@@ -867,13 +1130,15 @@ public final class DocLogServiceImpl extends AbstractService
         /*
          * Update Global statistics (see Mantis #483).
          */
-        if (isPrinted) {
-            commitPrintInStatsGlobal(docLog);
+        if (isPrinted || printInInfo.getPdfRepair() != null) {
+            this.commitPrintInStatsGlobal(docLog, printInInfo.getPdfRepair(),
+                    isPrinted);
         }
 
         /*
          * Transaction with User lock.
          */
+        final DaoContext daoContext = ServiceContext.getDaoContext();
         boolean rollbackTrx = false;
 
         try {
@@ -920,7 +1185,8 @@ public final class DocLogServiceImpl extends AbstractService
                 /*
                  * User and UserAttr - totals: User LOCK.
                  */
-                final User user = userDAO().lock(docLog.getUser().getId());
+                final User user =
+                        userService().lockUser(docLog.getUser().getId());
 
                 userService().addPrintInJobTotals(user, docLog.getCreatedDate(),
                         docLog.getNumberOfPages(), docLog.getNumberOfBytes());
@@ -930,7 +1196,6 @@ public final class DocLogServiceImpl extends AbstractService
                 userService().logPrintIn(userDb,
                         ServiceContext.getTransactionDate(),
                         docLog.getNumberOfPages(), docLog.getNumberOfBytes());
-
             }
 
             /*
@@ -997,13 +1262,15 @@ public final class DocLogServiceImpl extends AbstractService
                             localize(reasonKey)));
 
             /*
-             * Write this message.
+             * Notify User Web App.
              */
-            try {
-                UserMsgIndicator.write(userId, docLog.getCreatedDate(),
-                        UserMsgIndicator.Msg.PRINT_IN_DENIED, null);
-            } catch (IOException e) {
-                throw new SpException("Error writing user message.", e);
+            if (printInInfo.getPdfRepair() == null) {
+                try {
+                    UserMsgIndicator.write(userId, docLog.getCreatedDate(),
+                            UserMsgIndicator.Msg.PRINT_IN_DENIED, null);
+                } catch (IOException e) {
+                    throw new SpException("Error writing user message.", e);
+                }
             }
         }
 
@@ -1030,13 +1297,51 @@ public final class DocLogServiceImpl extends AbstractService
              */
             if (resetDashboard) {
 
-                Key[] series = {
+                final Key[] series = {
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_DAY_DOCS,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_DAY_PDF,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR_FAIL,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR_FONT,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_DAY_PDF_REPAIR_FONT_FAIL,
                         /* */
                         Key.STATS_PRINT_IN_ROLLING_DAY_PAGES,
+
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_WEEK_DOCS,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_WEEK_PDF,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR_FAIL,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR_FONT,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_WEEK_PDF_REPAIR_FONT_FAIL,
                         /* */
                         Key.STATS_PRINT_IN_ROLLING_WEEK_PAGES,
                         /* */
                         Key.STATS_PRINT_IN_ROLLING_WEEK_BYTES,
+
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_MONTH_DOCS,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_MONTH_PDF,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR_FAIL,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR_FONT,
+                        /* */
+                        Key.STATS_PRINT_IN_ROLLING_MONTH_PDF_REPAIR_FONT_FAIL,
                         /* */
                         Key.STATS_PRINT_IN_ROLLING_MONTH_PAGES,
                         /* */
@@ -1073,15 +1378,29 @@ public final class DocLogServiceImpl extends AbstractService
                         Key.STATS_PRINT_OUT_ROLLING_MONTH_BYTES };
 
                 // -----------------------
-                Key[] counters = {
+                final Key[] counters = {
                         /* */
-                        Key.STATS_TOTAL_PDF_OUT_PAGES,
+                        Key.STATS_TOTAL_PRINT_IN_DOCS,
                         /* */
-                        Key.STATS_TOTAL_PDF_OUT_BYTES,
+                        Key.STATS_TOTAL_PRINT_IN_PDF,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_IN_PDF_REPAIR,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_IN_PDF_REPAIR_FAIL,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_IN_PDF_REPAIR_FONT,
+                        /* */
+                        Key.STATS_TOTAL_PRINT_IN_PDF_REPAIR_FONT_FAIL,
                         /* */
                         Key.STATS_TOTAL_PRINT_IN_PAGES,
                         /* */
                         Key.STATS_TOTAL_PRINT_IN_BYTES,
+
+                        /* */
+                        Key.STATS_TOTAL_PDF_OUT_PAGES,
+                        /* */
+                        Key.STATS_TOTAL_PDF_OUT_BYTES,
+
                         /* */
                         Key.STATS_TOTAL_PRINT_OUT_PAGES,
                         /* */
@@ -1093,15 +1412,18 @@ public final class DocLogServiceImpl extends AbstractService
 
                 };
 
-                for (Key key : series) {
+                for (final Key key : series) {
                     cm.updateConfigKey(key, "", resetBy);
                 }
 
-                for (Key key : counters) {
+                for (final Key key : counters) {
                     cm.updateConfigKey(key, 0L, resetBy);
                 }
 
                 cm.updateConfigKey(Key.STATS_TOTAL_RESET_DATE,
+                        resetDate.getTime(), resetBy);
+
+                cm.updateConfigKey(Key.STATS_TOTAL_RESET_DATE_PRINT_IN,
                         resetDate.getTime(), resetBy);
             }
 
@@ -1220,21 +1542,29 @@ public final class DocLogServiceImpl extends AbstractService
 
         final List<DocLog> list = docLogDAO().getListChunk(filter);
 
-        /*
-         * Same document ID can be used by different accounts from same
-         * Supplier: find the right one.
-         */
         Long docLogId = null;
 
         for (final DocLog docLog : list) {
+
             if (docLog.getExternalData() == null) {
                 continue;
             }
-            final SmartschoolPrintInData data = SmartschoolPrintInData
-                    .createFromData(docLog.getExternalData());
-            if (data != null && data.getAccount().equals(supplierAccount)) {
+
+            if (supplier == ExternalSupplierEnum.SMARTSCHOOL) {
+                /*
+                 * Same document ID can be used by different accounts from same
+                 * Supplier: find the right one.
+                 */
+                final SmartschoolPrintInData data = SmartschoolPrintInData
+                        .createFromData(docLog.getExternalData());
+                if (data != null && data.getAccount().equals(supplierAccount)) {
+                    docLogId = docLog.getId();
+                }
+            } else if (supplier == ExternalSupplierEnum.IPP_CLIENT) {
                 docLogId = docLog.getId();
             }
+
+            // Keep going to get the most recent one.
         }
 
         if (docLogId == null) {

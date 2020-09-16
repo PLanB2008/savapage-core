@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -34,13 +37,21 @@ import org.savapage.core.util.LocaleHelper;
 public enum NounEnum {
 
     /** */
+    ADDRESS(true),
+    /** */
     ARCHIVE,
+    /** */
+    AUTHENTICATION,
     /** Financial position. */
     BALANCE,
     /** NFC card number. */
     CARD_NUMBER,
     /** */
+    CLIENT(true),
+    /** */
     COMMENT,
+    /** */
+    CONFIRMATION,
     /** */
     COST,
     /** */
@@ -50,9 +61,13 @@ public enum NounEnum {
     /** */
     DATE(true),
     /** */
+    DAY(true), WEEK(true), MONTH(true), YEAR(true),
+    /** */
     DELEGATE(true),
     /** */
     DELEGATOR(true),
+    /** */
+    DESTINATION,
     /** */
     DISK_SPACE,
     /** */
@@ -61,6 +76,10 @@ public enum NounEnum {
     DOWNLOAD(true),
     /** */
     EMAIL,
+    /** */
+    FILE(true),
+    /** */
+    FONT(true),
     /** */
     GROUP(true),
     /** */
@@ -74,11 +93,15 @@ public enum NounEnum {
     /** */
     LOCATION,
     /** */
+    MANUFACTURER(true),
+    /** */
     MODE(true),
+    /** As in Type/Model. */
+    MODEL(true),
     /** */
     NAME(true),
     /** */
-    QUEUE(true),
+    ORIGIN,
     /** */
     OUTPUT,
     /** */
@@ -90,11 +113,21 @@ public enum NounEnum {
     /** */
     PRINTER(true),
     /** */
+    PROTOCOL(true),
+    /** */
+    QUEUE(true),
+    /** */
     REFUND(true),
     /** */
     REMARK(true),
     /** */
+    RENDERING,
+    /** */
     REPORT,
+    /** */
+    SERVER(true),
+    /** */
+    SIGNATURE,
     /** */
     SORTING,
     /** */
@@ -113,6 +146,8 @@ public enum NounEnum {
     TRANSACTION(true),
     /** */
     TYPE(true),
+    /** */
+    VERIFICATION,
     /** */
     USER(true);
 

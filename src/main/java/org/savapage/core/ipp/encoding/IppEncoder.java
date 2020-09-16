@@ -1,7 +1,10 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2016 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -14,7 +17,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -453,7 +456,6 @@ public final class IppEncoder {
                     traceLog.append("\n")
                             .append(StringUtils.repeat(INDENT_UNIT,
                                     nTraceLogIndent + 1))
-                            .append("Attr: ")
                             .append(attr.getAttribute().getKeyword())
                             .append(" - ").append(valueTag.toString());
                 }
@@ -469,10 +471,9 @@ public final class IppEncoder {
                     ostr.write(valueTag.asInt());
 
                     if (traceLog != null) {
-                        traceLog.append("\n")
-                                .append(StringUtils.repeat(INDENT_UNIT,
-                                        nTraceLogIndent + 2))
-                                .append("Value: ").append(value);
+                        traceLog.append("\n").append(StringUtils
+                                .repeat(INDENT_UNIT, nTraceLogIndent + 2))
+                                .append(value);
                     }
 
                     if (i == 0) {
@@ -506,6 +507,39 @@ public final class IppEncoder {
 
     /**
      *
+     * @param attrName
+     *            IPP attribute name.
+     * @param ostr
+     *            IPP output stream.
+     * @param traceLog
+     *            Trace log writer.
+     * @param nTraceLogIndent
+     *            Number of trace indent chars.
+     * @throws IOException
+     *             If IO error.
+     */
+    private static void writeMemberAttrName(final String attrName,
+            final OutputStream ostr, final Writer traceLog,
+            final int nTraceLogIndent) throws IOException {
+
+        ostr.write(IppValueTag.MEMBERATTRNAME.asInt());
+
+        // Name (void).
+        writeInt16(ostr, 0);
+
+        // Value.
+        writeInt16(ostr, attrName.length());
+        ostr.write(attrName.getBytes());
+
+        if (traceLog != null) {
+            traceLog.append("\n")
+                    .append(StringUtils.repeat(INDENT_UNIT, nTraceLogIndent))
+                    .append(attrName);
+        }
+    }
+
+    /**
+     *
      * @param collection
      * @param isNested
      * @param ostr
@@ -524,49 +558,26 @@ public final class IppEncoder {
 
         if (collection.isSetOfCollections()) {
 
-            boolean isFirst = true;
+            writeMemberAttrName(collectionName, ostr, traceLog,
+                    nTraceLogIndent);
 
+            if (traceLog != null) {
+                traceLog.append(" - COLLECTION");
+
+            }
             for (final IppAttrCollection memberCollection : collection
                     .getCollections()) {
-
-                final AttrCollectionType collectionSetType;
-
-                if (isFirst) {
-                    collectionSetType = AttrCollectionType.FIRST_OF_SET;
-                    isFirst = false;
-                } else {
-                    collectionSetType = AttrCollectionType.NEXT_OF_SET;
-                }
-
                 // Recurse.
-                writeCollection(memberCollection, collectionSetType, ostr,
-                        charset, traceLog, nTraceLogIndent + 1);
+                writeCollection(memberCollection,
+                        AttrCollectionType.NEXT_OF_SET, ostr, charset, traceLog,
+                        nTraceLogIndent + 1);
             }
 
         } else {
 
             if (attrCollectionType == AttrCollectionType.NESTED) {
-
-                /*
-                 * The nested collection member.
-                 */
-                ostr.write(IppValueTag.MEMBERATTRNAME.asInt());
-
-                // Name (void).
-                writeInt16(ostr, 0);
-
-                // Value.
-                writeInt16(ostr, collectionName.length());
-                ostr.write(collectionName.getBytes());
-
-                if (traceLog != null) {
-                    traceLog.append("\n")
-                            .append(StringUtils.repeat(INDENT_UNIT,
-                                    nTraceLogIndent))
-                            .append("[")
-                            .append(IppValueTag.MEMBERATTRNAME.toString())
-                            .append("] ").append(collectionName);
-                }
+                writeMemberAttrName(collectionName, ostr, traceLog,
+                        nTraceLogIndent);
             }
 
             /*
@@ -603,14 +614,27 @@ public final class IppEncoder {
             // Value (void).
             writeInt16(ostr, 0);
 
+            int nIndentWlk = nTraceLogIndent;
+            if (attrCollectionType == AttrCollectionType.NESTED) {
+                nIndentWlk++;
+            }
+
             //
             if (traceLog != null) {
-                traceLog.append("\n")
-                        .append(StringUtils.repeat(INDENT_UNIT,
-                                nTraceLogIndent))
-                        .append("[")
-                        .append(IppValueTag.BEGCOLLECTION.toString())
-                        .append("] ").append(collectionNameWlk);
+                if (StringUtils.isNotBlank(collectionNameWlk)) {
+                    traceLog.append("\n").append(
+                            StringUtils.repeat(INDENT_UNIT, nIndentWlk));
+                    traceLog.append(collectionNameWlk);
+                    traceLog.append(" - COLLECTION");
+                } else {
+                    if (StringUtils.isBlank(collectionName)) {
+                        traceLog.append("\n").append(
+                                StringUtils.repeat(INDENT_UNIT, nIndentWlk));
+                        traceLog.append("COLLECTION");
+                    } else {
+                        traceLog.append(" - COLLECTION");
+                    }
+                }
             }
 
             /*
@@ -620,32 +644,10 @@ public final class IppEncoder {
 
                 final String memberName = member.getAttribute().getKeyword();
 
-                /*
-                 * The member.
-                 */
-                ostr.write(IppValueTag.MEMBERATTRNAME.asInt());
+                writeMemberAttrName(memberName, ostr, traceLog, nIndentWlk + 1);
 
-                // Name (void).
-                writeInt16(ostr, 0);
-
-                // Value.
-                writeInt16(ostr, memberName.length());
-                ostr.write(memberName.getBytes());
-
-                /*
-                 * The values
-                 */
                 final AbstractIppAttrSyntax memberSyntax =
                         member.getAttribute().getSyntax();
-
-                if (traceLog != null) {
-                    traceLog.append("\n")
-                            .append(StringUtils.repeat(INDENT_UNIT,
-                                    nTraceLogIndent + 1))
-                            .append("[")
-                            .append(IppValueTag.MEMBERATTRNAME.toString())
-                            .append("] ").append(memberName);
-                }
 
                 for (final String value : member.getValues()) {
 
@@ -661,8 +663,8 @@ public final class IppEncoder {
                     if (traceLog != null) {
                         traceLog.append("\n")
                                 .append(StringUtils.repeat(INDENT_UNIT,
-                                        nTraceLogIndent + 2))
-                                .append("Value: ").append(value).append(" [")
+                                        nIndentWlk + 2))
+                                .append(value).append(" [")
                                 .append(memberSyntax.getValueTag().toString())
                                 .append("]");
                     }
@@ -677,7 +679,7 @@ public final class IppEncoder {
                     .getCollections()) {
                 // Recurse.
                 writeCollection(nestedCollection, AttrCollectionType.NESTED,
-                        ostr, charset, traceLog, nTraceLogIndent + 1);
+                        ostr, charset, traceLog, nIndentWlk + 1);
             }
 
             /*
@@ -692,16 +694,16 @@ public final class IppEncoder {
             writeInt16(ostr, 0);
 
             //
-            if (traceLog != null) {
+            if (false && traceLog != null) {
                 traceLog.append("\n")
-                        .append(StringUtils.repeat(INDENT_UNIT,
-                                nTraceLogIndent))
+                        .append(StringUtils.repeat(INDENT_UNIT, nIndentWlk))
                         .append("[")
                         .append(IppValueTag.ENDCOLLECTION.toString())
                         .append("]");
             }
 
         }
+
     }
 
     /**
@@ -1126,10 +1128,9 @@ public final class IppEncoder {
                         collectionMemberValueWlk.addValue(value);
 
                         if (traceLog != null) {
-                            traceLog.append("\n")
-                                    .append(StringUtils.repeat(INDENT_UNIT,
-                                            nTraceLogIndent + 1))
-                                    .append("Value: ").append(value);
+                            traceLog.append("\n").append(StringUtils
+                                    .repeat(INDENT_UNIT, nTraceLogIndent + 1))
+                                    .append(value);
                         }
 
                     } else {
@@ -1222,7 +1223,7 @@ public final class IppEncoder {
                          * Add the value to the attribute.
                          */
                         if (traceLog != null) {
-                            traceLog.write("\n    Value: " + value);
+                            traceLog.write("\n    " + value);
                         }
 
                         if (attrWlk != null) {

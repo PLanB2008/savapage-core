@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -25,7 +28,7 @@ import java.util.List;
 
 import javax.persistence.Query;
 
-import org.savapage.core.dao.PrinterAttrDao;
+import org.savapage.core.dao.IAttrDao;
 import org.savapage.core.dao.PrinterGroupMemberDao;
 import org.savapage.core.dao.enums.PrinterAttrEnum;
 import org.savapage.core.dao.helpers.ProxyPrinterName;
@@ -57,7 +60,7 @@ public final class PrinterGroupMemberDaoImpl extends
         final Query query = getEntityManager().createQuery(jpql);
         query.setParameter("attrName",
                 PrinterAttrEnum.JOBTICKET_ENABLE.getDbName());
-        query.setParameter("attrValue", PrinterAttrDao.V_YES);
+        query.setParameter("attrValue", IAttrDao.V_YES);
 
         return query.getResultList();
     }

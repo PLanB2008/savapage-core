@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -42,6 +45,7 @@ import org.savapage.core.ipp.IppMediaSizeEnum;
 import org.savapage.core.job.DocLogClean;
 import org.savapage.core.jpa.DocIn;
 import org.savapage.core.jpa.User;
+import org.savapage.core.pdf.PdfDocumentFonts;
 import org.savapage.core.print.proxy.ProxyPrintJobChunk;
 import org.savapage.core.print.proxy.ProxyPrintJobChunkRange;
 import org.savapage.core.services.helpers.InboxPageImageInfo;
@@ -53,6 +57,11 @@ import org.savapage.core.services.helpers.PageRangeException;
  *
  */
 public interface InboxService {
+
+    /**
+     * File extension for EcoPrint shadow PDF file.
+     */
+    public static final String FILENAME_EXT_ECO = "eco";
 
     /**
      * Checks if user home directory (SafePages) exists.
@@ -263,7 +272,7 @@ public interface InboxService {
     File createLetterhead(User user) throws PostScriptDrmException;
 
     /**
-     * Finds and returns the letterhead by letterheadId.
+     * Finds and returns the letterhead by letterhead ID.
      *
      * @param user
      *            If {@code null} the public letterheads are returned.
@@ -273,6 +282,20 @@ public interface InboxService {
      * @return <code>null</code> when not found
      */
     LetterheadInfo.LetterheadJob getLetterhead(User user, String letterheadId);
+
+    /**
+     * Finds and returns the letterhead by letterhead ID.
+     *
+     * @param user
+     *            Unique user id. If {@code null} the public letterheads are
+     *            returned.
+     * @param letterheadId
+     *            The basename of the letterhead file.
+     *
+     * @return <code>null</code> when not found
+     */
+    LetterheadInfo.LetterheadJob getLetterheadExt(String user,
+            String letterheadId);
 
     /**
      * Gets the page URLs and other properties of a letterhead.
@@ -411,6 +434,16 @@ public interface InboxService {
      *            inter-job ordering is gone.
      */
     void editJob(String userId, int iJob, boolean rotate, boolean undelete);
+
+    /**
+     *
+     * @param userId
+     *            The unique user id.
+     * @param iJob
+     *            Zero-based index of the job.
+     * @return {@link PdfDocumentFonts}.
+     */
+    PdfDocumentFonts getJobFonts(String userId, int iJob);
 
     /**
      * Moves page ranges to a page position.
@@ -623,7 +656,7 @@ public interface InboxService {
 
     /**
      * Checks if the file represents a supported job type. It is irrelevant if
-     * the file exists or not.
+     * the file actually exists.
      * <p>
      * pdf, ps, and pnm (scan) are supported job types.
      * </p>
@@ -633,6 +666,24 @@ public interface InboxService {
      * @return {@code true} if supported.
      */
     boolean isSupportedJobType(File file);
+
+    /**
+     * Checks is inbox file name syntax is valid.
+     *
+     * @param filename
+     *            File name.
+     * @return {@code true} if inbox file name syntax is valid.
+     */
+    boolean isValidInboxFileName(String filename);
+
+    /**
+     * Checks is letterhead inbox file name syntax is valid.
+     *
+     * @param filename
+     *            File name.
+     * @return {@code true} if letterhead inbox file name syntax is valid.
+     */
+    boolean isValidInboxLetterheadFileName(String filename);
 
     /**
      * Gets the {@link InboxPageImageInfo} belonging to the overall SafePages
@@ -786,4 +837,5 @@ public interface InboxService {
      *             When file system error.
      */
     Long getLastPrintInTime(String userId) throws IOException;
+
 }

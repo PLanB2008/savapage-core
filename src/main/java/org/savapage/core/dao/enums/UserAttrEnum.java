@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -28,6 +31,9 @@ import org.savapage.core.SpException;
 import org.savapage.core.dao.UserAttrDao;
 import org.savapage.core.jpa.UserAttr;
 import org.savapage.core.json.JobTicketProperties;
+import org.savapage.core.totp.TOTPHistoryDto;
+import org.savapage.core.totp.TOTPRecoveryDto;
+import org.savapage.core.totp.TOTPSentDto;
 import org.savapage.lib.pgp.PGPKeyID;
 
 /**
@@ -108,8 +114,53 @@ public enum UserAttrEnum {
     PDF_PROPS("pdf-properties"),
 
     /**
+     * Encrypted Telegram ID.
+     */
+    EXT_TELEGRAM_ID("ext.telegram.id"),
+
+    /**
+     * Enable sending One-time Password (TOTP) to
+     * {@link UserAttrEnum#EXT_TELEGRAM_ID}.
+     */
+    EXT_TELEGRAM_TOTP_ENABLE("ext.telegram.totp.enable"),
+
+    /**
+     * Last TOTP code sent to Telegram. See {@link TOTPSentDto}.
+     */
+    EXT_TELEGRAM_TOTP_SENT("ext.telegram.totp.sent"),
+
+    /**
+     * Enable RFC 6238 Time-based One-time Password (TOTP).
+     */
+    TOTP_ENABLE("totp.enable"),
+
+    /**
+     * Encrypted secret key for RFC 6238 Time-based One-time Password (TOTP).
+     */
+    TOTP_SECRET("totp.secret"),
+
+    /**
+     * <p>
+     * <a href="https://tools.ietf.org/html/rfc6238">RFC6238</a>, page 7:
+     * <i>"Note that a prover may send the same OTP inside a given time-step
+     * window multiple times to a verifier. The verifier MUST NOT accept the
+     * second attempt of the OTP after the successful validation has been issued
+     * for the first OTP, which ensures one-time only use of an OTP."</i>
+     * </p>
+     *
+     * See {@link TOTPHistoryDto}.
+     */
+    TOTP_HISTORY("totp.history"),
+
+    /**
+     * See {@link TOTPRecoveryDto}.
+     */
+    TOTP_RECOVERY("totp.recovery"),
+
+    /**
      * The Encrypted PIN {@link UUID} used for identification when printing from
-     * the internet. See {@link ReservedIppQueueEnum#IPP_PRINT_INTERNET}.
+     * the internet. See {@link ReservedIppQueueEnum#IPP_PRINT_INTERNET} and
+     * {@link ReservedIppQueueEnum#WEBSERVICE}.
      */
     UUID("uuid"),
 
@@ -345,6 +396,16 @@ public enum UserAttrEnum {
      */
     public final String getName() {
         return this.name;
+    }
+
+    /**
+     *
+     * @return {@code true} if encrypted.
+     */
+    public final boolean isEncrypted() {
+        return this == PIN || this == UUID || this == EXT_TELEGRAM_ID
+                || this == TOTP_SECRET || this == TOTP_HISTORY
+                || this == TOTP_RECOVERY || this == EXT_TELEGRAM_TOTP_SENT;
     }
 
     /**

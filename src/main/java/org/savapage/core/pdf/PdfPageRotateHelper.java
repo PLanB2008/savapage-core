@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -387,7 +390,7 @@ public final class PdfPageRotateHelper {
      * Is PDF page seen in landscape orientation?
      *
      * @param ctm
-     *            The CTM of the PDF page (can be {@code null}.
+     *            The CTM of the PDF page (can be {@code null}).
      * @param pageRotation
      *            The PDF page rotation.
      * @param landscape
@@ -522,7 +525,30 @@ public final class PdfPageRotateHelper {
     }
 
     /**
-     * Gets the new new PDF page rotation to rotate to landscape or portait.
+     * Is PDF page seen in landscape orientation?
+     *
+     * @param reader
+     *            The PDF file.
+     * @param nPage
+     *            The 1-based page ordinal.
+     * @return {@code true} when seen in landscape.
+     * @throws IOException
+     *             When IO errors.
+     */
+    public static boolean isSeenAsLandscape(final PdfReader reader,
+            final int nPage) throws IOException {
+
+        final AffineTransform ctm = getPdfPageCTM(reader, nPage);
+        final int page1Rotation = reader.getPageRotation(nPage);
+        final boolean page1Landscape =
+                isLandscapePage(reader.getPageSize(nPage));
+
+        return isSeenAsLandscape(ctm, page1Rotation, page1Landscape,
+                Integer.valueOf(0));
+    }
+
+    /**
+     * Gets the new PDF page rotation to rotate to landscape or portait.
      *
      * @param toLandscape
      *            If {@code true}, rotate to landscape.
@@ -569,12 +595,13 @@ public final class PdfPageRotateHelper {
 
     /**
      * Gets the page rotation for a PDF page, so its orientation will be the
-     * same as the perceived orientation of the standard.
+     * same as the perceived orientation of the required alignment.
      *
      * @param reader
      *            The PDF reader.
      * @param alignToLandscape
-     *            If {@code true}, page must be aligned to landscape.
+     *            Required alignment. If {@code true}, page must be aligned to
+     *            landscape.
      * @param nPage
      *            The 1-based page ordinal.
      * @return The rotation aligned to the standard.

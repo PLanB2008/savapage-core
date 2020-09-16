@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -72,7 +75,6 @@ import org.savapage.core.config.IConfigProp;
 import org.savapage.core.config.IConfigProp.Key;
 import org.savapage.core.dao.DaoContext;
 import org.savapage.core.dao.PrinterDao;
-import org.savapage.core.dao.UserDao;
 import org.savapage.core.dao.enums.ACLRoleEnum;
 import org.savapage.core.dao.enums.AccountTrxTypeEnum;
 import org.savapage.core.dao.enums.DeviceTypeEnum;
@@ -469,7 +471,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
          * catched and logged at INFO level.
          */
         try {
-            stopSubscription(null);
+            stopCUPSEventSubscription();
         } catch (SpException e) {
             if (LOGGER.isInfoEnabled()) {
                 LOGGER.info(e.getMessage());
@@ -847,6 +849,27 @@ public abstract class AbstractProxyPrintService extends AbstractService
     }
 
     @Override
+    public final JsonPrinterList getSimplePrinterList()
+            throws IppConnectException, IppSyntaxException {
+        lazyInitPrinterCache();
+        final ArrayList<JsonPrinter> collectedPrinters = new ArrayList<>();
+
+        for (final JsonProxyPrinter printer : this.cupsPrinterCache.values()) {
+
+            final JsonPrinter jsonPrinter = new JsonPrinter();
+
+            final Printer dbPrinter = printer.getDbPrinter();
+
+            jsonPrinter.setName(printer.getName());
+            jsonPrinter.setAlias(dbPrinter.getDisplayName());
+            jsonPrinter.setLocation(dbPrinter.getLocation());
+
+            collectedPrinters.add(jsonPrinter);
+        }
+        return sortPrinters(collectedPrinters);
+    }
+
+    @Override
     public final JsonPrinterList getUserPrinterList(final Device terminal,
             final String userName)
             throws IppConnectException, IppSyntaxException {
@@ -970,6 +993,18 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
             }
         }
+
+        return sortPrinters(collectedPrinters);
+    }
+
+    /**
+     *
+     * @param collectedPrinters
+     *            Collected printers.
+     * @return Sorted printer list.
+     */
+    private static JsonPrinterList
+            sortPrinters(final ArrayList<JsonPrinter> collectedPrinters) {
 
         Collections.sort(collectedPrinters, new Comparator<JsonPrinter>() {
 
@@ -1138,6 +1173,14 @@ public abstract class AbstractProxyPrintService extends AbstractService
         }
     }
 
+    @Override
+    public final File getPPDExtFile(final String fileName) {
+        return Paths
+                .get(ConfigManager.getServerCustomCupsHome().getAbsolutePath(),
+                        fileName)
+                .toFile();
+    }
+
     /**
      * Assigns the database {@link Printer} to the {@link JsonProxyPrinter}, and
      * overrules IPP option defaults specified as {@link PrinterAttr}.
@@ -1165,9 +1208,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
         if (StringUtils.isNotBlank(ppdfExtFile)) {
 
-            final File filePpdExt = Paths.get(
-                    ConfigManager.getServerCustomCupsHome().getAbsolutePath(),
-                    ppdfExtFile).toFile();
+            final File filePpdExt = getPPDExtFile(ppdfExtFile);
 
             if (filePpdExt.exists()) {
                 try {
@@ -1400,76 +1441,6 @@ public abstract class AbstractProxyPrintService extends AbstractService
         return Math.round(nSheets * 100);
     }
 
-    /**
-     * Gets the CUPS {@code notify-recipient-uri}.
-     * <p>
-     * Example: {@code savapage:localhost:8631}
-     * </p>
-     *
-     * @return
-     */
-    private String getSubscrNotifyRecipientUri() {
-        return ConfigManager.getCupsNotifier() + ":localhost:"
-                + ConfigManager.getServerPort();
-    }
-
-    /**
-     *
-     * @return
-     */
-    private String getSubscrNotifyLeaseSeconds() {
-        return ConfigManager.instance()
-                .getConfigValue(Key.CUPS_IPP_SUBSCR_NOTIFY_LEASE_DURATION);
-    }
-
-    /**
-     *
-     * @param requestingUser
-     * @return
-     */
-    private String getSubscrRequestingUser(final String requestingUser) {
-        if (requestingUser == null) {
-            return ConfigManager.getProcessUserName();
-        }
-        return requestingUser;
-    }
-
-    @Override
-    public final void startSubscription(final String requestingUser)
-            throws IppConnectException, IppSyntaxException {
-        startSubscription(getSubscrRequestingUser(requestingUser),
-                getSubscrNotifyLeaseSeconds(), getSubscrNotifyRecipientUri());
-    }
-
-    @Override
-    public final void stopSubscription(final String requestingUser)
-            throws IppConnectException, IppSyntaxException {
-        stopSubscription(getSubscrRequestingUser(requestingUser),
-                getSubscrNotifyRecipientUri());
-    }
-
-    /**
-     *
-     * @param requestingUser
-     * @param recipientUri
-     * @throws IppConnectException
-     * @throws IppSyntaxException
-     */
-    abstract protected void stopSubscription(final String requestingUser,
-            String recipientUri) throws IppConnectException, IppSyntaxException;
-
-    /**
-     *
-     * @param requestingUser
-     * @param leaseSeconds
-     * @param recipientUri
-     * @throws IppConnectException
-     * @throws IppSyntaxException
-     */
-    abstract protected void startSubscription(final String requestingUser,
-            String leaseSeconds, String recipientUri)
-            throws IppConnectException, IppSyntaxException;
-
     @Override
     public final void lazyInitPrinterCache()
             throws IppConnectException, IppSyntaxException {
@@ -1629,12 +1600,12 @@ public abstract class AbstractProxyPrintService extends AbstractService
          */
         if (!connectedToCupsPrv && isConnectedToCups()) {
 
-            startSubscription(null);
+            this.startCUPSPushEventSubscription();
 
             LOGGER.trace("CUPS job synchronization started");
 
             if (ConfigManager.instance().isConfigValue(
-                    Key.SYS_STARTUP_CUPS_SYNC_PRINT_JOBS_ENABLE)) {
+                    Key.SYS_STARTUP_CUPS_IPP_SYNC_PRINT_JOBS_ENABLE)) {
                 SpJobScheduler.instance()
                         .scheduleOneShotJob(SpJobType.CUPS_SYNC_PRINT_JOBS, 1L);
             }
@@ -1846,9 +1817,6 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
         final int nUp = ProxyPrintInboxReq.getNup(request.getOptionValues());
 
-        final String cupsPageSet = IppKeyword.CUPS_ATTR_PAGE_SET_ALL;
-        final String cupsJobSheets = "";
-
         final MediaSizeName mediaSizeName =
                 IppMediaSizeEnum.findMediaSizeName(request.getOptionValues()
                         .get(IppDictJobTemplateAttr.ATTR_MEDIA));
@@ -1881,9 +1849,11 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
         printOut.setGrayscale(grayscale);
 
-        printOut.setCupsJobSheets(cupsJobSheets);
+        // Mantis #1105
+        printOut.setCupsJobSheets(IppKeyword.ATTR_JOB_SHEETS_NONE);
+        printOut.setCupsPageSet(IppKeyword.CUPS_ATTR_PAGE_SET_ALL);
+
         printOut.setCupsNumberUp(String.valueOf(nUp));
-        printOut.setCupsPageSet(cupsPageSet);
 
         printOut.setNumberOfCopies(request.getNumberOfCopies());
         printOut.setNumberOfSheets(numberOfSheets);
@@ -2430,7 +2400,9 @@ public abstract class AbstractProxyPrintService extends AbstractService
 
         final PrintOut printOut = docLog.getDocOut().getPrintOut();
 
-        printOut.setCupsJobSheets("");
+        // Mantis #1105
+        printOut.setCupsJobSheets(IppKeyword.ATTR_JOB_SHEETS_NONE);
+
         printOut.setCupsNumberUp(String.valueOf(request.getNup()));
         printOut.setCupsPageSet(IppKeyword.CUPS_ATTR_PAGE_SET_ALL);
 
@@ -2722,7 +2694,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
         /*
          * Lock the user.
          */
-        final User lockedUser = userDAO().lock(cardUser.getId());
+        final User lockedUser = userService().lockUser(cardUser.getId());
 
         /*
          * Get the outbox job candidates.
@@ -2744,7 +2716,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
     public final ProxyPrintOutboxResult proxyPrintOutbox(final Long userDbId,
             final OutboxJobDto job) throws ProxyPrintException {
 
-        final User lockedUser = userDAO().lock(userDbId);
+        final User lockedUser = userService().lockUser(userDbId);
         final List<OutboxJobDto> jobs = new ArrayList<>();
         jobs.add(job);
 
@@ -2843,7 +2815,7 @@ public abstract class AbstractProxyPrintService extends AbstractService
         /*
          * Lock the user.
          */
-        final User user = userDAO().lock(cardUser.getId());
+        final User user = userService().lockUser(cardUser.getId());
 
         /*
          * Get the inbox.
@@ -3181,13 +3153,15 @@ public abstract class AbstractProxyPrintService extends AbstractService
             final IppRoutingContextImpl ctx = new IppRoutingContextImpl();
 
             ctx.setOriginatorIp(printInInfo.getOriginatorIp());
-            ctx.setUrlPath(queue.getUrlPath());
+            ctx.setQueueName(queue.getUrlPath());
             ctx.setPdfToPrint(fileToPrint);
             ctx.setUserId(user.getUserId());
             ctx.setPrinterName(printerName);
+            ctx.setPrinterURI(this.getCupsPrinterURI(printerName));
             ctx.setPrinterDisplayName(printer.getDisplayName());
             ctx.setJobName(printInInfo.getJobName());
             ctx.setTransactionDate(ServiceContext.getTransactionDate());
+            ctx.setPageProperties(printInInfo.getPageProps());
 
             final IppRoutingResult res = new IppRoutingResult();
 
@@ -3209,11 +3183,9 @@ public abstract class AbstractProxyPrintService extends AbstractService
         final DaoContext daoContext = ServiceContext.getDaoContext();
 
         try {
-            final UserDao userDao = ServiceContext.getDaoContext().getUserDao();
-
             daoContext.beginTransaction();
 
-            final User lockedUser = userDao.lock(user.getId());
+            final User lockedUser = userService().lockUser(user.getId());
 
             if (printReq.getPrintMode() == PrintModeEnum.HOLD) {
 

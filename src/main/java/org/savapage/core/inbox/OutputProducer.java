@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -35,8 +38,9 @@ import org.savapage.core.doc.DocContent;
 import org.savapage.core.imaging.EcoPrintPdfTask;
 import org.savapage.core.imaging.EcoPrintPdfTaskPendingException;
 import org.savapage.core.imaging.ImageUrl;
-import org.savapage.core.imaging.Pdf2ImgCommandExt;
-import org.savapage.core.imaging.Pdf2PngPopplerCmd;
+import org.savapage.core.imaging.Pdf2ImgCairoCmd;
+import org.savapage.core.imaging.Pdf2ImgCairoCmd.ImgType;
+import org.savapage.core.imaging.Pdf2ImgCommand;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.User;
 import org.savapage.core.pdf.AbstractPdfCreator;
@@ -59,28 +63,24 @@ import org.slf4j.LoggerFactory;
  */
 public final class OutputProducer {
 
-    /**
-     * .
-     */
+    /** */
+    public static final String LETTERHEAD_FILE_PREFIX = "letterhead-";
+
+    /** */
     private static final InboxService INBOX_SERVICE =
             ServiceContext.getServiceFactory().getInboxService();
 
-    /**
-     * The logger.
-     */
+    /** */
     private static final Logger LOGGER =
             LoggerFactory.getLogger(OutputProducer.class);
 
-    /**
-     * .
-     */
+    /** */
     private static final DocLogService DOCLOG_SERVICE =
             ServiceContext.getServiceFactory().getDocLogService();
 
-    /**
-     *
-     */
-    private final Pdf2ImgCommandExt pdf2PngCommand = new Pdf2PngPopplerCmd();
+    /** Mantis #1079. */
+    private final Pdf2ImgCommand pdf2CairoCommand =
+            new Pdf2ImgCairoCmd(ImgType.PNG);
 
     /**
      *
@@ -151,16 +151,23 @@ public final class OutputProducer {
 
         if (isLetterhead) {
 
+            final String userLetterhead;
             if (isLetterheadPublic) {
+                userLetterhead = null;
                 jobHomeDir = ConfigManager.getLetterheadDir();
             } else {
+                userLetterhead = user;
                 jobHomeDir = UserHomePathEnum.LETTERHEADS.getFullPath(user);
             }
+
+            final LetterheadInfo.LetterheadJob letterheadJob =
+                    INBOX_SERVICE.getLetterheadExt(userLetterhead, jobName);
 
             pageImageInfo = new InboxPageImageInfo();
 
             pageImageInfo.setFile(jobName);
             pageImageInfo.setLandscape(false);
+            pageImageInfo.setNumberOfPages(letterheadJob.getPages().intValue());
             pageImageInfo.setPageInFile(Integer.valueOf(pageIn));
 
             jobFileName = jobName;
@@ -248,19 +255,18 @@ public final class OutputProducer {
 
         final File imgFile = new File(imgFileBuilder.toString());
 
-        final int imgWidth;
+        final String command;
 
+        final int pdf2CairoResolution;
         if (thumbnail) {
-            imgWidth = ImageUrl.THUMBNAIL_WIDTH;
+            pdf2CairoResolution = Pdf2ImgCairoCmd.RESOLUTION_FOR_THUMNAIL;
         } else {
-            imgWidth = ImageUrl.BROWSER_PAGE_WIDTH;
+            pdf2CairoResolution = Pdf2ImgCairoCmd.RESOLUTION_FOR_BROWSER;
         }
 
-        final String command = pdf2PngCommand.createCommand(srcFile,
-                pageImageInfo.isLandscape(), pageImageInfo.getRotation(),
-                imgFile, Integer.parseInt(pageInJobFile),
-                Pdf2PngPopplerCmd.RESOLUTION_FOR_SCREEN,
-                pageImageInfo.getRotate(), imgWidth);
+        command = pdf2CairoCommand.createCommand(Pdf2ImgCommand.CreateParms
+                .create(srcFile, imgFile, pageImageInfo,
+                        Integer.parseInt(pageInJobFile), pdf2CairoResolution));
 
         LOGGER.trace(command);
 
@@ -353,8 +359,9 @@ public final class OutputProducer {
             EcoPrintPdfTaskPendingException {
 
         final StringBuilder pdfFile = new StringBuilder().append(directory)
-                .append("/letterhead-").append(System.currentTimeMillis())
-                .append(".").append(DocContent.FILENAME_EXT_PDF);
+                .append("/").append(LETTERHEAD_FILE_PREFIX)
+                .append(System.currentTimeMillis()).append(".")
+                .append(DocContent.FILENAME_EXT_PDF);
 
         final PdfCreateRequest pdfRequest = new PdfCreateRequest();
 

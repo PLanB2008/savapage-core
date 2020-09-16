@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -76,7 +79,10 @@ import org.savapage.core.inbox.RangeAtom;
 import org.savapage.core.ipp.IppMediaSizeEnum;
 import org.savapage.core.jpa.DocLog;
 import org.savapage.core.jpa.User;
+import org.savapage.core.msg.UserMsgIndicator;
 import org.savapage.core.pdf.AbstractPdfCreator;
+import org.savapage.core.pdf.IPdfPageProps;
+import org.savapage.core.pdf.PdfDocumentFonts;
 import org.savapage.core.pdf.PdfPageRotateHelper;
 import org.savapage.core.pdf.PdfPasswordException;
 import org.savapage.core.pdf.PdfSecurityException;
@@ -122,11 +128,6 @@ public final class InboxServiceImpl implements InboxService {
      */
     private static final EcoPrintPdfTaskService ECOPRINT_SERVICE =
             ServiceContext.getServiceFactory().getEcoPrintPdfTaskService();
-
-    /**
-     * File extension for EcoPrint shadow PDF file.
-     */
-    public static final String FILENAME_EXT_ECO = "eco";
 
     /**
      *
@@ -257,9 +258,9 @@ public final class InboxServiceImpl implements InboxService {
      *
      * @param filePathPdf
      *            The PDF document file path.
-     * @return The {@link SpPdfPageProps}.
+     * @return The {@link IPdfPageProps}.
      */
-    private static SpPdfPageProps getPdfPageProps(final String filePathPdf) {
+    private static IPdfPageProps getPdfPageProps(final String filePathPdf) {
         try {
             return SpPdfPageProps.create(filePathPdf);
 
@@ -315,9 +316,6 @@ public final class InboxServiceImpl implements InboxService {
 
                 final String filePath = files[i].getAbsolutePath();
 
-                /*
-                 *
-                 */
                 final DocLog docLog = doclogDao.findByUuid(userObj.getId(),
                         FilenameUtils.getBaseName(filePath));
 
@@ -327,16 +325,14 @@ public final class InboxServiceImpl implements InboxService {
                      * official front-end), but must have been manually copied
                      * to the user's SafePages.
                      */
-                    LOGGER.error("file [" + files[i].getAbsolutePath()
-                            + "] NOT found in DocLog.");
+                    files[i].delete();
 
-                    throw new SpException("File [" + files[i].getName()
-                            + "] has NO log entry.");
+                    LOGGER.warn(
+                            "File [{}] deleted. Reason: not found in DocLog.",
+                            files[i].getAbsolutePath());
+                    continue;
                 }
 
-                /*
-                 *
-                 */
                 final InboxInfoDto.InboxJob job = new InboxInfoDto.InboxJob();
 
                 job.setFile(FilenameUtils.getName(filePath));
@@ -354,7 +350,7 @@ public final class InboxServiceImpl implements InboxService {
                  * Landscape, page rotation, content rotation, user rotate,
                  * media.
                  */
-                final SpPdfPageProps pageProps = getPdfPageProps(filePath);
+                final IPdfPageProps pageProps = getPdfPageProps(filePath);
 
                 final boolean isLandscape = pageProps.isLandscape();
                 final int rotation = pageProps.getRotationFirstPage();
@@ -371,14 +367,10 @@ public final class InboxServiceImpl implements InboxService {
                 job.setLandscapeView(Boolean.valueOf(
                         PdfPageRotateHelper.isSeenAsLandscape(contentRotation,
                                 rotation, isLandscape, rotate.intValue())));
-                /*
-                 * Append
-                 */
+                // Append
                 jobinfo.getJobs().add(job);
 
-                /*
-                 *
-                 */
+                //
                 final InboxJobRange range = new InboxInfoDto.InboxJobRange();
 
                 range.setJob(i);
@@ -409,6 +401,7 @@ public final class InboxServiceImpl implements InboxService {
         final InboxPageImageInfo dto = new InboxPageImageInfo();
 
         dto.setFile(job.getFile());
+        dto.setNumberOfPages(job.getPages().intValue());
         dto.setLandscape(job.getLandscape().booleanValue());
         dto.setRotation(job.getRotation().intValue());
 
@@ -420,6 +413,15 @@ public final class InboxServiceImpl implements InboxService {
             dto.setRotate(PdfPageRotateHelper.PDF_ROTATION_0.intValue());
         } else {
             dto.setRotate(Integer.valueOf(rotate).intValue());
+        }
+
+        if (job.getOverlay() != null) {
+            final InboxInfoDto.PageOverlay pageOverlay =
+                    job.getOverlay().get(Integer.valueOf(iPage));
+            if (pageOverlay != null) {
+                dto.setOverlaySVG64(pageOverlay.getSvg64());
+                dto.setOverlayJSON64(pageOverlay.getFabric64());
+            }
         }
 
         return dto;
@@ -1194,8 +1196,16 @@ public final class InboxServiceImpl implements InboxService {
     public LetterheadInfo.LetterheadJob getLetterhead(final User user,
             final String letterheadId) {
 
-        LetterheadInfo letterheadInfo = getLetterheads(user);
-        return getLetterhead(letterheadId, letterheadInfo);
+        final LetterheadInfo letterheadInfo = this.getLetterheads(user);
+        return this.getLetterhead(letterheadId, letterheadInfo);
+    }
+
+    @Override
+    public LetterheadInfo.LetterheadJob getLetterheadExt(final String user,
+            final String letterheadId) {
+
+        final LetterheadInfo letterheadInfo = this.getLetterheadsExt(user);
+        return this.getLetterhead(letterheadId, letterheadInfo);
     }
 
     /**
@@ -1282,7 +1292,32 @@ public final class InboxServiceImpl implements InboxService {
     @Override
     public LetterheadInfo getLetterheads(final User userObj) {
 
-        final String user = userObj == null ? null : userObj.getUserId();
+        final String user;
+
+        if (userObj == null) {
+            user = null;
+        } else {
+            user = userObj.getUserId();
+        }
+        return this.getLetterheadsExt(user);
+    }
+
+    /**
+     * Returns private or public letterhead store.
+     * <p>
+     * The store is read from a json file and updated (written) with newly
+     * arrived PDF letterheads.
+     * </p>
+     * <p>
+     * The user Letterhead directory is created when it does not exist.
+     * </p>
+     *
+     * @param user
+     *            Unique user id. If {@code null} the public letterheads are
+     *            returned.
+     * @return The {@link LetterheadInfo}.
+     */
+    private LetterheadInfo getLetterheadsExt(final String user) {
 
         final String workdir = getLetterheadsDir(user);
 
@@ -1344,7 +1379,7 @@ public final class InboxServiceImpl implements InboxService {
 
                 job.setForeground(true);
                 job.setName("untitled");
-                job.setPub(userObj == null);
+                job.setPub(user == null);
 
                 /*
                  * Append
@@ -1617,6 +1652,28 @@ public final class InboxServiceImpl implements InboxService {
         }
 
         storeInboxInfo(user, jobs);
+    }
+
+    @Override
+    public PdfDocumentFonts getJobFonts(final String user, final int iJob) {
+
+        final InboxInfoDto jobs = readInboxInfo(user);
+
+        if (iJob >= jobs.getJobs().size()) {
+            LOGGER.warn("User [{}] Job [{}] not present.", user, iJob);
+            throw new IllegalStateException("job not present");
+        }
+
+        final InboxJob job = jobs.getJobs().get(iJob);
+
+        try {
+            return PdfDocumentFonts.create(
+                    Paths.get(ConfigManager.getUserHomeDir(user), job.getFile())
+                            .toFile());
+        } catch (IOException e) {
+            LOGGER.warn("User [{}] Job [{}] {}", user, iJob, e.getMessage());
+            throw new IllegalStateException(e.getMessage());
+        }
     }
 
     @Override
@@ -2641,6 +2698,53 @@ public final class InboxServiceImpl implements InboxService {
         }
 
         return null;
+    }
+
+    @Override
+    public boolean isValidInboxFileName(final String filename) {
+
+        if (filename.equals(UserMsgIndicator.FILE_BASENAME)
+                || filename.equals(INBOX_DESCRIPT_FILE_NAME)) {
+            return true;
+        }
+
+        final String ext = FilenameUtils.getExtension(filename);
+
+        // .pdf and .pdf.eco
+        if (ext.equalsIgnoreCase(DocContent.FILENAME_EXT_PDF)
+                || ext.equalsIgnoreCase(FILENAME_EXT_ECO)) {
+
+            String baseName = FilenameUtils.getBaseName(filename);
+
+            if (ext.equalsIgnoreCase(FILENAME_EXT_ECO)) {
+                // strip .pdf from basename.
+                baseName = FilenameUtils.getBaseName(baseName);
+            }
+
+            try {
+                UUID.fromString(baseName);
+                return true;
+            } catch (Exception e) {
+                // noop
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public boolean isValidInboxLetterheadFileName(final String filename) {
+
+        if (filename.equals(LETTERHEADS_DESCRIPT_FILE_NAME)) {
+            return true;
+        }
+
+        final String ext = FilenameUtils.getExtension(filename);
+
+        if (ext.equalsIgnoreCase(DocContent.FILENAME_EXT_PDF)
+                && filename.startsWith(OutputProducer.LETTERHEAD_FILE_PREFIX)) {
+            return true;
+        }
+        return false;
     }
 
 }

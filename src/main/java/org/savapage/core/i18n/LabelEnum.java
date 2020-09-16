@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -26,7 +29,7 @@ import java.util.Locale;
 import org.savapage.core.util.LocaleHelper;
 
 /**
- * Common phrases.
+ * Common labels.
  *
  * @author Rijk Ravestein
  *
@@ -34,9 +37,13 @@ import org.savapage.core.util.LocaleHelper;
 public enum LabelEnum {
 
     /** */
+    IP_ADDRESS,
+    /** */
+    OTHER_EMAILS,
+    /** */
     PRIMARY_EMAIL,
     /** */
-    OTHER_EMAILS;
+    TWO_STEP_VERIFICATION;
 
     /**
      * @param locale

@@ -1,7 +1,10 @@
 /*
- * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2014 Datraverse B.V.
+ * This file is part of the SavaPage project <https://www.savapage.org>.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -14,7 +17,7 @@
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * For more information, please contact Datraverse B.V. at this
  * address: info@datraverse.com
@@ -24,15 +27,17 @@ package org.savapage.core.doc;
 import java.io.File;
 
 import org.savapage.core.print.server.PostScriptFilter;
+import org.savapage.core.system.SystemInfo.ArgumentGS;
+import org.savapage.core.system.SystemInfo.Command;
 
 /**
  * Distills a PDF file from a PostScript file that is already filtered with
  * {@link PostScriptFilter}.
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
  *
  */
-public class PsToPdf extends AbstractDocFileConverter {
+public final class PsToPdf extends AbstractDocFileConverter {
 
     /**
      *
@@ -42,15 +47,27 @@ public class PsToPdf extends AbstractDocFileConverter {
     }
 
     @Override
-    protected final File getOutputFile(final File fileIn) {
+    protected ExecType getExecType() {
+        return ExecType.ADVANCED;
+    }
+
+    @Override
+    protected File getOutputFile(final File fileIn) {
         return getFileSibling(fileIn, DocContentTypeEnum.PDF);
     }
 
     @Override
-    protected final String getOsCommand(final DocContentTypeEnum contentType,
+    protected String getOsCommand(final DocContentTypeEnum contentType,
             final File fileIn, final File fileOut) {
-        return "ps2pdf " + fileIn.getAbsolutePath() + " "
-                + fileOut.getAbsolutePath() + " 2>/dev/null";
+        // Although font embedding is default, make it explicit.
+        return Command.PS2PDF.cmdLineExt(ArgumentGS.STDOUT_TO_STDOUT.getArg(),
+                ArgumentGS.EMBED_ALL_FONTS.getArg(), fileIn.getAbsolutePath(),
+                fileOut.getAbsolutePath());
+    }
+
+    @Override
+    public boolean notifyStdOutMsg() {
+        return this.hasStdout();
     }
 
 }

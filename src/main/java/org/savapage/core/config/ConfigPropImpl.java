@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2018 Datraverse B.V.
+ * Copyright (c) 2011-2020 Datraverse B.V.
  * Authors: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: 2011-2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -65,7 +68,7 @@ public final class ConfigPropImpl implements IConfigProp {
             new ConcurrentHashMap<>();
 
     /** */
-    private final Map<LdapType, Map<Key, LdapProp>> myLdapDefaults =
+    private final Map<LdapTypeEnum, Map<Key, LdapProp>> myLdapDefaults =
             new HashMap<>();
 
     /**
@@ -89,144 +92,221 @@ public final class ConfigPropImpl implements IConfigProp {
         return new LdapProp[] {
 
                 /*
-                 * OpenLDAP
+                 * OpenLDAP (== Google Cloud == FreeIPA)
                  */
-                new LdapProp(LdapType.OPEN_LDAP,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
                         Key.LDAP_SCHEMA_GROUP_MEMBER_FIELD, "member"),
                 //
-                new LdapProp(LdapType.OPEN_LDAP,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
                         Key.LDAP_SCHEMA_GROUP_NAME_FIELD, "cn"),
-                new LdapProp(LdapType.OPEN_LDAP,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
                         Key.LDAP_SCHEMA_GROUP_FULL_NAME_FIELD, "displayName"),
 
                 //
-                new LdapProp(LdapType.OPEN_LDAP, Key.LDAP_SCHEMA_GROUP_SEARCH,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
+                        Key.LDAP_SCHEMA_GROUP_SEARCH,
                         "(&(cn={0})(objectClass=groupOfNames))"),
 
-                new LdapProp(LdapType.OPEN_LDAP, Key.LDAP_SCHEMA_POSIX_GROUPS,
-                        V_NO),
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
+                        Key.LDAP_SCHEMA_POSIX_GROUPS, V_NO),
 
                 //
-                new LdapProp(LdapType.OPEN_LDAP,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
                         Key.LDAP_SCHEMA_USER_DEPARTMENT_FIELD,
                         "departmentNumber"),
-                new LdapProp(LdapType.OPEN_LDAP,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
                         Key.LDAP_SCHEMA_USER_EMAIL_FIELD, "mail"),
-                new LdapProp(LdapType.OPEN_LDAP,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
                         Key.LDAP_SCHEMA_USER_FULL_NAME_FIELD, "cn"),
-                new LdapProp(LdapType.OPEN_LDAP,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
                         Key.LDAP_SCHEMA_USER_NAME_FIELD, "uid"),
-                new LdapProp(LdapType.OPEN_LDAP,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
                         Key.LDAP_SCHEMA_USER_NAME_SEARCH, "(uid={0})"),
                 // not set
-                new LdapProp(LdapType.OPEN_LDAP,
+                new LdapProp(LdapTypeEnum.OPEN_LDAP,
+                        Key.LDAP_SCHEMA_USER_OFFICE_FIELD, null),
+
+                /*
+                 * FreeIPA == Google Cloud == OpenLDAP
+                 */
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_GROUP_MEMBER_FIELD, "member"),
+                //
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_GROUP_NAME_FIELD, "cn"),
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_GROUP_FULL_NAME_FIELD, "displayName"),
+
+                //
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_GROUP_SEARCH,
+                        "(&(cn={0})(objectClass=groupOfNames))"),
+
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_POSIX_GROUPS, V_NO),
+
+                //
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_USER_DEPARTMENT_FIELD,
+                        "departmentNumber"),
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_USER_EMAIL_FIELD, "mail"),
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_USER_FULL_NAME_FIELD, "cn"),
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_USER_NAME_FIELD, "uid"),
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_USER_NAME_SEARCH, "(uid={0})"),
+                // not set
+                new LdapProp(LdapTypeEnum.FREE_IPA,
+                        Key.LDAP_SCHEMA_USER_OFFICE_FIELD, null),
+
+                /*
+                 * Google Cloud == OpenLDAP == FreeIPA
+                 */
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_GROUP_MEMBER_FIELD, "member"),
+                //
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_GROUP_NAME_FIELD, "cn"),
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_GROUP_FULL_NAME_FIELD, "displayName"),
+
+                //
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_GROUP_SEARCH,
+                        "(&(cn={0})(objectClass=groupOfNames))"),
+
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_POSIX_GROUPS, V_NO),
+
+                //
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_USER_DEPARTMENT_FIELD,
+                        "departmentNumber"),
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_USER_EMAIL_FIELD, "mail"),
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_USER_FULL_NAME_FIELD, "cn"),
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_USER_NAME_FIELD, "uid"),
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
+                        Key.LDAP_SCHEMA_USER_NAME_SEARCH, "(uid={0})"),
+                // not set
+                new LdapProp(LdapTypeEnum.GOOGLE_CLOUD,
                         Key.LDAP_SCHEMA_USER_OFFICE_FIELD, null),
 
                 /*
                  * Apple Open Directory
                  */
-                new LdapProp(LdapType.OPEN_DIR,
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
                         Key.LDAP_SCHEMA_GROUP_MEMBER_FIELD, "memberUid"),
 
-                new LdapProp(LdapType.OPEN_DIR,
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
                         Key.LDAP_SCHEMA_GROUP_NAME_FIELD, "cn"),
-                new LdapProp(LdapType.OPEN_DIR,
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
                         Key.LDAP_SCHEMA_GROUP_FULL_NAME_FIELD, "displayName"),
 
-                new LdapProp(LdapType.OPEN_DIR, Key.LDAP_SCHEMA_GROUP_SEARCH,
-                        "(memberUid={0})"),
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
+                        Key.LDAP_SCHEMA_GROUP_SEARCH, "(memberUid={0})"),
 
-                new LdapProp(LdapType.OPEN_DIR, Key.LDAP_SCHEMA_POSIX_GROUPS,
-                        V_YES),
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
+                        Key.LDAP_SCHEMA_POSIX_GROUPS, V_YES),
 
-                new LdapProp(LdapType.OPEN_DIR,
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
                         Key.LDAP_SCHEMA_USER_DEPARTMENT_FIELD,
                         "departmentNumber"),
-                new LdapProp(LdapType.OPEN_DIR,
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
                         Key.LDAP_SCHEMA_USER_EMAIL_FIELD, "mail"),
-                new LdapProp(LdapType.OPEN_DIR,
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
                         Key.LDAP_SCHEMA_USER_FULL_NAME_FIELD, "cn"),
-                new LdapProp(LdapType.OPEN_DIR, Key.LDAP_SCHEMA_USER_NAME_FIELD,
-                        "uid"),
-                new LdapProp(LdapType.OPEN_DIR,
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
+                        Key.LDAP_SCHEMA_USER_NAME_FIELD, "uid"),
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
                         Key.LDAP_SCHEMA_USER_NAME_SEARCH, "(uid={0})"),
                 // not set
-                new LdapProp(LdapType.OPEN_DIR,
+                new LdapProp(LdapTypeEnum.OPEN_DIR,
                         Key.LDAP_SCHEMA_USER_OFFICE_FIELD, null),
 
                 /*
                  * Novell eDirectory
                  */
-                new LdapProp(LdapType.EDIR, Key.LDAP_SCHEMA_GROUP_MEMBER_FIELD,
-                        "member"),
-                new LdapProp(LdapType.EDIR, Key.LDAP_SCHEMA_GROUP_NAME_FIELD,
-                        "cn"),
-                new LdapProp(LdapType.EDIR,
+                new LdapProp(LdapTypeEnum.EDIR,
+                        Key.LDAP_SCHEMA_GROUP_MEMBER_FIELD, "member"),
+                new LdapProp(LdapTypeEnum.EDIR,
+                        Key.LDAP_SCHEMA_GROUP_NAME_FIELD, "cn"),
+                new LdapProp(LdapTypeEnum.EDIR,
                         Key.LDAP_SCHEMA_GROUP_FULL_NAME_FIELD, "fullName"),
 
-                new LdapProp(LdapType.EDIR, Key.LDAP_SCHEMA_GROUP_SEARCH,
+                new LdapProp(LdapTypeEnum.EDIR, Key.LDAP_SCHEMA_GROUP_SEARCH,
                         "(&(member={0})(objectClass=groupOfNames))"),
 
-                new LdapProp(LdapType.EDIR, Key.LDAP_SCHEMA_POSIX_GROUPS, V_NO),
-                new LdapProp(LdapType.EDIR,
+                new LdapProp(LdapTypeEnum.EDIR, Key.LDAP_SCHEMA_POSIX_GROUPS,
+                        V_NO),
+                new LdapProp(LdapTypeEnum.EDIR,
                         Key.LDAP_SCHEMA_USER_DEPARTMENT_FIELD, "OU"),
-                new LdapProp(LdapType.EDIR, Key.LDAP_SCHEMA_USER_EMAIL_FIELD,
-                        "mail"),
-                new LdapProp(LdapType.EDIR,
+                new LdapProp(LdapTypeEnum.EDIR,
+                        Key.LDAP_SCHEMA_USER_EMAIL_FIELD, "mail"),
+                new LdapProp(LdapTypeEnum.EDIR,
                         Key.LDAP_SCHEMA_USER_FULL_NAME_FIELD, "fullName"),
-                new LdapProp(LdapType.EDIR, Key.LDAP_SCHEMA_USER_NAME_FIELD,
+                new LdapProp(LdapTypeEnum.EDIR, Key.LDAP_SCHEMA_USER_NAME_FIELD,
                         "cn"),
-                new LdapProp(LdapType.EDIR, Key.LDAP_SCHEMA_USER_NAME_SEARCH,
+                new LdapProp(LdapTypeEnum.EDIR,
+                        Key.LDAP_SCHEMA_USER_NAME_SEARCH,
                         "(&(cn={0})(objectClass=person))"),
-                new LdapProp(LdapType.EDIR, Key.LDAP_SCHEMA_USER_OFFICE_FIELD,
-                        "l"),
+                new LdapProp(LdapTypeEnum.EDIR,
+                        Key.LDAP_SCHEMA_USER_OFFICE_FIELD, "l"),
 
                 /*
                  * Microsoft Active Directory
                  */
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_GROUP_MEMBER_FIELD,
-                        "member"),
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_GROUP_NAME_FIELD,
-                        "sAMAccountName"),
-                new LdapProp(LdapType.ACTD,
+                new LdapProp(LdapTypeEnum.ACTD,
+                        Key.LDAP_SCHEMA_GROUP_MEMBER_FIELD, "member"),
+                new LdapProp(LdapTypeEnum.ACTD,
+                        Key.LDAP_SCHEMA_GROUP_NAME_FIELD, "sAMAccountName"),
+                new LdapProp(LdapTypeEnum.ACTD,
                         Key.LDAP_SCHEMA_GROUP_FULL_NAME_FIELD, "displayName"),
 
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_GROUP_SEARCH,
+                new LdapProp(LdapTypeEnum.ACTD, Key.LDAP_SCHEMA_GROUP_SEARCH,
                         "(&(sAMAccountName={0})(objectCategory=group))"),
 
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_POSIX_GROUPS, V_NO),
-                new LdapProp(LdapType.ACTD,
+                new LdapProp(LdapTypeEnum.ACTD, Key.LDAP_SCHEMA_POSIX_GROUPS,
+                        V_NO),
+                new LdapProp(LdapTypeEnum.ACTD,
                         Key.LDAP_SCHEMA_USER_DEPARTMENT_FIELD, "department"),
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_USER_EMAIL_FIELD,
-                        "mail"),
-                new LdapProp(LdapType.ACTD,
+                new LdapProp(LdapTypeEnum.ACTD,
+                        Key.LDAP_SCHEMA_USER_EMAIL_FIELD, "mail"),
+                new LdapProp(LdapTypeEnum.ACTD,
                         Key.LDAP_SCHEMA_USER_FULL_NAME_FIELD, "displayName"),
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_USER_NAME_FIELD,
+                new LdapProp(LdapTypeEnum.ACTD, Key.LDAP_SCHEMA_USER_NAME_FIELD,
                         "sAMAccountName"),
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_USER_NAME_SEARCH,
+                new LdapProp(LdapTypeEnum.ACTD,
+                        Key.LDAP_SCHEMA_USER_NAME_SEARCH,
                         "(&(sAMAccountName={0})(objectCategory=person)"
                                 + "(objectClass=user)"
                                 + "(sAMAccountType=805306368){1})"),
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_USER_OFFICE_FIELD,
+                new LdapProp(LdapTypeEnum.ACTD,
+                        Key.LDAP_SCHEMA_USER_OFFICE_FIELD,
                         "physicalDeliveryOfficeName"),
 
                 // Active Directory Only.
 
-                new LdapProp(LdapType.ACTD, Key.LDAP_ALLOW_DISABLED_USERS,
+                new LdapProp(LdapTypeEnum.ACTD, Key.LDAP_ALLOW_DISABLED_USERS,
                         V_NO),
-                new LdapProp(LdapType.ACTD,
+                new LdapProp(LdapTypeEnum.ACTD,
                         Key.LDAP_FILTER_DISABLED_USERS_LOCALLY, V_YES),
 
-                new LdapProp(LdapType.ACTD,
+                new LdapProp(LdapTypeEnum.ACTD,
                         Key.LDAP_SCHEMA_USER_NAME_GROUP_SEARCH,
                         "(&(memberOf={0})(objectCategory=person)"
                                 + "(objectClass=user)"
                                 + "(sAMAccountType=805306368){1})"),
 
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_NESTED_GROUP_SEARCH,
+                new LdapProp(LdapTypeEnum.ACTD,
+                        Key.LDAP_SCHEMA_NESTED_GROUP_SEARCH,
                         "(&(memberOf={0})(objectCategory=group))"),
 
-                new LdapProp(LdapType.ACTD, Key.LDAP_SCHEMA_DN_FIELD,
+                new LdapProp(LdapTypeEnum.ACTD, Key.LDAP_SCHEMA_DN_FIELD,
                         "distinguishedName"),
 
                 //
@@ -428,7 +508,8 @@ public final class ConfigPropImpl implements IConfigProp {
         if (configProp == null) {
             return "";
         }
-        return configProp.getValue();
+        // Mantis #1105
+        return StringUtils.defaultString(configProp.getValue());
     }
 
     @Override
@@ -706,7 +787,7 @@ public final class ConfigPropImpl implements IConfigProp {
     }
 
     @Override
-    public String getString(final LdapType ldapType, final Key key) {
+    public String getString(final LdapTypeEnum ldapType, final Key key) {
         String value = getString(key);
         if (value == null || value.trim().isEmpty()) {
             final LdapProp prop = myLdapDefaults.get(ldapType).get(key);
@@ -718,7 +799,7 @@ public final class ConfigPropImpl implements IConfigProp {
     }
 
     @Override
-    public Boolean getBoolean(final LdapType ldapType, final Key key) {
+    public Boolean getBoolean(final LdapTypeEnum ldapType, final Key key) {
 
         final String value = getString(ldapType, key);
         final Boolean boolValue;

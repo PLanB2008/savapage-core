@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <http://savapage.org>.
- * Copyright (c) 2011-2015 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -21,11 +24,14 @@
  */
 package org.savapage.core.imaging;
 
+import java.util.StringTokenizer;
+
 import org.savapage.core.doc.DocContent;
 
 /**
  *
- * @author Datraverse B.V.
+ * @author Rijk Ravestein
+ *
  */
 public final class ImageUrl {
 
@@ -46,7 +52,7 @@ public final class ImageUrl {
      * SafePages.
      * <p>
      * NOTE: Even if JPEG is approximately 30% of PNG size, we use PNG anyway
-     * because {@link Pdf2PngPopplerCmd} is dependent on PNG.
+     * because {@link Pdf2ImgCairoCmd} is dependent on PNG.
      * </p>
      */
     public static final String FILENAME_EXT_IMAGE = DocContent.FILENAME_EXT_PNG;
@@ -251,6 +257,34 @@ public final class ImageUrl {
         urlTpl.setNocache("{1}");
         urlTpl.setBase64(base64);
         return urlTpl.composeImageUrl();
+    }
+
+    /**
+     * Extracts zero-based page ordinal from URL path.
+     * <p>
+     * For example: "/page-image/u/rijk/p/3/c/1591207056614/f/a.png" contains
+     * page ordinal "3".
+     * </p>
+     *
+     * @param urlPath
+     *            URL path.
+     *
+     * @return Zero-based page ordinal.
+     */
+    public static int getPageOrdinalFromPath(final String urlPath) {
+
+        final StringTokenizer tokenizer = new StringTokenizer(urlPath, "/");
+
+        while (tokenizer.hasMoreTokens()) {
+            final String token = tokenizer.nextToken();
+            if (token.equals(PARM_PAGE_ORDINAL)) {
+                if (tokenizer.hasMoreTokens()) {
+                    return Integer.valueOf(tokenizer.nextToken()).intValue();
+                }
+                break;
+            }
+        }
+        throw new IllegalArgumentException("No page ordinal found");
     }
 
     /**

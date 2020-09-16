@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -29,6 +32,11 @@ package org.savapage.core.config;
  *
  */
 public enum ServerPathEnum {
+
+    /**
+     * The relative path of the client folder.
+     */
+    CLIENT("client"),
 
     /**
      * The relative path of the custom template files.
@@ -86,6 +94,11 @@ public enum ServerPathEnum {
     SAFEPAGES_DEFAULT("data/internal/safepages"),
 
     /**
+     * Public letterheads.
+     */
+    LETTERHEADS("data/internal/letterheads"),
+
+    /**
      * The relative path of the print-jobtickets folder.
      */
     PRINT_JOBTICKETS("data/print-jobtickets"),
@@ -111,14 +124,14 @@ public enum ServerPathEnum {
     /**
      *
      * @param subdir
-     *            Relative path in User SafaPages directory.
+     *            Relative path in server directory.
      */
     ServerPathEnum(final String subdir) {
         this.path = subdir;
     }
 
     /**
-     * @return Relative path in User SafaPages directory.
+     * @return Relative path in server directory.
      */
     public String getPath() {
         return this.path;
