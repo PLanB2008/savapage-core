@@ -44,8 +44,14 @@ public enum NounEnum {
     AUTHENTICATION,
     /** Financial position. */
     BALANCE,
+    /** */
+    BORDER,
+    /** */
+    BRUSH,
     /** NFC card number. */
     CARD_NUMBER,
+    /** */
+    CIRCLE(true),
     /** */
     CLIENT(true),
     /** */
@@ -75,9 +81,13 @@ public enum NounEnum {
     /** */
     DOWNLOAD(true),
     /** */
+    DRAWING(true),
+    /** */
     EMAIL,
     /** */
     FILE(true),
+    /** */
+    FILL,
     /** */
     FONT(true),
     /** */
@@ -91,6 +101,8 @@ public enum NounEnum {
     /** */
     JOURNAL,
     /** */
+    LINE(true),
+    /** */
     LOCATION,
     /** */
     MANUFACTURER(true),
@@ -100,6 +112,8 @@ public enum NounEnum {
     MODEL(true),
     /** */
     NAME(true),
+    /** */
+    OPACITY,
     /** */
     ORIGIN,
     /** */
@@ -117,6 +131,8 @@ public enum NounEnum {
     /** */
     QUEUE(true),
     /** */
+    RECTANGLE(true),
+    /** */
     REFUND(true),
     /** */
     REMARK(true),
@@ -126,6 +142,10 @@ public enum NounEnum {
     REPORT,
     /** */
     SERVER(true),
+    /** */
+    SHAPE(true),
+    /** */
+    SIZE,
     /** */
     SIGNATURE,
     /** */
@@ -137,6 +157,8 @@ public enum NounEnum {
     /** */
     TERMINAL(true),
     /** */
+    TEXT(true),
+    /** */
     TIME,
     /** */
     TITLE,
@@ -145,9 +167,13 @@ public enum NounEnum {
     /** */
     TRANSACTION(true),
     /** */
+    TRIANGLE(true),
+    /** */
     TYPE(true),
     /** */
     VERIFICATION,
+    /** */
+    WIDTH,
     /** */
     USER(true);
 

@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -22,8 +25,6 @@
 package org.savapage.core.services;
 
 import org.savapage.ext.papercut.services.PaperCutService;
-import org.savapage.ext.smartschool.services.SmartschoolProxyService;
-import org.savapage.ext.smartschool.services.SmartschoolService;
 
 /**
  *
@@ -210,20 +211,6 @@ public interface ServiceFactory {
      * @return The singleton.
      */
     RfIdReaderService getRfIdReaderService();
-
-    /**
-     * Gets the {@link SmartschoolService} singleton.
-     *
-     * @return The singleton.
-     */
-    SmartschoolService getSmartSchoolService();
-
-    /**
-     * Gets the {@link SmartschoolProxyService} singleton.
-     *
-     * @return The singleton.
-     */
-    SmartschoolProxyService getSmartSchoolProxyService();
 
     /**
      * Gets the {@link SnmpRetrieveService} singleton.

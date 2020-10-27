@@ -1,7 +1,10 @@
 /*
  * This file is part of the SavaPage project <https://www.savapage.org>.
- * Copyright (c) 2011-2019 Datraverse B.V.
+ * Copyright (c) 2020 Datraverse B.V.
  * Author: Rijk Ravestein.
+ *
+ * SPDX-FileCopyrightText: © 2020 Datraverse B.V. <info@datraverse.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -135,7 +138,6 @@ import org.savapage.core.util.DateUtil;
 import org.savapage.core.util.JsonHelper;
 import org.savapage.ext.papercut.PaperCutHelper;
 import org.savapage.ext.papercut.PaperCutIntegrationEnum;
-import org.savapage.ext.smartschool.SmartschoolPrintInData;
 import org.savapage.lib.pgp.PGPBaseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -1748,22 +1750,6 @@ public final class JobTicketServiceImpl extends AbstractService
                     supplierInfo = paperCutService()
                             .createExternalSupplierInfo(request);
                     extSupplierRetry = ExternalSupplierEnum.SAVAPAGE;
-
-                } else if (extSupplierCurrent == ExternalSupplierEnum.SMARTSCHOOL) {
-
-                    supplierInfo = new ExternalSupplierInfo();
-                    supplierInfo.setSupplier(extSupplierCurrent);
-                    supplierInfo.setId(docLog.getExternalId());
-                    supplierInfo.setStatus(docLog.getExternalStatus());
-
-                    final SmartschoolPrintInData extData =
-                            SmartschoolPrintInData
-                                    .createFromData(docLog.getExternalData());
-
-                    supplierInfo.setData(extData);
-                    supplierInfo.setAccount(extData.getAccount());
-
-                    extSupplierRetry = extSupplierCurrent;
 
                 } else {
                     throw new IllegalStateException(

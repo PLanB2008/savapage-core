@@ -238,9 +238,6 @@ public final class ConfigManager {
     public static final String SERVER_PROP_APP_DIR_DOC_STORE_JOURNAL =
             "app.dir.doc.store.journal";
 
-    public static final String SERVER_PROP_SMARTSCHOOL_PRINT =
-            "smartschool.print";
-
     private static final String SERVER_PROP_DB_TYPE = "database.type";
 
     /**
@@ -1159,24 +1156,19 @@ public final class ConfigManager {
     }
 
     /**
-     * Returns "Major.Minor.Revision"
-     *
-     * @return
+     * @return "Major.Minor.RevisionStatus".
      */
     public static String getAppVersion() {
-        return String.format("%s.%s.%s", VersionInfo.VERSION_A_MAJOR,
-                VersionInfo.VERSION_B_MINOR, VersionInfo.VERSION_C_REVISION);
+        return String.format("%s.%s.%s%s", VersionInfo.VERSION_A_MAJOR,
+                VersionInfo.VERSION_B_MINOR, VersionInfo.VERSION_C_REVISION,
+                VersionInfo.VERSION_D_STATUS);
     }
 
     /**
-     * Returns "Major.Minor.Revision (Build xxxx)"
-     *
-     * @return
+     * @return "Major.Minor.RevisionStatus (Build xxxx)".
      */
     public static String getAppVersionBuild() {
-        return String.format("%s.%s.%s%s (Build %s)",
-                VersionInfo.VERSION_A_MAJOR, VersionInfo.VERSION_B_MINOR,
-                VersionInfo.VERSION_C_REVISION, VersionInfo.VERSION_D_STATUS,
+        return String.format("%s (Build %s)", getAppVersion(),
                 VersionInfo.VERSION_E_BUILD);
     }
 
@@ -2181,8 +2173,6 @@ public final class ConfigManager {
                 || key == Key.PAPERCUT_DB_PASSWORD
                 || key == Key.PAPERCUT_SERVER_AUTH_TOKEN
                 || key == Key.PRINT_IMAP_PASSWORD
-                || key == Key.SMARTSCHOOL_1_SOAP_PRINT_ENDPOINT_PASSWORD
-                || key == Key.SMARTSCHOOL_2_SOAP_PRINT_ENDPOINT_PASSWORD
                 || key == Key.WEB_LOGIN_TTP_API_KEY
                 || key == Key.AUTH_MODE_YUBIKEY_API_SECRET_KEY
                 || key == Key.EXT_TELEGRAM_BOT_TOKEN;
@@ -2538,17 +2528,6 @@ public final class ConfigManager {
     }
 
     /**
-     * Checks if the SmartSchool Print module is activated.
-     *
-     * @return {@code true} when activated.
-     */
-    public static boolean isSmartSchoolPrintModuleActivated() {
-        return theServerProps
-                .getProperty(SERVER_PROP_SMARTSCHOOL_PRINT, "false")
-                .equalsIgnoreCase("true");
-    }
-
-    /**
      * Checks if the FTP Print is activated.
      *
      * @return {@code true} when activated.
@@ -2556,15 +2535,6 @@ public final class ConfigManager {
     public static boolean isFtpPrintActivated() {
         // FTP Print is not implemented yet
         return false;
-    }
-
-    /**
-     *
-     * @return
-     */
-    public static boolean isSmartSchoolPrintActiveAndEnabled() {
-        return isSmartSchoolPrintModuleActivated()
-                && isSmartSchoolPrintEnabled();
     }
 
     /**
@@ -2586,15 +2556,6 @@ public final class ConfigManager {
      */
     public static boolean isPdfPgpAvailable() {
         return instance().hasOpenPGP() && isPdfPgpEnabled();
-    }
-
-    /**
-     *
-     * @return
-     */
-    public static boolean isSmartSchoolPrintEnabled() {
-        return instance().isConfigValue(Key.SMARTSCHOOL_1_ENABLE)
-                || instance().isConfigValue(Key.SMARTSCHOOL_2_ENABLE);
     }
 
     /**
