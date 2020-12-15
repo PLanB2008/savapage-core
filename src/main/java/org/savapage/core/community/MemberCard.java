@@ -146,7 +146,7 @@ public final class MemberCard {
             "savapage.membercard";
 
     /** */
-    private static final int VISITOR_PERIOD_DAYS = 40;
+    private static final int VISITOR_PERIOD_DAYS = 40000;
 
     /** */
     private static final String BASE64_PUBLIC_KEY_MEMBERCARD = ""
@@ -238,7 +238,7 @@ public final class MemberCard {
      * @return Max number of users.
      */
     private static long getVisitorEditionUsers() {
-        return 5;
+        return 50000;
     }
 
     /**
